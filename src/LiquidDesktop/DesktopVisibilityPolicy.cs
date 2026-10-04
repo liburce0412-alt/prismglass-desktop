@@ -5,6 +5,7 @@ internal sealed class DesktopWindowState {
  public bool CanCover {get{return Application&&Visible&&!Minimized&&!Cloaked;}}
 }
 internal static class DesktopVisibilityPolicy {
+ public static bool IsApplicationSurface(int extendedStyle){return (extendedStyle & (0x08000000|0x00000020))==0;}
  public static bool Covered(Rectangle window,Rectangle screen,Rectangle work,bool application,bool maximized){
   if(!application||window.Width<=0||window.Height<=0)return false;
   return Covers(window,screen)||(maximized&&Covers(window,work));

@@ -176,6 +176,7 @@ internal sealed class LiquidDesktop : Form {
    shelfReady=false;fileShelf=new FileShelf(root,false);fileShelf.Ready+=()=>shelfReady=true;fileShelf.FormClosed+=(s,e)=>ComponentFailed(2);fileShelf.Show();
   }
  }
+ [DllImport("user32.dll",EntryPoint="GetWindowLongW")]static extern int GetWindowLong(IntPtr h,int index);
  void Probe(){
   if(painted)EnsureComponents();if(closing)return;backend.Refresh(); IntPtr dockHandle=IntPtr.Zero;Rectangle dockBounds=Rectangle.Empty;
   var current=Screen.PrimaryScreen.Bounds;if(current!=screen){screen=current;Bounds=screen;layoutKey="";}
@@ -184,6 +185,7 @@ internal sealed class LiquidDesktop : Form {
   var windows=new List<DesktopWindowState>();
   EnumWindows((h,p)=>{
    uint pid;GetWindowThreadProcessId(h,out pid);if(pid==ownPid||!IsWindowVisible(h)||IsIconic(h))return true;
+   if(!DesktopVisibilityPolicy.IsApplicationSurface(GetWindowLong(h,-20)))return true;
    int cloaked;if(DwmGetWindowAttribute(h,14,out cloaked,4)==0&&cloaked!=0)return true;
    var cl=new StringBuilder(256);GetClassName(h,cl,256);string name=cl.ToString();
    if(name=="Progman"||name=="WorkerW"||name=="RainmeterMeterWindow"||name=="Shell_TrayWnd"||name=="Shell_SecondaryTrayWnd")return true;
