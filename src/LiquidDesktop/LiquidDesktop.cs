@@ -20,6 +20,7 @@ internal sealed class LiquidDesktop : Form {
  readonly JavaScriptSerializer json=new JavaScriptSerializer();
  DateTime probe=DateTime.MinValue,beat=DateTime.MinValue,wallpaperTime=DateTime.MinValue;
  bool ready,painted,closing,busy,lastDown; string layoutKey="",theme="Sky"; bool paused;
+ List<DesktopWindowState> desktopWindows=new List<DesktopWindowState>();
  Rectangle screen; List<object> cards=new List<object>(); Point lastPointer=new Point(-999,-999);
 
  IntPtr lastSkin,dockWindow; Rectangle dockRectangle; bool dockShown=true; readonly DockVisibilityPolicy dockPolicy=new DockVisibilityPolicy();string dockDecision=""; int ticks; DockBackend backend; readonly DockPlate dockPlate=new DockPlate();
@@ -71,6 +72,7 @@ internal sealed class LiquidDesktop : Form {
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")]static extern bool IsIconic(IntPtr h);
  [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr h,int attribute,out RECT bounds,int size);
+ [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr h,int attribute,out int value,int size);
  void DockVisibility(Point cursor){
   if(dockWindow==IntPtr.Zero)return;
   var at=new Point(cursor.X+screen.X,cursor.Y+screen.Y);var now=DateTime.UtcNow;
@@ -80,8 +82,7 @@ internal sealed class LiquidDesktop : Form {
   bool application=front!=IntPtr.Zero&&pid!=ownPid&&front!=dockWindow&&IsWindowVisible(front)&&!IsIconic(front)&&cl.ToString()!="Progman"&&cl.ToString()!="WorkerW"&&cl.ToString()!="RainmeterMeterWindow";
   bool hasBounds=application&&(DwmGetWindowAttribute(front,9,out rect,Marshal.SizeOf(typeof(RECT)))==0||GetWindowRect(front,out rect));
   var visualDock=new Rectangle(dockRectangle.X,dockRectangle.Y+16,dockRectangle.Width,Math.Max(0,dockRectangle.Height-16));
-  var intersection=hasBounds?Rectangle.Intersect(visualDock,Rectangle.FromLTRB(rect.L,rect.T,rect.R,rect.B)):Rectangle.Empty;
-  bool overlap=intersection.Width>8&&intersection.Height>8;
+  bool overlap=DesktopVisibilityPolicy.OverlapsDock(desktopWindows,visualDock);
   bool show=dockPolicy.Update(now,overlap,edge,hovering);
   string decision=show+"|"+overlap+"|"+pid+"|"+cl;
   if(decision!=dockDecision){dockDecision=decision;File.WriteAllText(Path.Combine(root,"dock-visibility.json"),json.Serialize(new{shown=show,covered=overlap,foregroundPid=pid,foregroundClass=cl.ToString(),ignoredOwnedWindow=!application,window=new{left=rect.L,top=rect.T,right=rect.R,bottom=rect.B},atEdge=edge,updated=now.ToString("o")}));}
@@ -180,10 +181,17 @@ internal sealed class LiquidDesktop : Form {
   var current=Screen.PrimaryScreen.Bounds;if(current!=screen){screen=current;Bounds=screen;layoutKey="";}
   string nextTheme=Read("theme.txt","Sky")=="Astro"?"Astro":"Sky";
   bool manual=Read("paused.txt","false")=="true",covered=false;
-  var foreground=GetForegroundWindow();RECT fr=new RECT();uint foregroundPid;GetWindowThreadProcessId(foreground,out foregroundPid);var fc=new StringBuilder(256);GetClassName(foreground,fc,256);
-  bool application=foreground!=IntPtr.Zero&&foregroundPid!=ownPid&&IsWindowVisible(foreground)&&!IsIconic(foreground)&&fc.ToString()!="Progman"&&fc.ToString()!="WorkerW"&&fc.ToString()!="RainmeterMeterWindow";
-  if(application&&(DwmGetWindowAttribute(foreground,9,out fr,Marshal.SizeOf(typeof(RECT)))==0||GetWindowRect(foreground,out fr)))
-   covered=DesktopVisibilityPolicy.Covered(Rectangle.FromLTRB(fr.L,fr.T,fr.R,fr.B),screen,Screen.PrimaryScreen.WorkingArea,true,IsZoomed(foreground));
+  var windows=new List<DesktopWindowState>();
+  EnumWindows((h,p)=>{
+   uint pid;GetWindowThreadProcessId(h,out pid);if(pid==ownPid||!IsWindowVisible(h)||IsIconic(h))return true;
+   int cloaked;if(DwmGetWindowAttribute(h,14,out cloaked,4)==0&&cloaked!=0)return true;
+   var cl=new StringBuilder(256);GetClassName(h,cl,256);string name=cl.ToString();
+   if(name=="Progman"||name=="WorkerW"||name=="RainmeterMeterWindow"||name=="Shell_TrayWnd"||name=="Shell_SecondaryTrayWnd")return true;
+   RECT r;if(DwmGetWindowAttribute(h,9,out r,Marshal.SizeOf(typeof(RECT)))!=0&&!GetWindowRect(h,out r))return true;
+   windows.Add(new DesktopWindowState{Bounds=Rectangle.FromLTRB(r.L,r.T,r.R,r.B),Application=true,Visible=true,Minimized=false,Cloaked=false,Maximized=IsZoomed(h)});return true;
+  },IntPtr.Zero);
+  desktopWindows=windows;
+  covered=DesktopVisibilityPolicy.AnyCovered(desktopWindows,screen,Screen.PrimaryScreen.WorkingArea);
   bool nextPaused=manual||covered;timer.Interval=nextPaused?50:16;
   var regions=new List<Rectangle>();var nextCards=new List<GlassCard>();lastSkin=IntPtr.Zero;IntPtr firstSkin=IntPtr.Zero;
   EnumWindows((h,p)=>{var cl=new StringBuilder(256);GetClassName(h,cl,256);if(cl.ToString()!="RainmeterMeterWindow")return true;

@@ -1,2 +1,25 @@
 using System;using System.Drawing;
-class TestVisibility {static void Check(bool pass,string name){if(!pass)throw new Exception(name);Console.WriteLine("PASS "+name);}static void Main(){var screen=new Rectangle(0,0,2560,1600);var work=new Rectangle(0,0,2560,1540);Check(DesktopVisibilityPolicy.Covered(work,screen,work,true,true),"maximized with taskbar gap");Check(DesktopVisibilityPolicy.Covered(screen,screen,work,true,false),"borderless fullscreen");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(20,20,1000,800),screen,work,true,false),"normal window restores widgets");Check(!DesktopVisibilityPolicy.Covered(screen,screen,work,false,true),"desktop and own windows excluded");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(2560,0,2560,1600),screen,work,true,true),"other monitor excluded");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(0,0,1280,1540),screen,work,true,false),"half screen remains ordinary");}}
+class TestVisibility {static void Check(bool pass,string name){if(!pass)throw new Exception(name);Console.WriteLine("PASS "+name);}static void Main(){var screen=new Rectangle(0,0,2560,1600);var work=new Rectangle(0,0,2560,1540);Check(DesktopVisibilityPolicy.Covered(work,screen,work,true,true),"maximized with taskbar gap");Check(DesktopVisibilityPolicy.Covered(screen,screen,work,true,false),"borderless fullscreen");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(20,20,1000,800),screen,work,true,false),"normal window restores widgets");Check(!DesktopVisibilityPolicy.Covered(screen,screen,work,false,true),"desktop and own windows excluded");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(2560,0,2560,1600),screen,work,true,true),"other monitor excluded");Check(!DesktopVisibilityPolicy.Covered(new Rectangle(0,0,1280,1540),screen,work,true,false),"half screen remains ordinary");var normal=new DesktopWindowState{Bounds=new Rectangle(200,100,900,700),Application=true,Visible=true};
+var background=new DesktopWindowState{Bounds=work,Application=true,Visible=true,Maximized=true};
+var windows=new[]{normal,background};
+Check(DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"normal foreground with maximized background stays hidden");
+background.Maximized=false;background.Bounds=screen;
+Check(DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"background fullscreen stays hidden");
+background.Minimized=true;
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"minimized background excluded");
+background.Minimized=false;background.Visible=false;
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"invisible background excluded");
+background.Visible=true;background.Cloaked=true;
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"other virtual desktop excluded");
+background.Cloaked=false;background.Bounds=new Rectangle(2560,0,2560,1600);
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"background on other monitor excluded");
+background.Bounds=new Rectangle(20,20,1000,800);
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"restored background reveals widgets");
+background.Bounds=screen;background.Application=false;
+Check(!DesktopVisibilityPolicy.AnyCovered(windows,screen,work),"excluded background cannot hide widgets");
+background.Application=true;
+var dock=new Rectangle(100,1450,2300,90);
+Check(DesktopVisibilityPolicy.OverlapsDock(windows,dock),"background overlap hides dock");
+background.Minimized=true;
+Check(!DesktopVisibilityPolicy.OverlapsDock(windows,dock),"minimized background cannot hide dock");
+}}
