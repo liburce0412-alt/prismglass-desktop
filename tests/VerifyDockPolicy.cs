@@ -1,0 +1,5 @@
+using System;using System.IO;
+internal static class VerifyDockPolicy{
+ static void Check(bool value,string label){if(!value)throw new Exception(label);Console.WriteLine("PASS "+label);}
+ static void Main(){var t=new DateTime(2026,9,24);var p=new DockVisibilityPolicy();Check(p.Update(t,false,false,false),"Uncovered desktop stays visible");Check(p.Update(t,true,false,false),"Overlap does not cause immediate flicker");Check(p.Update(t.AddMilliseconds(349),true,false,false),"350ms hide delay");Check(!p.Update(t.AddMilliseconds(351),true,false,false),"Sustained overlap hides");Check(!p.Update(t.AddMilliseconds(500),true,true,false),"Brief edge contact does not reveal");Check(!p.Update(t.AddMilliseconds(650),true,true,false),"150ms contact still hidden");Check(p.Update(t.AddMilliseconds(681),true,true,false),"180ms bottom edge hold reveals");Check(p.Update(t.AddMilliseconds(1300),true,false,true),"Dock hover retains reveal");Check(!p.Update(t.AddMilliseconds(2201),true,false,false),"Leave expires reveal after 900ms");Check(p.Update(t.AddMilliseconds(2300),false,false,false),"No coverage immediately restores Dock");}
+}
