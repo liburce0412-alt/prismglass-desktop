@@ -39,6 +39,7 @@ internal sealed class SideDock : Form {
    SyncPixelScale();view.CoreWebView2.Settings.IsZoomControlEnabled=false;
    view.CoreWebView2.Settings.AreDefaultContextMenusEnabled=false;view.CoreWebView2.Settings.AreDevToolsEnabled=false;view.CoreWebView2.Settings.IsStatusBarEnabled=false;
    view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-side.local",root,CoreWebView2HostResourceAccessKind.DenyCors);
+   Directory.CreateDirectory(Path.GetFullPath(Path.Combine(root,"..","music-data")));
    view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-media.local",Path.GetFullPath(Path.Combine(root,"..","music-data")),CoreWebView2HostResourceAccessKind.DenyCors);
    view.CoreWebView2.NavigationStarting+=(sender,a)=>{if(!a.Uri.StartsWith("https://prism-side.local/",StringComparison.Ordinal))a.Cancel=true;};
    view.CoreWebView2.NewWindowRequested+=(sender,a)=>a.Handled=true;

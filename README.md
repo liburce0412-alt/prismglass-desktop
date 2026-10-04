@@ -2,7 +2,64 @@
 
 Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock，以及可成长的生态瓶。
 
+[![Windows build](https://github.com/liburce0412-alt/prismglass-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/liburce0412-alt/prismglass-desktop/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6d83b3.svg)](LICENSE)
+![Platform: Windows x64](https://img.shields.io/badge/Windows-x64-586a92.svg)
+
 **实验性项目 / Windows x64。** 从个人长期使用的桌面方案整理而来，使用 C# WinForms + WebView2 + WebGL + Rainmeter。默认开机进入普通 Windows 桌面，美化由用户手动开启。
+
+[看显示效果](#显示效果) · [功能](#功能) · [构建与安装](#构建与安装) · [操作速查](#操作速查) · [常见问题](#常见问题)
+
+## 显示效果
+
+以下均由本仓库的 **真实 WebView2 / WebGL 组件运行后采集**，不是设计概念图。为保护隐私，采集使用独立预览环境、默认渐变底图与演示数据；不代表作者的真实账户额度或个人记录，也不是整台桌面的实机录屏。
+
+### 顶部栏 → 灵动岛 → 展开面板
+
+![真实渲染的顶部栏收拢、面板展开与还原动效](docs/media/top-island.gif)
+
+点击顶部中间区域收拢，再次点击还原；按住灵动岛向下拉，展开媒体和专注控制。上面的循环演示触发同一套真实动画状态，展示形状变化；不是鼠标手势教学录屏。
+
+[查看 MP4 演示](docs/media/top-island.mp4) · [查看展开面板原图](docs/media/top-expanded.png)
+
+### Sky / Astro：同一套组件，两种氛围
+
+<table>
+  <tr><th>Sky · 轻透玻璃</th><th>Astro · 深色星空</th></tr>
+  <tr>
+    <td><img src="docs/media/garden-sky.png" alt="Sky 主题左侧栏和生态瓶实际组件截图" width="440"></td>
+    <td><img src="docs/media/garden-astro.png" alt="Astro 主题左侧栏和生态瓶实际组件截图" width="440"></td>
+  </tr>
+</table>
+
+两种主题保留同样的布局与操作。生态瓶会随着专注与照料成长，图中植物、滴水和种子数量均为演示存档。
+
+### 右侧工具区：额度看板与随手记
+
+<table>
+  <tr><th>额度圆环与详情</th><th>随手记 · Astro</th></tr>
+  <tr>
+    <td><img src="docs/media/shelf-quota.png" alt="右侧 Codex 额度看板，72% 是明确标注的演示数据" width="440"></td>
+    <td><img src="docs/media/shelf-notes.png" alt="右侧随手记实际组件截图，使用演示笔记" width="440"></td>
+  </tr>
+</table>
+
+额度默认每三分钟更新；不可用时显示未获取。右侧同时提供桌面快捷方式、今日事项、倒计时、常用链接和计算工具，悬停查看、点击操作。
+
+<details>
+<summary><strong>更多截图：植物收藏与两侧组件管理</strong></summary>
+
+<table>
+  <tr><th>六种植物收藏</th><th>统一管理两侧入口</th></tr>
+  <tr>
+    <td><img src="docs/media/garden-collection.png" alt="真实生态瓶收藏界面，演示存档已解锁六种植物" width="440"></td>
+    <td><img src="docs/media/shelf-manage.png" alt="统一管理左侧与右侧小部件的界面" width="440"></td>
+  </tr>
+</table>
+
+</details>
+
+素材来源、演示条件与复现方法见 [效果素材说明](docs/media/README.md)。
 
 ## 功能
 
@@ -15,6 +72,19 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 - **可恢复桌面**：退出时恢复原生图标和任务栏；登录恢复步骤不启动美化。
 
 最大化或全屏应用覆盖主屏时，顶部和左右栏隐藏；返回普通窗口或桌面后恢复。底部 Dock 保留独立的边缘唤出规则。当前以主显示器为目标。
+
+## 操作速查
+
+| 想做什么 | 操作 |
+|---|---|
+| 收起顶部栏 | 点击顶部中间留白，聚拢为灵动岛 |
+| 展开顶部内容 | 按住灵动岛向下拖动 |
+| 恢复完整顶部栏 | 再次点击灵动岛 |
+| 看侧栏内容 | 鼠标短暂停留，避免快速划过误触发 |
+| 调整两侧入口 | 右侧底部进入“管理” |
+| 培养生态瓶 | 左侧“生活 → 生态瓶”，完成专注获得照料资源 |
+| 唤出被遮挡的 Dock | 在屏幕底边短暂停留 |
+| 回到普通桌面 | 使用“退出 PrismGlass”快捷方式 |
 
 ## 依赖
 
@@ -54,13 +124,23 @@ Rainmeter 在非标准目录时传入 `-RainmeterPath '你的路径\Rainmeter.ex
 
 ## 隐私与依赖边界
 
-此仓库只有白名单源码、皮肤模板、测试与文档。**不包含**作者的账号、Cookie、WebView2 用户目录、额度缓存、应用列表、笔记、个人截图、游戏图标、音乐封面或原始壁纸。
+此仓库包含白名单源码、皮肤模板、测试、文档及使用独立演示数据采集的效果素材。**不包含**作者的账号、Cookie、WebView2 用户目录、额度缓存、个人应用列表、真实笔记、私人桌面截图、游戏图标、音乐封面或原始壁纸。
 
 运行时的本地数据和网络请求见 [隐私说明](docs/PRIVACY.md)。第三方依赖及参考见 [第三方声明](THIRD-PARTY-NOTICES.md)。MIT 许可证适用于本仓库自有代码；第三方程序、品牌与素材不由此重新授权。
 
 ## 验证范围
 
 自动检查覆盖 Dock 隐藏／唤出策略、最大化／全屏识别、跨屏排除、JavaScript 与 PowerShell 语法；CI 在 Windows 上构建。通过编译不代表已验证所有显卡、DPI、显示器布局或真实重启。当前公开版仍需更多不同机器的实际测试。
+
+## 常见问题
+
+**为什么我的玻璃底色与截图不同？** 玻璃使用本机壁纸采样，主题、壁纸、DPI 和显示器都会影响观感。仓库素材使用默认渐变底图，不包含作者原始壁纸。
+
+**没有 Codex 账号可以使用吗？** 可以，桌面主体不依赖 Codex。额度组件需要自行安装并登录官方 CLI，其他组件可独立使用。
+
+**开机会自动开启美化吗？** 不会。登录步骤只恢复普通 Windows 桌面，美化由你手动开启。
+
+**截图就是安装后的完整桌面吗？** 不是。截图是公开代码的真实组件预览，用演示数据展示细节；当前没有把作者的私人桌面整体录屏公开。
 
 ## 目录
 
