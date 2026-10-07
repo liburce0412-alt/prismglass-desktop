@@ -1,7 +1,7 @@
-param([string]$WebViewVersion='1.0.4191.47')
+param([string]$WebViewVersion='1.0.4191.47',[string]$CacheRoot,[string]$OutputRoot)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
-$deps=Join-Path $repo '.deps'
+$deps=if($CacheRoot){[IO.Path]::GetFullPath($CacheRoot)}else{Join-Path $repo '.deps'}
 $package=Join-Path $deps "webview2-$WebViewVersion"
 if(!(Test-Path -LiteralPath "$package/lib/net462/Microsoft.Web.WebView2.Core.dll")){
  New-Item -ItemType Directory -Path $deps -Force | Out-Null
@@ -9,7 +9,7 @@ if(!(Test-Path -LiteralPath "$package/lib/net462/Microsoft.Web.WebView2.Core.dll
  Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$WebViewVersion/microsoft.web.webview2.$WebViewVersion.nupkg" -OutFile $zip
  Expand-Archive -LiteralPath $zip -DestinationPath $package -Force
 }
-$out=Join-Path $repo 'dist/PrismGlass'
+$out=if($OutputRoot){[IO.Path]::GetFullPath($OutputRoot)}else{Join-Path $repo 'dist/PrismGlass'}
 $app=Join-Path $out 'LiquidDesktop'
 New-Item -ItemType Directory -Path $app -Force | Out-Null
 Get-ChildItem "$repo/src/LiquidDesktop" -File | Copy-Item -Destination $app
@@ -26,6 +26,7 @@ Copy-Item "$repo/scripts/runtime/*" $out
 Copy-Item "$repo/scripts/Install.ps1" $out
 Copy-Item "$repo/rainmeter" $out -Recurse -Force
 Copy-Item "$repo/licenses" $out -Recurse -Force
+Copy-Item "$repo/assets/Cursors" $out -Recurse -Force
 Copy-Item "$repo/LICENSE","$repo/THIRD-PARTY-NOTICES.md","$repo/README.md" $out
 Get-ChildItem $package -File | Where-Object {$_.Name -match 'license|notice'} | Copy-Item -Destination "$out/licenses"
 # A neutral generated sample; the user's wallpaper and application icons are never bundled.

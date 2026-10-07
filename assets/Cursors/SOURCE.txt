@@ -1,0 +1,3 @@
+Source: https://github.com/antiden/macOS-cursors-for-Windows
+Revision: baaea95bef945a26084edb2cc205675eb7548b03
+Variant: Sierra and newer / No Shadow / Normal

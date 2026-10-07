@@ -16,7 +16,7 @@ using Microsoft.Web.WebView2.WinForms;
 internal sealed class ShelfEntry {public string name,path,icon;public bool directory;public long size;public string modified;}
 internal sealed class ShelfTask {public string id,text;public bool done;}
 internal sealed class ShelfLink {public string id,name,url;}
-internal sealed class ShelfState {public List<ShelfTask> tasks=new List<ShelfTask>();public string countdownTitle="",countdownDate="";public List<ShelfLink> links=new List<ShelfLink>();public ShelfLink removedLink;public List<string> hiddenCards=new List<string>(),hiddenLeftCards=new List<string>();}
+internal sealed class ShelfState {public int cursorScale=100;public List<ShelfTask> tasks=new List<ShelfTask>();public string countdownTitle="",countdownDate="";public List<ShelfLink> links=new List<ShelfLink>();public ShelfLink removedLink;public List<string> hiddenCards=new List<string>(),hiddenLeftCards=new List<string>();}
 internal sealed class ShelfPage {public string type="page",path,parent,error;public List<ShelfEntry> entries=new List<ShelfEntry>();public bool more;public int scanned;}
 internal sealed class ShelfReader : IDisposable {
  readonly object gate=new object();IEnumerator<string> iterator;string directory="",filter="";bool disposed;
@@ -104,7 +104,21 @@ internal sealed class FileShelf : Form {
  void Publish(){if(!ready)return;string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();string key=Bounds+theme+paused+stamp;if(key==layout)return;layout=key;Send(new{type="layout",theme=theme,paused=paused,scale=scale,width=Width,height=Height,originX=Left-screen.Left,originY=Top-screen.Top,sceneWidth=screen.Width,sceneHeight=screen.Height,wallpaper=stamp});}
  void Send(object value){if(!closed&&ready&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  void SetExpanded(bool value,bool activate=true){generation++;pendingFilter=false;expanded=value;Send(new{type="expanded",value=value,mode=mode});if(value){if(activate){Activate();view.Focus();}LoadMode();}else{query="";}}
- void LoadMode(){if(mode=="desktop")Desktop();else if(mode=="notes")Notes();else if(mode=="quota")Send(new{type="quota",snapshot=quotaSnapshot,busy=quotaBusy});else Send(new{type="local-state",state=state});}
+ bool cursorSizeBusy;
+ void ReadCursorScale(){int value;var file=Path.Combine(root,"..","cursor-scale.txt");state.cursorScale=File.Exists(file)&&Int32.TryParse(File.ReadAllText(file).Trim(),out value)&&value>=75&&value<=200?value:100;}
+ async void ChangeCursorScale(int value){
+  if(cursorSizeBusy)return;cursorSizeBusy=true;Send(new{type="cursor-size",busy=true,value=state.cursorScale});
+  try{
+   string script=Path.GetFullPath(Path.Combine(root,"..","CursorTheme.ps1"));
+   await Task.Run(()=>{
+    var info=new ProcessStartInfo("pwsh.exe","-NoProfile -NonInteractive -WindowStyle Hidden -File \""+script+"\" -Mode Apply -Scale "+value){UseShellExecute=false,CreateNoWindow=true};
+    using(var process=Process.Start(info)){if(!process.WaitForExit(15000)){process.Kill();throw new IOException("鼠标大小应用超时，请重试。");}if(process.ExitCode!=0)throw new IOException("鼠标大小未能应用，请重试。");}
+   });
+   if(!closed){ReadCursorScale();Send(new{type="local-state",state=state});}
+  }catch(Exception ex){if(!closed)Send(new{type="error",message=ex.Message});}
+  finally{cursorSizeBusy=false;if(!closed)Send(new{type="cursor-size",busy=false,value=state.cursorScale});}
+ }
+ void LoadMode(){ReadCursorScale();if(mode=="desktop")Desktop();else if(mode=="notes")Notes();else if(mode=="quota")Send(new{type="quota",snapshot=quotaSnapshot,busy=quotaBusy});else Send(new{type="local-state",state=state});}
  async void RefreshQuota(bool manual){if(closed||preview||quotaBusy||DateTime.UtcNow<nextQuota&&!manual)return;if(manual&&DateTime.UtcNow<nextQuota.AddMinutes(-3).AddSeconds(15))return;quotaBusy=true;nextQuota=DateTime.UtcNow.AddMinutes(3);Send(new{type="quota",snapshot=quotaSnapshot,busy=true});try{var snapshot=await quotaReader.ReadAsync();if(!closed){quotaSnapshot=snapshot;Send(new{type="quota",snapshot=quotaSnapshot,busy=false});}}finally{quotaBusy=false;}}
  List<string> VisibleCards(){var result=new List<string>();foreach(var name in CardNames)if(!state.hiddenCards.Contains(name))result.Add(name);return result;}
  string LeftVisibilityPath{get{return Path.Combine(root,preview?"sidebar-preview-visibility.json":"sidebar-visibility.json");}}
@@ -146,6 +160,7 @@ internal sealed class FileShelf : Form {
   if(action=="toggle"){SetExpanded(!expanded);return;}if(action=="close"){SetExpanded(false);return;}
   if(action=="shape"){double amount;if(msg.TryGetValue("amount",out raw)&&Double.TryParse(Convert.ToString(raw,System.Globalization.CultureInfo.InvariantCulture),System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out amount)&&!Double.IsNaN(amount))Shape((float)Math.Max(0,Math.Min(1,amount)));return;}
   if(!expanded)return;
+  if(action=="cursor-size"&&mode=="manage"&&!preview){int size;if(Int32.TryParse(value,out size)&&Array.IndexOf(new[]{75,100,125,150,200},size)>=0)ChangeCursorScale(size);return;}
   if(action=="quota-refresh"&&mode=="quota"){RefreshQuota(true);return;}
   if(action=="left-card-toggle"&&mode=="manage"&&!preview&&Array.IndexOf(LeftCardNames,value)>=0){if(state.hiddenLeftCards.Contains(value))state.hiddenLeftCards.Remove(value);else state.hiddenLeftCards.Add(value);SaveLeftVisibility();return;}
   if(action=="card-toggle"&&mode=="manage"&&!preview&&Array.IndexOf(CardNames,value)>=0){if(state.hiddenCards.Contains(value))state.hiddenCards.Remove(value);else if(VisibleCards().Count>1)state.hiddenCards.Add(value);else{Send(new{type="error",message="至少保留一个入口，管理按钮始终显示。"});return;}SaveState();Shape(expanded?1:0);return;}

@@ -8,3 +8,6 @@
 - Application icons are generated from programs installed by the end user. No third-party game icons, artwork, music covers, branded wallpapers or reference videos are shipped in this repository.
 
 Legacy Rainmeter panels refer to EasyBlur for optional background effects. That plugin is not bundled; the main WebGL components do not require it. PowerPlugin and Win7AudioPlugin references rely on the corresponding Rainmeter installation. The public package should be tested on the target installation before enabling optional legacy panels.
+
+## macOS-style cursors
+Cursor assets: antiden/macOS-cursors-for-Windows (MIT). See assets/Cursors/LICENSE.md and SOURCE.txt for attribution and pinned revision.

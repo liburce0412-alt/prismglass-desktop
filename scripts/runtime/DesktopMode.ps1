@@ -57,6 +57,7 @@ if($Mode -eq 'Login'){
  $glassPath=Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe'
  $manualBeauty=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.SessionId -eq $sessionId -and $_.Path -eq $glassPath}
  if($manualBeauty){'LOGIN: Manual beauty session already running; native shell left unchanged.';return}
+ & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore
  [DesktopTaskbar]::Set(2,$true)
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
  [DesktopTaskbar]::SetIcons($true)
@@ -66,6 +67,7 @@ if($Mode -eq 'Login'){
  return
 }
 if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
+ & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore
  if($Mode -eq 'Game' -and !(Test-Path $statePath)){
   @{TaskbarState=[DesktopTaskbar]::State();DesktopIconsVisible=[DesktopTaskbar]::IconsVisible();HideIcons=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced').HideIcons;Created=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content $statePath -Encoding utf8
  }
@@ -137,9 +139,11 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  [DesktopTaskbar]::Set(3,$false)
  [DesktopTaskbar]::FullWorkArea()
  if(Test-Path $statePath){Remove-Item -LiteralPath $statePath}
+ & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Apply
  'BEAUTY: Current desktop layout restored.'
 }
 } catch {
+ try { & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore } catch { Write-Warning $_.Exception.Message }
  # Also covers manual Beauty launches, not only the login wrapper.
  if('DesktopTaskbar' -as [type]){
   if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath -ErrorAction SilentlyContinue}
