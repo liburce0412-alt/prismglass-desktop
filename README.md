@@ -156,3 +156,6 @@ licenses/          第三方许可文本
 
 ### macOS 风格鼠标
 开启美化时临时替换系统指针，包括箭头、链接手形、文本选择、缩放和等待动画；退出或登录恢复时重新加载原来的 Windows 指针主题。右侧栏 → 管理 → 鼠标大小可选择 75%、100%、125%、150%、200%，应用后记住选择；退出美化恢复原 Windows 指针样式和大小，下次开启再应用美化大小。不会改写已保存的指针设置，也不增加常驻进程。素材来自 [antiden/macOS-cursors-for-Windows](https://github.com/antiden/macOS-cursors-for-Windows)，遵循 MIT 许可。
+
+### Pegline 截图晾绳（可选）
+可随美化开启／退出，不增加开机启动。快捷键 Ctrl+Alt+T，截图接管由用户选择。[安装、配置及点击区域补丁](integrations/Pegline/README.md)。

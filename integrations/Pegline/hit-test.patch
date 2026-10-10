@@ -1,0 +1,41 @@
+diff --git a/src/CardView.cs b/src/CardView.cs
+index 7b13ceb..1baec87 100644
+--- a/src/CardView.cs
++++ b/src/CardView.cs
+@@ -315,6 +315,15 @@ namespace Pegline
+             copiedLabel.RenderTransform = new TranslateTransform(0, -4 * (1 - copiedOpacity));
+         }
+ 
++        // WPF maps the screen point through slide, swing, hover zoom and DPI.
++        // An untransformed rectangle misses the visibly rotated close corner.
++        public bool ContainsScreenPoint(Point screenPoint)
++        {
++            if (!IsVisible || Opacity <= 0.01) return false;
++            var point = frameHost.PointFromScreen(screenPoint);
++            return new Rect(0, 0, frameHost.ActualWidth, frameHost.ActualHeight).Contains(point);
++        }
++
+         public bool InCross(Point p)
+         {
+             return p.X >= 0 && p.Y >= 0 && p.X < 26 && p.Y < 26;
+diff --git a/src/LineWindow.cs b/src/LineWindow.cs
+index 505126c..1ee9915 100644
+--- a/src/LineWindow.cs
++++ b/src/LineWindow.cs
+@@ -158,15 +158,10 @@ namespace Pegline
+         /// The photo under a point in screen pixels, if any.
+         public Guid PhotoAt(Native.POINT p)
+         {
+-            double x = p.X / Screens.Scale - Left, y = p.Y / Screens.Scale - Top;
+             foreach (var c in cards.Values)
+             {
+                 if (c.Item.Falling) continue;
+-                // Generous: the hover zoom and the tilt push the corners, and
+-                // the cross sits right on one, a few points outside the frame.
+-                var r = c.HitRect;
+-                r.Inflate(10, 10);
+-                if (r.Contains(x, y)) return c.Item.Id;
++                if (c.ContainsScreenPoint(new Point(p.X, p.Y))) return c.Item.Id;
+             }
+             return Guid.Empty;
+         }

@@ -20,3 +20,5 @@
 **/notes*
 __pycache__/
 *.pyc
+**/pegline-path.txt
+**/pegline-session.json

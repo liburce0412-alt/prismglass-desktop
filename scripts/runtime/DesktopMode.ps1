@@ -67,6 +67,7 @@ if($Mode -eq 'Login'){
  return
 }
 if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
+ & (Join-Path $PSScriptRoot 'Pegline.ps1') -Mode Stop
  & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore
  if($Mode -eq 'Game' -and !(Test-Path $statePath)){
   @{TaskbarState=[DesktopTaskbar]::State();DesktopIconsVisible=[DesktopTaskbar]::IconsVisible();HideIcons=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced').HideIcons;Created=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content $statePath -Encoding utf8
@@ -140,6 +141,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  [DesktopTaskbar]::FullWorkArea()
  if(Test-Path $statePath){Remove-Item -LiteralPath $statePath}
  & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Apply
+ try { & (Join-Path $PSScriptRoot 'Pegline.ps1') -Mode Start } catch { Write-Warning $_.Exception.Message }
  'BEAUTY: Current desktop layout restored.'
 }
 } catch {
