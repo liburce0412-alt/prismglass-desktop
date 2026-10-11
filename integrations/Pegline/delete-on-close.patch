@@ -1,0 +1,130 @@
+diff --git a/src/Line.cs b/src/Line.cs
+index c1b6f71..3d19275 100644
+--- a/src/Line.cs
++++ b/src/Line.cs
+@@ -247,9 +247,7 @@ namespace Pegline
+             Drop(id, true);
+             if (SoundOn) Sounds.Rustle();
+         }
+-        /// Whether the file lives in Pegline's own folder. Those are discarded
+-        /// to the Recycle Bin, or the folder would fill up with forgotten
+-        /// screenshots. Files anywhere else stay where they are.
++        /// Whether the file lives in Pegline's own capture folder.
+         public bool IsInInbox(Guid id)
+         {
+             var item = Find(id);
+@@ -258,10 +256,11 @@ namespace Pegline
+             return System.IO.Path.GetFullPath(item.Path).StartsWith(dir, StringComparison.OrdinalIgnoreCase);
+         }
+ 
+-        /// The corner cross and "Take down" both end up here.
++        /// The corner cross deletes the original screenshot to the Recycle Bin,
++        /// regardless of which folder the screenshot came from.
+         public void Discard(Guid id)
+         {
+-            if (IsInInbox(id)) Trash(id); else Drop(id);
++            Trash(id);
+         }
+ 
+         /// Keep a caught screenshot by moving it to the Desktop.
+diff --git a/src/Gestures.cs b/src/Gestures.cs
+index 55db9a4..1d043c9 100644
+--- a/src/Gestures.cs
++++ b/src/Gestures.cs
+@@ -34,7 +34,7 @@ namespace Pegline
+             Guid id = card.Item.Id;
+             target.ToolTip = Loc.L("Drag sideways to slide on the rope; pull down to drag a file",
+                 "Arrastra a los lados sobre la cuerda; tira hacia abajo para sacar el archivo",
+-                "左右拖动调整位置；向下拉离绳子可拖到应用或文件夹");
++                "左右拖动调整位置；向下拉可拖出文件；× 将原图移到回收站");
+ 
+             Action finishPress = delegate
+             {
+@@ -176,15 +176,8 @@ namespace Pegline
+             bool inInbox = line.IsInInbox(id);
+             if (inInbox) add(Loc.L("Save to Desktop", "Guardar en el Escritorio", "保存到桌面"), () => line.SaveToDesktop(id));
+             menu.Items.Add(new Separator());
+-            if (inInbox)
+-            {
+-                add(Loc.L("Discard", "Descartar", "丢弃"), () => line.Discard(id));
+-            }
+-            else
+-            {
+-                add(Loc.L("Take down", "Descolgar", "取下"), () => line.Discard(id));
+-                add(Loc.L("Move to Recycle Bin", "Mover a la Papelera", "移到回收站"), () => line.Trash(id));
+-            }
++            add(Loc.L("Take down (keep file)", "Descolgar (conservar archivo)", "仅取下（保留文件）"), () => line.Drop(id));
++            add(Loc.L("Move to Recycle Bin", "Mover a la Papelera", "删除原图（移到回收站）"), () => line.Discard(id));
+ 
+             // The line never takes focus; the menu needs it to close when you
+             // click elsewhere.
+diff --git a/README.md b/README.md
+index 8d36375..258487e 100644
+--- a/README.md
++++ b/README.md
+@@ -28,8 +28,8 @@ build.cmd
+ | 向下拉离绳子（约 70 像素逻辑距离） | 转为原来的文件拖拽，再拖入应用、文件夹或桌面 |
+ | 拖进某个应用 | 发一份副本，图还留在绳子上 |
+ | 拖进文件夹 / 桌面 | 文件移过去保存，图离开绳子 |
+-| 拖进回收站，或点左上角的叉 | 扔掉 |
+-| 右键 | 复制 / 打开 / 编辑 / 在资源管理器中显示 / 保存到桌面 / 丢弃 |
++| 拖进回收站，或点左上角的叉 | 原截图移入回收站并取下卡片，外部文件与接管截图均适用 |
++| 右键 | 复制 / 打开 / 编辑 / 在资源管理器中显示 / 保存到桌面 / 仅取下（保留文件） / 删除原图 |
+ | 鼠标顶在屏幕最上沿约 0.3 秒 | 在那块屏幕上放下绳子 |
+ | 点击屏幕最上沿（标签页、标题栏） | 收起绳子 |
+ | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>，或左键点托盘图标 | 显示 / 收起 |
+diff --git a/tools/TestDiscard.cs b/tools/TestDiscard.cs
+new file mode 100644
+--- /dev/null
++++ b/tools/TestDiscard.cs
+@@ -0,0 +1,50 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Reflection;
++using System.Windows;
++using System.Windows.Media;
++using System.Windows.Media.Imaging;
++using Pegline;
++
++// Only generated images and isolated settings are used. Never restore personal pins.
++class TestDiscard
++{
++    static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
++    static string Image(string dir, string name)
++    {
++        string path = Path.Combine(dir, name);
++        var image = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null,
++            new byte[] { 80,150,200,255,80,150,200,255,80,150,200,255,80,150,200,255 }, 8);
++        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
++        using (var file = File.Create(path)) png.Save(file);
++        // A disposable fixture must not inherit EFS from its temporary directory.
++        if ((File.GetAttributes(path) & FileAttributes.Encrypted) != 0) File.Decrypt(path);
++        return path;
++    }
++    [STAThread] static void Main()
++    {
++        string dir = Path.Combine(Path.GetTempPath(), "PrismGlass-Discard-" + Guid.NewGuid().ToString("N"));
++        Directory.CreateDirectory(dir);
++        var flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
++        typeof(Settings).GetField("Dir", flags).SetValue(null, dir);
++        typeof(Settings).GetField("file", flags).SetValue(null, Path.Combine(dir,"settings.ini"));
++        typeof(Settings).GetField("peggedFile", flags).SetValue(null, Path.Combine(dir,"pegged.txt"));
++        typeof(Settings).GetField("values", flags).SetValue(null, new Dictionary<string,string>{{"soundOff","1"}});
++        var line = new Line();
++        string deleted = Image(dir,"delete-original.png");
++        Guid id = line.Hang(deleted, true);
++        Check(id != Guid.Empty && !line.IsInInbox(id),"fixture is an external screenshot");
++        line.Discard(id);
++        Check(!File.Exists(deleted),"cross deletes external screenshot to Recycle Bin");
++        Check(line.Find(id).Falling && Settings.Pegged.Length == 0,"deleted screenshot leaves saved pins");
++        string kept = Image(dir,"keep-original.png");
++        Guid keptId = line.Hang(kept,true); line.Drop(keptId,true);
++        Check(File.Exists(kept),"take-down keeps original file");
++        string missing = Image(dir,"already-missing.png");
++        Guid missingId = line.Hang(missing,true); File.Delete(missing); line.Discard(missingId);
++        Check(line.Find(missingId).Falling,"already deleted screenshot dismisses cleanly");
++        Check(Settings.Dir == dir && File.Exists(Path.Combine(dir,"pegged.txt")),"all persistence is isolated");
++        Console.WriteLine("Fixture: " + dir);
++    }
++}

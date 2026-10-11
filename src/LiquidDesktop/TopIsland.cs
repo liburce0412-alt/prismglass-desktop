@@ -14,6 +14,7 @@ internal sealed class TopIsland : Form {
  bool ready,painted,closed,dragging,paused,outlineReady,readyNotified;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="";Rectangle screen;float scale=1;int ticks,regionUpdates;
  public event Action Ready;public event Action<string> Failed;
  public bool IsPainted {get{return painted;}}
+ public Rectangle OcclusionBounds {get{int width=mode=="bar"?Width-8:(int)Math.Min(Width-8,272*scale);return new Rectangle(Left+(Width-width)/2,Top+12,width,(int)((mode=="bar"?42:48)*scale));}}
  [DllImport("user32.dll")]static extern uint GetDpiForWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr h,uint command);
@@ -40,7 +41,7 @@ internal sealed class TopIsland : Form {
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
   if(closed)return;uint dpi=IsHandleCreated?GetDpiForWindow(Handle):96;float nextScale=Math.Max(.8f,Math.Min(1.25f,dpi/96f));if(bounds!=screen||Math.Abs(nextScale-scale)>.01){screen=bounds;Place();outlineKey="";}SyncPixelScale();
   if(theme!=nextTheme||paused!=motionPaused){theme=nextTheme=="Astro"?"Astro":"Sky";paused=motionPaused;layout="";}Publish();
-  if(!preview&&anchor!=IntPtr.Zero&&GetForegroundWindow()!=Handle){var previous=GetWindow(anchor,3);if(previous!=Handle)SetWindowPos(Handle,previous,0,0,0,0,0x13);}
+  if(!preview)LiquidDesktop.PlaceComponent(this,anchor);
  }
  void Publish(){if(!ready)return;string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();string key=theme+Bounds.ToString()+screen.ToString()+paused+stamp;if(key==layout)return;layout=key;Send(new{type="layout",theme=theme,paused=paused,scale=scale,x=Left-screen.Left,y=Top-screen.Top,width=screen.Width,height=screen.Height,wallpaper=stamp});}
  void Send(object value){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}

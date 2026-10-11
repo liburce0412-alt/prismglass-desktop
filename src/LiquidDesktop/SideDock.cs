@@ -22,6 +22,7 @@ internal sealed class SideDock : Form {
  DateTime visibilityRead=DateTime.MinValue,visibilityStamp=DateTime.MinValue;string visibilityState="";
  DateTime widgetRead=DateTime.MinValue,dataRead=DateTime.MinValue,heartbeat=DateTime.MinValue;string lastWidgets="";bool automaticPause;
  public bool IsReady {get{return painted&&!closed;}}
+ public Rectangle OcclusionBounds {get{return new Rectangle(Left+(int)(4*scale),Top+(int)(4*scale),(int)(88*scale),(int)(railHeight*scale));}}
  Rectangle screen;bool opened;string pendingMode;bool motionPaused;float networkShape,bridgeY=40,panelTop=4;
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr h,uint command);
@@ -73,7 +74,7 @@ internal sealed class SideDock : Form {
   if(theme!=nextTheme){theme=nextTheme;layout="";}
   PublishLayout();PublishVisibility(false);
   // Sit directly above desktop widgets, preserving the z-order of ordinary application windows.
-  if(!preview&&firstSkin!=IntPtr.Zero&&GetForegroundWindow()!=Handle){var previous=GetWindow(firstSkin,3);if(previous!=Handle)SetWindowPos(Handle,previous,0,0,0,0,0x13);}
+  if(!preview)LiquidDesktop.PlaceComponent(this,firstSkin);
  }
  void PublishLayout(){
   if(!ready)return;

@@ -1,0 +1,856 @@
+diff --git a/src/CardView.cs b/src/CardView.cs
+index 1baec87..891497f 100644
+--- a/src/CardView.cs
++++ b/src/CardView.cs
+@@ -10,7 +10,7 @@ namespace Pegline
+ {
+     static class Layout
+     {
+-        public const double PanelHeight = 210;
++        public const double PanelHeight = 300;
+         public const double RopeTop = 10;
+         public const double Spacing = 174;
+         public const double CardWidth = 150;
+@@ -98,6 +98,10 @@ namespace Pegline
+     {
+         public readonly Pegged Item;
+         readonly Line line;
++        public readonly LineWindow Owner;
++        readonly PhotoPendulum pendulum = new PhotoPendulum();
++        public double RopeY;
++        public double Mass { get { return RopePhysics.Mass(card.Width, card.Height); } }
+         readonly Grid frameHost = new Grid();
+         readonly Border frame = new Border();
+         readonly Image photo = new Image();
+@@ -120,14 +124,16 @@ namespace Pegline
+         object shownThumb;
+         Size card;
+ 
+-        public CardView(Pegged item, Line line, double x)
++        public CardView(Pegged item, Line line, double x, LineWindow owner)
+         {
+             Item = item;
+             this.line = line;
++            Owner = owner;
+             X = new Spring(0.55, 0.78, x);
+             Width = Layout.CardWidth;
+             RenderTransform = rotate;
+             rotate.CenterX = Layout.CardWidth / 2;
++            rotate.CenterY = Layout.PinAbove;
+ 
+             frame.CornerRadius = new CornerRadius(Frame.Radius);
+             frame.Background = Frame.Glass();
+@@ -200,7 +206,7 @@ namespace Pegline
+             get
+             {
+                 double left = X.Value - card.Width / 2;
+-                double top = Layout.RopeY(X.Value, ActualWidthOfLine) - Layout.PinAbove + drop.Value + Frame.CardOffsetBelowTop;
++                double top = RopeY - Layout.PinAbove + drop.Value + Frame.CardOffsetBelowTop;
+                 return new Rect(left, top, card.Width, card.Height);
+             }
+         }
+@@ -232,7 +238,7 @@ namespace Pegline
+         public void Breeze(Random rnd)
+         {
+             double delay = rnd.NextDouble() * 0.35;
+-            double amount = 1.6 + rnd.NextDouble() * 1.8;
++            double amount = 0.4 + rnd.NextDouble() * 0.6;
+             var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(delay) };
+             t.Tick += delegate { t.Stop(); Nudge(amount); };
+             t.Start();
+@@ -246,7 +252,14 @@ namespace Pegline
+         }
+ 
+         /// One frame of motion.
+-        public void Step(double dt, double targetX, double lineWidth)
++        public void MoveAlongRope(double dt, double targetX, bool held)
++        {
++            X.Target = targetX;
++            if (held) { X.Value = targetX; X.Velocity = 0; }
++            else X.Step(dt);
++        }
++
++        public void Step(double dt, double lineWidth, double ropeY)
+         {
+             UpdateThumb();
+             ActualWidthOfLine = lineWidth;
+@@ -260,9 +273,9 @@ namespace Pegline
+             if (copied && !wasCopied) Nudge(3);
+             wasCopied = copied;
+ 
+-            X.Target = targetX;
+-            X.Step(dt);
+             drop.Step(dt);
++            RopeY = ropeY;
++            pendulum.Step(dt, X.Value, ropeY, card.Height * 0.65, Mass);
+ 
+             if (nudgeT >= 0)
+             {
+@@ -281,7 +294,7 @@ namespace Pegline
+             // Holding presses the photo in slowly, so a long press feels like
+             // it is building up to something.
+             if (pressed) press.SetResponse(0.45, 1); else press.SetResponse(0.3, 0.6);
+-            press.Target = pressed ? 0.95 : (hover ? 1.035 : 1);
++            press.Target = pressed ? 0.985 : (hover ? 1.018 : 1);
+             press.Step(dt);
+ 
+             double targetOpacity = Item.Falling || Item.Flying ? 0 : 1;
+@@ -302,10 +315,9 @@ namespace Pegline
+                 wasHover = hover;
+             }
+ 
+-            double ropeY = Layout.RopeY(X.Value, lineWidth);
+             SetLeft(this, X.Value - Layout.CardWidth / 2);
+             SetTop(this, ropeY - Layout.PinAbove + drop.Value);
+-            rotate.Angle = swing.Value + Item.Tilt;
++            rotate.Angle = pendulum.Degrees + swing.Value + Item.Tilt;
+             scale.ScaleX = scale.ScaleY = press.Value;
+             Opacity = opacity;
+             frameHost.Opacity = dragging ? 0.45 : 1;
+diff --git a/src/Line.cs b/src/Line.cs
+index 552c809..c1b6f71 100644
+--- a/src/Line.cs
++++ b/src/Line.cs
+@@ -25,6 +25,7 @@ namespace Pegline
+         public bool Falling;
+         /// Still flying in from where it was captured; the card waits hidden.
+         public bool Flying;
++        public double RopePosition = Double.NaN;
+ 
+         public Pegged(string path, BitmapSource thumb)
+         {
+@@ -61,12 +62,25 @@ namespace Pegline
+         readonly DispatcherTimer gustTimer = new DispatcherTimer();
+         readonly DispatcherTimer editTimer = new DispatcherTimer();
+         readonly Random rnd = new Random();
++        readonly Dictionary<string, double> positions = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
++        readonly string positionsFile = System.IO.Path.Combine(Settings.Dir, "positions.tsv");
+ 
+         public static readonly string InboxFolder = System.IO.Path.Combine(
+             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pegline", "Screenshots");
+ 
+         public Line()
+         {
++            try
++            {
++                if (File.Exists(positionsFile)) foreach (var row in File.ReadAllLines(positionsFile))
++                {
++                    var parts = row.Split('\t'); double value;
++                    if (parts.Length == 2 && Double.TryParse(parts[1], System.Globalization.NumberStyles.Float,
++                        System.Globalization.CultureInfo.InvariantCulture, out value) && value >= 0 && value <= 1)
++                        positions[System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[0]))] = value;
++                }
++            }
++            catch (Exception ex) { Trace.Write("positions read: " + ex.Message); }
+             Restore();
+             gustTimer.Tick += delegate
+             {
+@@ -110,6 +124,8 @@ namespace Pegline
+             var thumb = Thumbnails.Load(path, 480);
+             if (thumb == null) return Guid.Empty;
+             var item = new Pegged(path, thumb) { Flying = flying };
++            double position;
++            if (positions.TryGetValue(path, out position)) item.RopePosition = position;
+             Items.Add(item);
+             // A full line lets the oldest photo fall off the far end.
+             while (LiveCount > MaxItems)
+@@ -317,6 +333,21 @@ namespace Pegline
+         void Save()
+         {
+             Settings.Pegged = Items.Where(i => !i.Falling).Select(i => i.Path).ToArray();
++            SavePositions();
++        }
++
++        public void SavePositions()
++        {
++            try
++            {
++                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(positionsFile));
++                var rows = Items.Where(i => !i.Falling && !Double.IsNaN(i.RopePosition)).Select(i =>
++                    Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(i.Path)) + "\t" +
++                    i.RopePosition.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
++                File.WriteAllLines(positionsFile, rows);
++            }
++            catch (IOException ex) { Trace.Write("positions save: " + ex.Message); }
++            catch (UnauthorizedAccessException ex) { Trace.Write("positions save: " + ex.Message); }
+         }
+ 
+         void Restore()
+diff --git a/src/LineWindow.cs b/src/LineWindow.cs
+index 1ee9915..d517c6a 100644
+--- a/src/LineWindow.cs
++++ b/src/LineWindow.cs
+@@ -63,13 +63,18 @@ namespace Pegline
+         readonly Canvas rope = new Canvas();
+         readonly Border hint = new Border();
+         readonly Dictionary<Guid, CardView> cards = new Dictionary<Guid, CardView>();
++        readonly RopePhysics physics = new RopePhysics();
++        readonly List<RopeLoad> loads = new List<RopeLoad>();
++        readonly Path[] ropePaths = new Path[3];
++        CardView slidingCard;
++        double slideOffset, originalPosition;
+         readonly TranslateTransform slide = new TranslateTransform(0, -(Layout.PanelHeight + 12));
+         readonly Spring slideSpring = new Spring(0.42, 0.82, -(Layout.PanelHeight + 12));
+         readonly Random rnd = new Random();
+         double hideT = -1, hideFrom;
+         double hintOpacity;
+         TimeSpan lastFrame;
+-        double ropeWidth = -1;
++
+         public IntPtr Handle;
+         public Forms.Screen Screen;
+         bool clickThrough = true;
+@@ -158,7 +163,7 @@ namespace Pegline
+         /// The photo under a point in screen pixels, if any.
+         public Guid PhotoAt(Native.POINT p)
+         {
+-            foreach (var c in cards.Values)
++            foreach (var c in slider.Children.OfType<CardView>().Reverse().OrderByDescending(c => Canvas.GetZIndex(c)))
+             {
+                 if (c.Item.Falling) continue;
+                 if (c.ContainsScreenPoint(new Point(p.X, p.Y))) return c.Item.Id;
+@@ -173,8 +178,9 @@ namespace Pegline
+             int index = line.Items.FindIndex(i => i.Id == id);
+             if (index < 0) return null;
+             double width = ActualWidth > 0 ? ActualWidth : Width;
+-            double x = Layout.X(index, line.Items.Count, width);
+-            double top = Layout.RopeY(x, width) - Layout.PinAbove + Frame.CardOffsetBelowTop;
++            CardView card;
++            double x = cards.TryGetValue(id, out card) ? card.X.Value : Layout.X(index, line.Items.Count, width);
++            double top = Layout.RopeTop + physics.Sample(x / width) - Layout.PinAbove + Frame.CardOffsetBelowTop;
+             var thumb = line.Items[index].Thumb;
+             var size = Frame.CardSize(thumb.PixelWidth, thumb.PixelHeight);
+             return new Rect(Left + x - size.Width / 2, Top + top, size.Width, size.Height);
+@@ -187,6 +193,7 @@ namespace Pegline
+             var live = new HashSet<Guid>(line.Items.Select(i => i.Id));
+             foreach (var gone in cards.Keys.Where(k => !live.Contains(k)).ToList())
+             {
++                if (slidingCard == cards[gone]) EndSlide(false);
+                 slider.Children.Remove(cards[gone]);
+                 cards.Remove(gone);
+             }
+@@ -194,49 +201,89 @@ namespace Pegline
+             {
+                 var item = line.Items[i];
+                 if (cards.ContainsKey(item.Id)) continue;
+-                var card = new CardView(item, line, Layout.X(i, line.Items.Count, width));
++                if (Double.IsNaN(item.RopePosition))
++                {
++                    // Place a new photo in the widest available gap, keeping
++                    // existing positions intact after the user rearranges them.
++                    double best = 0.5, distance = -1;
++                    var occupied = cards.Values.Where(c => !c.Item.Falling).Select(c => c.Item.RopePosition).OrderBy(x => x).ToList();
++                    var candidates = new List<double> { 0.5, 120 / width, 1 - 120 / width };
++                    for (int j = 1; j < occupied.Count; j++) candidates.Add((occupied[j - 1] + occupied[j]) / 2);
++                    foreach (double candidate in candidates)
++                    {
++                        double gap = occupied.Count == 0 ? 1 : occupied.Min(x => Math.Abs(x - candidate));
++                        if (gap > distance) { distance = gap; best = candidate; }
++                    }
++                    item.RopePosition = ClampPosition(best, width);
++                }
++                var card = new CardView(item, line, ClampPosition(item.RopePosition, width) * width, this);
+                 cards[item.Id] = card;
+                 slider.Children.Add(card);
+             }
+         }
+ 
++        static double ClampPosition(double value, double width)
++        {
++            // Leave room for a wide photo to swing around its clip at the ends.
++            double margin = Math.Min(0.45, 120 / Math.Max(1, width));
++            return Math.Max(margin, Math.Min(1 - margin, value));
++        }
++
++        public void BeginSlide(CardView card, Point screenPoint)
++        {
++            slidingCard = card;
++            originalPosition = card.Item.RopePosition;
++            slideOffset = slider.PointFromScreen(screenPoint).X - card.X.Value;
++            Canvas.SetZIndex(card, 10);
++        }
++
++        public void SlideTo(Point screenPoint)
++        {
++            if (slidingCard == null) return;
++            slidingCard.Item.RopePosition = ClampPosition((slider.PointFromScreen(screenPoint).X - slideOffset) / ActualWidth, ActualWidth);
++        }
++
++        public void EndSlide(bool commit)
++        {
++            if (slidingCard == null) return;
++            if (!commit) slidingCard.Item.RopePosition = originalPosition;
++            Canvas.SetZIndex(slidingCard, 0);
++            slidingCard = null;
++            if (commit) line.SavePositions();
++        }
++
+         void DrawRope(double width)
+         {
+-            if (Math.Abs(width - ropeWidth) < 0.5) return;
+-            ropeWidth = width;
+-            rope.Children.Clear();
+-            double top = Layout.RopeTop;
+-            var geo = new PathGeometry();
+-            var fig = new PathFigure { StartPoint = new Point(-20, top) };
+-            fig.Segments.Add(new QuadraticBezierSegment(new Point(width / 2, top + 2 * Layout.Sag(width)), new Point(width + 20, top), true));
+-            geo.Figures.Add(fig);
+-            geo.Freeze();
+-            // A thin, neutral line: a mid gray core with a faint highlight and
+-            // a soft shadow, so it reads on light and dark backgrounds alike.
+-            rope.Children.Add(new Path
++            if (ropePaths[0] == null)
+             {
+-                Data = geo, Stroke = new SolidColorBrush(Color.FromArgb(0x38, 0, 0, 0)), StrokeThickness = 1.4,
+-                RenderTransform = new TranslateTransform(0, 1.2),
+-                Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 2.4 }
+-            });
+-            rope.Children.Add(new Path { Data = geo, Stroke = new SolidColorBrush(Color.FromRgb(140, 140, 140)), StrokeThickness = 1.2 });
+-            rope.Children.Add(new Path
++                ropePaths[0] = new Path { Stroke = new SolidColorBrush(Color.FromArgb(0x38, 0, 0, 0)), StrokeThickness = 2,
++                    RenderTransform = new TranslateTransform(0, 1.2) };
++                ropePaths[1] = new Path { Stroke = new SolidColorBrush(Color.FromRgb(140, 140, 140)), StrokeThickness = 1.2 };
++                ropePaths[2] = new Path { Stroke = new SolidColorBrush(Color.FromArgb(0x73, 255, 255, 255)), StrokeThickness = 0.4,
++                    RenderTransform = new TranslateTransform(0, -0.35) };
++                foreach (var path in ropePaths) rope.Children.Add(path);
++                var mask = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
++                mask.GradientStops.Add(new GradientStop(Colors.Transparent, 0));
++                mask.GradientStops.Add(new GradientStop(Colors.Black, 0.04));
++                mask.GradientStops.Add(new GradientStop(Colors.Black, 0.96));
++                mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
++                rope.OpacityMask = mask;
++                rope.IsHitTestVisible = false;
++            }
++            var geometry = new StreamGeometry();
++            using (var context = geometry.Open())
+             {
+-                Data = geo, Stroke = new SolidColorBrush(Color.FromArgb(0x73, 255, 255, 255)), StrokeThickness = 0.4,
+-                RenderTransform = new TranslateTransform(0, -0.35)
+-            });
+-            // It fades out at both ends so it seems to come from beyond the screen.
+-            var mask = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 0));
+-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.08));
+-            mask.GradientStops.Add(new GradientStop(Colors.Black, 0.92));
+-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
+-            rope.Width = width;
+-            rope.Height = Layout.PanelHeight;
+-            rope.OpacityMask = mask;
+-            rope.IsHitTestVisible = false;
++                context.BeginFigure(new Point(0, Layout.RopeTop), false, false);
++                for (int i = 1; i <= RopePhysics.Segments; i++)
++                {
++                    double u = (double)i / RopePhysics.Segments;
++                    context.LineTo(new Point(u * width, Layout.RopeTop + physics.Sample(u)), true, false);
++                }
++            }
++            geometry.Freeze();
++            foreach (var path in ropePaths) path.Data = geometry;
++            rope.Width = width; rope.Height = Layout.PanelHeight;
+         }
+-
+         void OnFrame(object sender, EventArgs e)
+         {
+             if (!IsVisible) return;
+@@ -247,6 +294,14 @@ namespace Pegline
+             dt = Math.Min(dt, 1.0 / 20);
+ 
+             double width = ActualWidth;
++            if (width <= 0) return;
++            loads.Clear();
++            foreach (var card in cards.Values)
++            {
++                card.MoveAlongRope(dt, ClampPosition(card.Item.RopePosition, width) * width, slidingCard == card);
++                if (!card.Item.Falling && !card.Item.Flying) loads.Add(new RopeLoad(card.X.Value / width, card.Mass));
++            }
++            physics.Step(dt, loads);
+             DrawRope(width);
+ 
+             // Tucked away, the whole line waits above the top edge and slides
+@@ -271,13 +326,13 @@ namespace Pegline
+             hint.Opacity = hintOpacity;
+             hint.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+             Canvas.SetLeft(hint, width / 2 - hint.DesiredSize.Width / 2);
+-            Canvas.SetTop(hint, Layout.RopeY(width / 2, width) + 34 - hint.DesiredSize.Height / 2);
++            Canvas.SetTop(hint, Layout.RopeTop + physics.Sample(0.5) + 34 - hint.DesiredSize.Height / 2);
+ 
+             for (int i = 0; i < line.Items.Count; i++)
+             {
+                 CardView card;
+                 if (cards.TryGetValue(line.Items[i].Id, out card))
+-                    card.Step(dt, Layout.X(i, line.Items.Count, width), width);
++                    card.Step(dt, width, Layout.RopeTop + physics.Sample(card.X.Value / width));
+             }
+         }
+     }
+diff --git a/src/Gestures.cs b/src/Gestures.cs
+index 4d4b133..55db9a4 100644
+--- a/src/Gestures.cs
++++ b/src/Gestures.cs
+@@ -29,80 +29,82 @@ namespace Pegline
+         public static void Attach(FrameworkElement target, CardView card, Line line)
+         {
+             Point? down = null;
+-            bool startedDrag = false, didLongPress = false;
++            bool sliding = false, didLongPress = false;
+             var hold = new DispatcherTimer { Interval = TimeSpan.FromSeconds(HoldSeconds) };
+             Guid id = card.Item.Id;
++            target.ToolTip = Loc.L("Drag sideways to slide on the rope; pull down to drag a file",
++                "Arrastra a los lados sobre la cuerda; tira hacia abajo para sacar el archivo",
++                "左右拖动调整位置；向下拉离绳子可拖到应用或文件夹");
+ 
+-            Action endPress = delegate
++            Action finishPress = delegate
+             {
+                 hold.Stop();
+                 if (line.PressedId == id) line.PressedId = Guid.Empty;
+             };
+-
+             hold.Tick += delegate
+             {
+                 hold.Stop();
+-                if (down == null || startedDrag) return;
++                if (down == null || sliding) return;
+                 didLongPress = true;
+-                endPress();
++                finishPress();
+                 line.Markup(id);
+             };
+-
+             target.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+             {
+                 e.Handled = true;
+-                if (card.InCross(e.GetPosition(target)))
+-                {
+-                    down = null;
+-                    line.Discard(id);
+-                    return;
+-                }
+-                if (e.ClickCount == 2)
+-                {
+-                    down = null;
+-                    endPress();
+-                    line.Open(id);
+-                    return;
+-                }
+-                down = e.GetPosition(target);
+-                startedDrag = false;
+-                didLongPress = false;
++                if (card.InCross(e.GetPosition(target))) { line.Discard(id); return; }
++                if (e.ClickCount == 2) { down = null; finishPress(); line.Open(id); return; }
++                down = target.PointToScreen(e.GetPosition(target));
++                sliding = didLongPress = false;
+                 line.PressedId = id;
+                 hold.Start();
+                 target.CaptureMouse();
+             };
+-
+             target.MouseMove += delegate(object s, MouseEventArgs e)
+             {
+-                if (down == null || startedDrag || didLongPress || e.LeftButton != MouseButtonState.Pressed) return;
+-                var p = e.GetPosition(target);
+-                if (Math.Abs(p.X - down.Value.X) + Math.Abs(p.Y - down.Value.Y) <= 4) return;
+-                startedDrag = true;
+-                endPress();
+-                target.ReleaseMouseCapture();
+-                Drag(target, card, line);
+-                down = null;
++                if (down == null || didLongPress || e.LeftButton != MouseButtonState.Pressed) return;
++                var point = target.PointToScreen(e.GetPosition(target));
++                double dx = (point.X - down.Value.X) / Screens.Scale, dy = (point.Y - down.Value.Y) / Screens.Scale;
++                if (!sliding)
++                {
++                    if (Math.Abs(dx) + Math.Abs(dy) <= 6) return;
++                    hold.Stop();
++                    card.Owner.BeginSlide(card, down.Value);
++                    sliding = true;
++                }
++                if (dy > 70)
++                {
++                    card.Owner.EndSlide(false);
++                    sliding = false; down = null;
++                    finishPress();
++                    target.ReleaseMouseCapture();
++                    Drag(target, card, line);
++                    return;
++                }
++                card.Owner.SlideTo(point);
+             };
+-
+             target.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
+             {
+                 e.Handled = true;
+-                endPress();
++                bool copy = down != null && !sliding && !didLongPress;
++                if (sliding) card.Owner.EndSlide(true);
++                sliding = false; down = null; didLongPress = false;
++                finishPress();
+                 target.ReleaseMouseCapture();
+-                if (down != null && !startedDrag && !didLongPress) line.Copy(id);
+-                down = null;
+-                didLongPress = false;
++                if (copy) line.Copy(id);
++            };
++            target.LostMouseCapture += delegate
++            {
++                if (sliding) card.Owner.EndSlide(false);
++                sliding = false; down = null;
++                finishPress();
+             };
+-
+-            target.LostMouseCapture += delegate { if (!startedDrag) endPress(); };
+-
+             target.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+             {
+                 e.Handled = true;
+                 ShowMenu(target, line, id);
+             };
+         }
+-
+         static void Drag(FrameworkElement source, CardView card, Line line)
+         {
+             Guid id = card.Item.Id;
+diff --git a/README.md b/README.md
+index 29d09fb..8d36375 100644
+--- a/README.md
++++ b/README.md
+@@ -24,6 +24,8 @@ build.cmd
+ | 单击 | 复制图片（同时带图片和文件，粘贴进聊天软件、Word、文件夹都行） |
+ | 长按 | 用画图打开编辑，保存后绳子上的缩略图自动刷新 |
+ | 双击 | 用默认看图软件打开 |
++| 沿绳左右拖动 | 调整挂图位置，松手后摆动逐渐停稳；重启后保留位置 |
++| 向下拉离绳子（约 70 像素逻辑距离） | 转为原来的文件拖拽，再拖入应用、文件夹或桌面 |
+ | 拖进某个应用 | 发一份副本，图还留在绳子上 |
+ | 拖进文件夹 / 桌面 | 文件移过去保存，图离开绳子 |
+ | 拖进回收站，或点左上角的叉 | 扔掉 |
+@@ -59,9 +61,12 @@ Pegline 自己不截图，你照常用原来的快捷键：
+ 
+ 全屏应用（视频、游戏、演示）在前台时绳子不出现。
+ 
++PrismGlass 重力扩展：绳子两端固定，每张照片按显示面积施加重量。大相框使绳子下垂更多，移动照片会改变局部绳形；摆动从拖动时的速度继续并逐渐衰减。重量按画面面积估算，并非文件字节数；满载张力和两端留白限制过度下垂与裁切。
++
+ ## 数据放在哪
+ 
+ - 设置：`%APPDATA%\Pegline\settings.ini`，挂着的图片列表：`%APPDATA%\Pegline\pegged.txt`
++- 沿绳位置：`%APPDATA%\Pegline\positions.tsv`，独立保存，不改写图片
+ - 接管下来的截图：`%LOCALAPPDATA%\Pegline\Screenshots`
+ - 出错日志：`%APPDATA%\Pegline\error.log`；在同目录建一个空文件 `trace.on` 会额外记录 `trace.log`（剪贴板、拖拽事件）
+ - 开机启动：写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+@@ -75,6 +80,7 @@ Pegline 自己不截图，你照常用原来的快捷键：
+ | `App.cs` | 托盘、快捷键、绳子何时放下 / 收起、截图飞上绳子 | `AppDelegate.swift`、`main.swift` |
+ | `LineWindow.cs` | 屏幕顶部那条透明、不抢焦点、只在图片上接收鼠标的窗口；绳子本身 | `LinePanel.swift`、`LineView.swift` |
+ | `CardView.cs` | 一张图：相框、夹子、摆动、微风 | `PeggedView.swift` |
++| `RopePhysics.cs` | 固定两端的受力绳与照片摆动 | PrismGlass 扩展 |
+ | `Gestures.cs` | 单击、长按、拖拽、右键菜单、拖拽预览 | `GrabArea.swift` |
+ | `Line.cs` | 挂着什么、每张图能做什么、持久化 | `Line.swift`、`Markup.swift` |
+ | `Watchers.cs` | 监听 Screenshots 文件夹、接管剪贴板截图、全局快捷键 | `ScreenshotWatcher.swift`、`Inbox.swift`、`HotKey.swift` |
+diff --git a/src/RopePhysics.cs b/src/RopePhysics.cs
+new file mode 100644
+--- /dev/null
++++ b/src/RopePhysics.cs
+@@ -0,0 +1,97 @@
++using System;
++using System.Collections.Generic;
++
++namespace Pegline
++{
++    struct RopeLoad
++    {
++        public double Position, Mass;
++        public RopeLoad(double position, double mass) { Position = position; Mass = mass; }
++    }
++
++    // A tensioned string with fixed ends and distributed gravity. Photo loads
++    // act at their clips; small integration steps keep fast drags stable.
++    sealed class RopePhysics
++    {
++        public const int Segments = 48;
++        readonly double[] y = new double[Segments + 1];
++        readonly double[] velocity = new double[Segments + 1];
++        readonly double[] force = new double[Segments + 1];
++        double accumulator;
++        public RopePhysics()
++        {
++            for (int i = 0; i <= Segments; i++)
++            {
++                double u = (double)i / Segments;
++                y[i] = 4 * 16 * u * (1 - u);
++            }
++        }
++        public static double Mass(double width, double height)
++        {
++            return Math.Max(0.25, Math.Min(1.5, width * height / 10000.0));
++        }
++        public double Sample(double position)
++        {
++            double node = Math.Max(0, Math.Min(1, position)) * Segments;
++            int left = Math.Min(Segments - 1, (int)node);
++            return y[left] + (y[left + 1] - y[left]) * (node - left);
++        }
++        public double MaxSpeed
++        {
++            get { double max = 0; foreach (double v in velocity) max = Math.Max(max, Math.Abs(v)); return max; }
++        }
++        public void Step(double elapsed, IList<RopeLoad> loads)
++        {
++            double total = 0;
++            foreach (var load in loads) total += Math.Max(0, load.Mass);
++            // Increasing tension bounds the sag of a full line without clipping it.
++            double tension = 8 + Math.Min(20, total) * 1.2;
++            for (int i = 0; i <= Segments; i++) force[i] = 128 * tension;
++            foreach (var load in loads)
++            {
++                double node = Math.Max(0, Math.Min(1, load.Position)) * Segments;
++                int left = Math.Min(Segments - 1, (int)node);
++                double fraction = node - left, weight = 500 * Math.Max(0, Math.Min(1.5, load.Mass)) * Segments;
++                force[left] += weight * (1 - fraction);
++                force[left + 1] += weight * fraction;
++            }
++            const double h = 1.0 / 480;
++            accumulator += Math.Max(0, Math.Min(0.05, elapsed));
++            while (accumulator >= h)
++            {
++                for (int i = 1; i < Segments; i++)
++                    velocity[i] += (tension * Segments * Segments * (y[i - 1] - 2 * y[i] + y[i + 1]) + force[i] - 7 * velocity[i]) * h;
++                for (int i = 1; i < Segments; i++) y[i] += velocity[i] * h;
++                accumulator -= h;
++            }
++        }
++    }
++
++    // A pendulum driven by its moving attachment point. Angle and velocity are
++    // retained on release, so a drag never restarts a canned animation.
++    sealed class PhotoPendulum
++    {
++        double angle, angularVelocity, lastX, lastY, vx, vy;
++        bool initialized;
++        public double Degrees { get { return angle * 180 / Math.PI; } }
++        public void Step(double dt, double x, double y, double length, double mass)
++        {
++            if (dt <= 0) return;
++            if (!initialized) { lastX = x; lastY = y; initialized = true; return; }
++            double nextVx = (x - lastX) / dt, nextVy = (y - lastY) / dt;
++            double ax = Math.Max(-4500, Math.Min(4500, (nextVx - vx) / dt));
++            double ay = Math.Max(-250, Math.Min(800, (nextVy - vy) / dt));
++            vx = nextVx; vy = nextVy; lastX = x; lastY = y;
++            int steps = Math.Max(1, (int)Math.Ceiling(dt * 240));
++            double h = dt / steps;
++            for (int i = 0; i < steps; i++)
++            {
++                angularVelocity += (-(900 + ay) / Math.Max(30, length) * Math.Sin(angle)
++                    - ax / Math.Max(30, length) * Math.Cos(angle)
++                    - (2.4 / Math.Sqrt(Math.Max(0.25, mass))) * angularVelocity) * h;
++                angle += angularVelocity * h;
++                if (Math.Abs(angle) > 0.5) { angle = Math.Sign(angle) * 0.5; angularVelocity *= 0.4; }
++            }
++        }
++    }
++}
+diff --git a/tools/TestGravity.cs b/tools/TestGravity.cs
+new file mode 100644
+--- /dev/null
++++ b/tools/TestGravity.cs
+@@ -0,0 +1,52 @@
++using System;
++using System.Collections.Generic;
++using System.Diagnostics;
++using Pegline;
++
++class TestGravity
++{
++    static void Check(bool pass, string name) { if (!pass) throw new Exception(name); Console.WriteLine("PASS " + name); }
++    static void Settle(RopePhysics rope, IList<RopeLoad> loads) { for (int i = 0; i < 1200; i++) rope.Step(1.0 / 120, loads); }
++    static void Main()
++    {
++        var empty = new RopePhysics(); Settle(empty, new RopeLoad[0]);
++        Check(Math.Abs(empty.Sample(0.5) - 16) < 0.2, "unloaded string retains shallow sag");
++        var small = new RopePhysics(); var large = new RopePhysics();
++        Settle(small, new[] { new RopeLoad(0.5, RopePhysics.Mass(40, 70)) });
++        Settle(large, new[] { new RopeLoad(0.5, RopePhysics.Mass(145, 110)) });
++        Check(large.Sample(0.5) > small.Sample(0.5) + 8, "larger displayed photo weighs more");
++        Check(large.Sample(0) == 0 && large.Sample(1) == 0, "anchors remain fixed");
++        Check(large.MaxSpeed < 0.1, "stationary load settles without jitter");
++        var left = new RopePhysics(); Settle(left, new[] { new RopeLoad(0.25, 1.5) });
++        Check(left.Sample(0.25) > left.Sample(0.75) + 6, "shape follows load position");
++        var full = new RopePhysics(); var loads = new List<RopeLoad>();
++        for (int i = 0; i < 12; i++) loads.Add(new RopeLoad(0.15 + i * 0.7 / 11, 1.5));
++        Settle(full, loads);
++        Check(full.Sample(0.5) < 110, "full line fits the panel");
++        var t = Stopwatch.StartNew();
++        for (int i = 0; i < 1800; i++)
++        {
++            loads[0] = new RopeLoad(0.5 + Math.Sin(i * 0.15) * 0.42, 1.5);
++            full.Step(i % 80 == 0 ? 0.4 : 1.0 / 60, loads);
++            CheckFinite(full.Sample(0.5));
++        }
++        Console.WriteLine("1800 loaded frames: " + t.ElapsedMilliseconds + " ms");
++        Console.WriteLine("PASS fast dragging and frame stalls remain stable");
++        Settle(full, new RopeLoad[0]);
++        Check(Math.Abs(full.Sample(0.5) - 16) < 0.2, "removing photos releases the weight");
++        var a = new RopePhysics(); var b = new RopePhysics();
++        var one = new[] { new RopeLoad(0.4, 1) };
++        for (int i = 0; i < 60; i++) a.Step(1.0 / 30, one);
++        for (int i = 0; i < 240; i++) b.Step(1.0 / 120, one);
++        Check(Math.Abs(a.Sample(0.4) - b.Sample(0.4)) < 0.1, "30 and 120 Hz agree");
++        var pendulum = new PhotoPendulum();
++        pendulum.Step(1.0 / 60, 100, 40, 65, 1);
++        for (int i = 1; i <= 20; i++) pendulum.Step(1.0 / 60, 100 + i * 5, 40, 65, 1);
++        double before = pendulum.Degrees;
++        pendulum.Step(1.0 / 60, 200, 40, 65, 1);
++        Check(Math.Abs(before) > 1 && Math.Abs(pendulum.Degrees - before) < 8, "release retains pendulum motion");
++        for (int i = 0; i < 900; i++) pendulum.Step(1.0 / 60, 200, 40, 65, 1);
++        Check(Math.Abs(pendulum.Degrees) < 0.01, "photo swing settles");
++    }
++    static void CheckFinite(double value) { if (Double.IsNaN(value) || Double.IsInfinity(value) || Math.Abs(value) > 200) throw new Exception("unstable string"); }
++}
+diff --git a/tools/TestGravityView.cs b/tools/TestGravityView.cs
+new file mode 100644
+--- /dev/null
++++ b/tools/TestGravityView.cs
+@@ -0,0 +1,146 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Reflection;
++using System.Runtime.Serialization;
++using System.Windows;
++using System.Windows.Controls;
++using System.Windows.Media;
++using System.Windows.Media.Imaging;
++using Pegline;
++
++// Exercises the real WPF view against generated thumbnails. No clipboard,
++// screenshot watcher, user settings, user files or tray process is touched.
++class TestGravityView
++{
++    static double time;
++    static readonly BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
++    static T Field<T>(object owner, string name) { return (T)owner.GetType().GetField(name, Fields).GetValue(owner); }
++    static void Check(bool pass, string name) { if (!pass) throw new Exception(name); Console.WriteLine("PASS " + name); }
++    static Line Fixture(string dir)
++    {
++        // Redirect every persistence path before a UI action can call Save.
++        var settings = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
++        typeof(Settings).GetField("Dir", settings).SetValue(null, dir);
++        typeof(Settings).GetField("file", settings).SetValue(null, Path.Combine(dir, "settings.ini"));
++        typeof(Settings).GetField("peggedFile", settings).SetValue(null, Path.Combine(dir, "pegged.txt"));
++        typeof(Settings).GetField("values", settings).SetValue(null, new Dictionary<string, string> { { "soundOff", "1" } });
++        var line = (Line)FormatterServices.GetUninitializedObject(typeof(Line));
++        typeof(Line).GetField("Items", Fields).SetValue(line, new List<Pegged>());
++        typeof(Line).GetField("positionsFile", Fields).SetValue(line, Path.Combine(dir, "positions.tsv"));
++        line.Revealed = true;
++        return line;
++    }
++    static BitmapSource Thumb(int width, int height, Color color)
++    {
++        var visual = new DrawingVisual();
++        using (var dc = visual.RenderOpen())
++        {
++            dc.DrawRectangle(new LinearGradientBrush(color, Color.FromRgb(18, 27, 44), 75), null, new Rect(0, 0, width, height));
++            dc.DrawEllipse(new SolidColorBrush(Color.FromArgb(115, 250, 229, 180)), null, new Point(width * .73, height * .28), height * .16, height * .16);
++            var path = new StreamGeometry();
++            using (var g = path.Open())
++            {
++                g.BeginFigure(new Point(0, height * .75), true, true);
++                g.LineTo(new Point(width * .3, height * .45), true, false);
++                g.LineTo(new Point(width * .65, height * .85), true, false);
++                g.LineTo(new Point(width, height * .5), true, false);
++                g.LineTo(new Point(width, height), true, false);
++                g.LineTo(new Point(0, height), true, false);
++            }
++            dc.DrawGeometry(new SolidColorBrush(Color.FromArgb(185, 24, 34, 46)), null, path);
++        }
++        var bmp = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
++        bmp.Render(visual); bmp.Freeze(); return bmp;
++    }
++    static void Advance(LineWindow view, int frames)
++    {
++        var tick = typeof(LineWindow).GetMethod("OnFrame", Fields);
++        for (int i = 0; i < frames; i++)
++        {
++            time += 1.0 / 120;
++            var frame = Activator.CreateInstance(typeof(RenderingEventArgs), Fields, null, new object[] { TimeSpan.FromSeconds(time) }, null);
++            tick.Invoke(view, new object[] { null, frame });
++        }
++        view.UpdateLayout();
++    }
++    static void Save(LineWindow view, string path)
++    {
++        var root = (FrameworkElement)view.Content;
++        var bmp = new RenderTargetBitmap((int)view.Width, (int)view.Height, 96, 96, PixelFormats.Pbgra32);
++        bmp.Render(root);
++        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bmp));
++        using (var file = File.Create(path)) png.Save(file);
++    }
++    [STAThread]
++    static void Main(string[] args)
++    {
++        Screens.Init();
++        string dir = Path.GetFullPath(args[0]); Directory.CreateDirectory(dir);
++        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
++        var line = Fixture(dir);
++        line.Items.Add(new Pegged(Path.Combine(dir, "wide.png"), Thumb(480, 125, Color.FromRgb(146, 94, 66))) { RopePosition = .22 });
++        line.Items.Add(new Pegged(Path.Combine(dir, "large.png"), Thumb(420, 320, Color.FromRgb(69, 125, 111))) { RopePosition = .52 });
++        line.Items.Add(new Pegged(Path.Combine(dir, "portrait.png"), Thumb(200, 460, Color.FromRgb(116, 104, 154))) { RopePosition = .79 });
++        foreach (var item in line.Items)
++        {
++            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(item.Thumb));
++            using (var file = File.Create(item.Path)) encoder.Save(file);
++        }
++        var view = new LineWindow(line) { Width = 1000, Height = Layout.PanelHeight, Left = -12000, Top = -12000, Topmost = false };
++        view.Show(); view.UpdateLayout(); view.Sync(); Advance(view, 1200);
++        var cards = Field<Dictionary<Guid, CardView>>(view, "cards");
++        var slider = Field<Canvas>(view, "slider");
++        var large = cards[line.Items[1].Id];
++        Check(large.Mass > cards[line.Items[0].Id].Mass * 1.5, "real card proportions produce different loads");
++        foreach (var card in cards.Values)
++        {
++            var clip = card.TransformToAncestor(slider).Transform(new Point(Layout.CardWidth / 2, Layout.PinAbove));
++            Check(Math.Abs(clip.Y - card.RopeY) < .5, "clothespin stays attached to the rope");
++            var frame = Field<Grid>(card, "frameHost");
++            var centre = frame.PointToScreen(new Point(frame.Width / 2, frame.Height / 2));
++            Check(view.PhotoAt(new Native.POINT { X = (int)centre.X, Y = (int)centre.Y }) == card.Item.Id, "rendered card accepts its hit test");
++        }
++        Save(view, Path.Combine(dir, "gravity-before.png"));
++        var start = slider.PointToScreen(new Point(large.X.Value, large.RopeY + 45));
++        view.BeginSlide(large, start);
++        bool followed = true;
++        for (int i = 1; i <= 36; i++)
++        {
++            view.SlideTo(new Point(start.X - i * 5 * Screens.Scale, start.Y)); Advance(view, 1);
++            followed &= Math.Abs(large.X.Value - (520 - i * 5)) < .2;
++        }
++        Check(followed, "drag tracks the pointer without spring lag");
++        double before = ((RotateTransform)large.RenderTransform).Angle;
++        view.EndSlide(true); Advance(view, 1);
++        Check(Math.Abs(((RotateTransform)large.RenderTransform).Angle - before) < 5, "release does not reset the swing");
++        Check(File.ReadAllLines(Path.Combine(dir, "positions.tsv")).Length == 3, "positions persist separately from image files");
++        Save(view, Path.Combine(dir, "gravity-release.png"));
++        Advance(view, 1200); Save(view, Path.Combine(dir, "gravity-after.png"));
++        Check(Math.Abs(large.Item.RopePosition - .34) < .002, "release retains the new location");
++        start = slider.PointToScreen(new Point(large.X.Value, large.RopeY + 45));
++        view.BeginSlide(large, start); view.SlideTo(new Point(start.X + 180 * Screens.Scale, start.Y)); Advance(view, 20);
++        view.EndSlide(false); Advance(view, 600);
++        Check(Math.Abs(large.Item.RopePosition - .34) < .002, "cancel restores the prior location");
++        view.BeginSlide(large, slider.PointToScreen(new Point(large.X.Value, large.RopeY + 45)));
++        view.SlideTo(slider.PointToScreen(new Point(-300, 45))); Advance(view, 1);
++        view.EndSlide(true); Advance(view, 50);
++        var largeFrame = Field<Grid>(large, "frameHost");
++        var bounds = largeFrame.TransformToAncestor(slider).TransformBounds(new Rect(0, 0, largeFrame.Width, largeFrame.Height));
++        Check(bounds.Left >= 0 && bounds.Bottom < view.Height, "edge drag leaves room for swinging photo");
++        large.Item.RopePosition = .52; Advance(view, 1200);
++        if (args.Contains("--interactive"))
++        {
++            view.Title = "Pegline gravity preview";
++            view.Left = 220; view.Top = 180;
++            view.Background = new SolidColorBrush(Color.FromRgb(224, 231, 239));
++            Native.SetExStyle(view.Handle, Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | Native.WS_EX_TRANSPARENT, false);
++            view.SetClickThrough(false); view.ShowInTaskbar = true;
++            typeof(LineWindow).GetField("lastFrame", Fields).SetValue(view, TimeSpan.Zero);
++            view.Closed += delegate { app.Shutdown(); };
++            app.Run();
++        }
++        else { view.Close(); app.Shutdown(); }
++    }
++}

@@ -1,4 +1,4 @@
-param([ValidateSet('Apply','Restore','Validate')][string]$Mode='Apply',[ValidateRange(75,200)][int]$Scale)
+param([ValidateSet('Apply','Restore','Validate')][string]$Mode='Apply',[ValidateRange(75,200)][int]$Scale,[ValidateSet('rounded-dark','rounded-light','macos','windows')][string]$Style)
 $ErrorActionPreference='Stop'
 $marker=Join-Path $PSScriptRoot 'cursor-theme.active'
 $cursorRoot=Join-Path $PSScriptRoot 'Cursors'
@@ -23,8 +23,18 @@ function Restore-Cursors {
  Remove-Item -LiteralPath $marker
 }
 if($Mode -eq 'Restore'){Restore-Cursors;return}
+if(!$PSBoundParameters.ContainsKey('Style')){
+ $Style='rounded-dark'
+ $optionsPath=Join-Path $PSScriptRoot 'cursor-options.json'
+ if(Test-Path -LiteralPath $optionsPath){try{$savedOptions=Get-Content -LiteralPath $optionsPath -Raw | ConvertFrom-Json;if($savedOptions.style -in @('rounded-dark','rounded-light','macos','windows')){$Style=$savedOptions.style}}catch{}}
+}
+if($Style -eq 'windows'){
+ if($Mode -eq 'Apply'){Restore-Cursors;'Using the saved Windows pointer theme and size.'}else{'Validated original Windows pointer mode.'}
+ return
+}
+$arrow=switch($Style){'rounded-light'{'PrismArrowLight.cur'} 'macos'{'Normal.cur'} default{'PrismArrow.cur'}}
 $map=[ordered]@{
- 32512='Normal.cur';32513='Text.cur';32514='Busy.ani';32515='Precision.cur'
+ 32512=$arrow;32513='Text.cur';32514='Busy.ani';32515='Precision.cur'
  32516='Alternate.cur';32642='Diagonal Resize 1.cur';32643='Diagonal Resize 2.cur'
  32644='Horizontal Resize.cur';32645='Vertical Resize.cur';32646='Move.cur'
  32648='Unavailable.cur';32649='Link.cur';32650='Working.ani';32651='Help.cur'
@@ -42,20 +52,21 @@ $handles=@{}
 try {
  foreach($entry in $map.GetEnumerator()){
   $path=Join-Path $cursorRoot $entry.Value
+  if($entry.Value -in @('PrismArrow.cur','PrismArrowLight.cur')){$path=Join-Path $PSScriptRoot ('Cursors/'+$entry.Value)}
   if(!(Test-Path -LiteralPath $path -PathType Leaf)){throw "Missing cursor: $path"}
   $handle=[PrismCursorNative]::LoadImage([IntPtr]::Zero,$path,2,$width,$height,0x10)
   if($handle -eq [IntPtr]::Zero){throw "Cannot load cursor: $path"}
   $handles[$entry.Key]=$handle
  }
  if($Mode -eq 'Validate'){"Validated $($handles.Count) native cursor resources.";return}
- 'Transient macOS-style cursor theme; restore from Windows settings on exit.' | Set-Content -LiteralPath $marker
+ "Transient $Style pointer theme; restore from Windows settings on exit." | Set-Content -LiteralPath $marker
  foreach($id in @($handles.Keys)){
   if(![PrismCursorNative]::SetSystemCursor($handles[$id],[uint32]$id)){throw "Cannot apply cursor role $id"}
   # Windows owns and destroys this handle after a successful SetSystemCursor.
   $handles.Remove($id)
  }
  [IO.File]::WriteAllText($scalePath,$Scale.ToString())
- 'Applied macOS-style cursors without changing the saved Windows pointer theme.'
+ "Applied $Style pointer theme without changing the saved Windows pointer theme."
 } catch {
  if($Mode -eq 'Apply'){Restore-Cursors}
  throw

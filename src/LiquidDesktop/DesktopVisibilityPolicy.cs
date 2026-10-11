@@ -15,7 +15,11 @@ internal static class DesktopVisibilityPolicy {
   return false;
  }
  public static bool OverlapsDock(IEnumerable<DesktopWindowState> windows,Rectangle dock){
-  foreach(var window in windows){if(!window.CanCover)continue;var overlap=Rectangle.Intersect(window.Bounds,dock);if(overlap.Width>8&&overlap.Height>8)return true;}
+  return OverlapsComponent(windows,dock);
+ }
+ public static bool OverlapsComponent(IEnumerable<DesktopWindowState> windows,Rectangle component){
+  if(component.Width<=0||component.Height<=0)return false;
+  foreach(var window in windows){if(!window.CanCover)continue;var overlap=Rectangle.Intersect(window.Bounds,component);if(overlap.Width>8&&overlap.Height>8)return true;}
   return false;
  }
  static bool Covers(Rectangle window,Rectangle area){return window.Left<=area.Left+2&&window.Top<=area.Top+2&&window.Right>=area.Right-2&&window.Bottom>=area.Bottom-2;}
