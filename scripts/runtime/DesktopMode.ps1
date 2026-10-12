@@ -9,6 +9,7 @@ $bridge=Join-Path $PSScriptRoot 'MusicBridge.py'
 $rainmeter=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Raw).Trim()
 $pythonCommand=Get-Command pythonw.exe -ErrorAction SilentlyContinue
 $python=if($pythonCommand){$pythonCommand.Source}else{$null}
+if(!('DesktopIcons' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'LiquidDesktop\DesktopIcons.cs')}
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -34,7 +35,6 @@ public static class DesktopTaskbar {
  static IntPtr DesktopView(){IntPtr found=IntPtr.Zero;EnumWindows((h,p)=>{var view=FindWindowEx(h,IntPtr.Zero,"SHELLDLL_DefView",null);if(view==IntPtr.Zero)return true;found=view;return false;},IntPtr.Zero);return found;}
  public static bool IconsVisible(){var view=DesktopView();var list=FindWindowEx(view,IntPtr.Zero,"SysListView32",null);return view!=IntPtr.Zero && list!=IntPtr.Zero && IsWindowVisible(view) && IsWindowVisible(list);}
  public static bool ShellReady(){var view=DesktopView();return view!=IntPtr.Zero && FindWindowEx(view,IntPtr.Zero,"SysListView32",null)!=IntPtr.Zero && FindWindow("Shell_TrayWnd",null)!=IntPtr.Zero;}
- public static void SetIcons(bool visible){var view=DesktopView();if(view==IntPtr.Zero)throw new InvalidOperationException("Desktop icon view was not found.");var list=FindWindowEx(view,IntPtr.Zero,"SysListView32",null);if(list==IntPtr.Zero)throw new InvalidOperationException("Desktop icon list was not found.");if(visible){ShowWindow(view,5);uint key,flags;byte alpha;if(GetLayeredWindowAttributes(view,out key,out alpha,out flags)&&(flags&2)!=0)SetLayeredWindowAttributes(view,key,255,flags);}ShowWindow(list,visible?5:0);RedrawWindow(view,IntPtr.Zero,IntPtr.Zero,0x185);}
  public static bool TaskbarVisible(){return IsWindowVisible(FindWindow("Shell_TrayWnd",null));}
  public static int State(){var d=new DATA();d.cbSize=Marshal.SizeOf(d);return (int)SHAppBarMessage(4,ref d).ToUInt64();}
  [StructLayout(LayoutKind.Sequential)] public struct MONITOR {public int size;public RECT monitor,work;public uint flags;}
@@ -60,7 +60,7 @@ if($Mode -eq 'Login'){
  & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore
  [DesktopTaskbar]::Set(2,$true)
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
- [DesktopTaskbar]::SetIcons($true)
+ [DesktopIcons]::SetVisible($true)
  if(![DesktopTaskbar]::IconsVisible() -or ![DesktopTaskbar]::TaskbarVisible() -or ([DesktopTaskbar]::State() -band 1) -ne 0){throw 'Native desktop login recovery did not reach the requested state.'}
  @{Time=(Get-Date).ToString('o');Mode='Ordinary';IconsVisible=$true;TaskbarState=[DesktopTaskbar]::State();BeautyStarted=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'ordinary-login-status.json') -Encoding utf8
  'LOGIN: Ordinary desktop icons and Windows taskbar restored; no beauty components started.'
@@ -88,25 +88,21 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  }
  [DesktopTaskbar]::Set(2,$true)
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
- if([DesktopTaskbar]::ShellReady()){[DesktopTaskbar]::SetIcons($true)}
+ if([DesktopTaskbar]::ShellReady()){[DesktopIcons]::SetVisible($true)}
  'GAME: Desktop renderer, Rainmeter and music bridge stopped; Windows taskbar and desktop icons shown.'
 }else{
  if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath}
  # Keep the ordinary desktop usable until every required component has painted.
  [DesktopTaskbar]::Set(2,$true)
- [DesktopTaskbar]::SetIcons($true)
+ [DesktopIcons]::SetVisible($true)
  # Let the restore shortcut fully release before starting either desktop app.
  $releaseDeadline=(Get-Date).AddSeconds(15)
  while([DesktopTaskbar]::RestoreKeysHeld() -and (Get-Date) -lt $releaseDeadline){Start-Sleep -Milliseconds 100}
  if([DesktopTaskbar]::RestoreKeysHeld()){throw 'Release the shortcut keys and run Restore Desktop again.'}
- $barState=3
  $iconsVisible=$false
- $hideIcons=0
  if(Test-Path $statePath){
   $saved=Get-Content $statePath -Raw|ConvertFrom-Json
-  $barState=[int]$saved.TaskbarState
   if($null -ne $saved.DesktopIconsVisible){$iconsVisible=[bool]$saved.DesktopIconsVisible}
-  if($null -ne $saved.HideIcons){$hideIcons=[int]$saved.HideIcons}
  }
  if(!(Get-Process Rainmeter -ErrorAction SilentlyContinue)){Start-Process $rainmeter -WindowStyle Hidden}
  Start-Sleep -Milliseconds 500
@@ -135,10 +131,12 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  }
  if(!$renderReady){throw 'Glass renderer or side dock did not become ready; ordinary desktop retained.'}
  Set-Content -LiteralPath $readyPath -Value (Get-Date).ToString('o') -Encoding ascii
- Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value $hideIcons
- [DesktopTaskbar]::SetIcons($iconsVisible)
- [DesktopTaskbar]::Set(3,$false)
- [DesktopTaskbar]::FullWorkArea()
+ # Clear both Explorer's cached FWF_NOICONS and saved folder-view preference.
+ # Only the current icon window is hidden; next login remains ordinary.
+ Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
+ [DesktopIcons]::SetVisible($iconsVisible)
+ # LiquidDesktop temporarily hides the taskbar and releases its work area after readiness.
+ # Do not enable persistent auto-hide or preempt its work-area restore snapshot here.
  if(Test-Path $statePath){Remove-Item -LiteralPath $statePath}
  & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Apply
  try { & (Join-Path $PSScriptRoot 'Pegline.ps1') -Mode Start } catch { Write-Warning $_.Exception.Message }
@@ -150,7 +148,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  if('DesktopTaskbar' -as [type]){
   if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath -ErrorAction SilentlyContinue}
   [DesktopTaskbar]::Set(2,$true)
-  if([DesktopTaskbar]::ShellReady()){[DesktopTaskbar]::SetIcons($true)}
+  if([DesktopTaskbar]::ShellReady()){[DesktopIcons]::SetVisible($true)}
  }
  throw
 } finally {$modeLock.ReleaseMutex();$modeLock.Dispose()}

@@ -37,6 +37,4 @@ foreach($item in @(@('开启 PrismGlass','Beauty'),@('退出 PrismGlass','Game')
  $lnk=$ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) ($item[0]+'.lnk')))
  $lnk.TargetPath=$pwsh;$lnk.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+$Destination+'\DesktopMode.ps1" -Mode '+$item[1];$lnk.WindowStyle=7;$lnk.Save()
 }
-$lnk=$ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Startup')) 'PrismGlass - Restore ordinary desktop.lnk'))
-$lnk.TargetPath=$pwsh;$lnk.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+$Destination+'\DesktopMode.ps1" -Mode Login';$lnk.WindowStyle=7;$lnk.Save()
-Write-Output 'Installed. Beauty is manual-only. The login shortcut only restores the ordinary Windows desktop.'
+Write-Output 'Installed. Start and exit PrismGlass manually with the desktop shortcuts. No login startup item or scheduled task was created.'

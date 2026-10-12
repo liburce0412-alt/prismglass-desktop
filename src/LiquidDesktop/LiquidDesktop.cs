@@ -23,6 +23,7 @@ internal sealed class LiquidDesktop : Form {
  List<DesktopWindowState> desktopWindows=new List<DesktopWindowState>();
  DateTime windowProbe=DateTime.MinValue;bool screenCovered,manualMotionPause;string componentVisibility="";
  readonly CursorTrail cursorTrail=new CursorTrail();
+ readonly TaskbarVisibility taskbarVisibility=new TaskbarVisibility();
  Rectangle screen; List<object> cards=new List<object>(); Point lastPointer=new Point(-999,-999);
 
  IntPtr lastSkin,dockWindow; Rectangle dockRectangle; bool dockShown=true; readonly DockVisibilityPolicy dockPolicy=new DockVisibilityPolicy();string dockDecision=""; int ticks; DockBackend backend; readonly DockPlate dockPlate=new DockPlate();
@@ -61,16 +62,9 @@ internal sealed class LiquidDesktop : Form {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr FindWindow(string c,string t);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string c,string t);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
- [StructLayout(LayoutKind.Sequential)] struct APPBAR {public int cb;public IntPtr h;public uint message,edge;public RECT rect;public IntPtr param;}
- [DllImport("shell32.dll")]static extern UIntPtr SHAppBarMessage(uint message,ref APPBAR data);
- [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint param,ref RECT rect,uint flags);
  void Taskbar(bool visible){
   if(!visible&&!File.Exists(Path.Combine(root,"desktop-ready.flag")))return;
-  var h=FindWindow("Shell_TrayWnd",null);var data=new APPBAR{cb=Marshal.SizeOf(typeof(APPBAR)),h=h};int desired=visible?2:3;
-  if(h!=IntPtr.Zero&&(int)SHAppBarMessage(4,ref data).ToUInt64()!=desired){data.param=new IntPtr(desired);SHAppBarMessage(10,ref data);}
-  if(h!=IntPtr.Zero&&IsWindowVisible(h)!=visible)ShowWindow(h,visible?5:0);
-  h=IntPtr.Zero;while((h=FindWindowEx(IntPtr.Zero,h,"Shell_SecondaryTrayWnd",null))!=IntPtr.Zero)if(!IsWindowVisible(h))ShowWindow(h,5);
-  if(!visible){var area=new RECT();if(SystemParametersInfo(48,0,ref area,0)&&area.L==screen.Left&&area.T==screen.Top&&area.R==screen.Right&&area.B<screen.Bottom&&screen.Bottom-area.B<=128){area.B=screen.Bottom;SystemParametersInfo(47,0,ref area,2);}}
+  taskbarVisibility.Set(visible,screen);
  }
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")]static extern bool IsIconic(IntPtr h);
@@ -157,7 +151,14 @@ internal sealed class LiquidDesktop : Form {
   if(hidden==legacyTopHidden)return;legacyTopHidden=hidden;layoutKey="";
   try{Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,(hidden?"!DeactivateConfig \"PrismGlass\\Topbar\"":"!ActivateConfig \"PrismGlass\\Topbar\" \"Main.ini\"")){UseShellExecute=false,CreateNoWindow=true});}catch{}
  }
- void RestoreIcons(){EnumWindows((h,p)=>{var v=FindWindowEx(h,IntPtr.Zero,"SHELLDLL_DefView",null);if(v!=IntPtr.Zero){var icons=FindWindowEx(v,IntPtr.Zero,"SysListView32",null);ShowWindow(v,5);if(icons!=IntPtr.Zero)ShowWindow(icons,5);}return true;},IntPtr.Zero);}
+ void RestoreIcons(){
+  try{DesktopIcons.SetVisible(true);}
+  catch(Exception ex){
+   // Explorer may already be shutting down; still release any remaining icon HWND.
+   EnumWindows((h,p)=>{var v=FindWindowEx(h,IntPtr.Zero,"SHELLDLL_DefView",null);if(v!=IntPtr.Zero){var icons=FindWindowEx(v,IntPtr.Zero,"SysListView32",null);ShowWindow(v,5);if(icons!=IntPtr.Zero)ShowWindow(icons,5);}return true;},IntPtr.Zero);
+   try{File.WriteAllText(Path.Combine(root,"icon-restore-error.txt"),ex.ToString());}catch{}
+  }
+ }
  void ComponentFailed(int component){
   if(closing)return;
   componentRecovery.Failed(component,DateTime.UtcNow);Taskbar(true);
