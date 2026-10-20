@@ -8,11 +8,51 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 
 **实验性项目 / Windows x64。** 从个人长期使用的桌面方案整理而来，使用 C# WinForms + WebView2 + WebGL + Rainmeter。默认开机进入普通 Windows 桌面，美化由用户手动开启。
 
-[看显示效果](#显示效果) · [功能](#功能) · [构建与安装](#构建与安装) · [操作速查](#操作速查) · [常见问题](#常见问题)
+[看显示效果](#显示效果) · [歌词效果](#dock-歌词效果) · [功能](#功能) · [构建与安装](#构建与安装) · [操作速查](#操作速查) · [常见问题](#常见问题)
 
 ## 显示效果
 
-以下均由本仓库的 **真实 WebView2 / WebGL 组件运行后采集**，不是设计概念图。为保护隐私，采集使用独立预览环境、默认渐变底图与演示数据；不代表作者的真实账户额度或个人记录，也不是整台桌面的实机录屏。
+以下均由本仓库的 **真实 WebView2 / WebGL 组件运行后采集**，不是设计概念图。采集使用独立预览环境、合成渐变底图与演示数据；不代表作者的真实账户额度或个人记录，也不是整台桌面的实机录屏。
+
+### Dock 歌词效果
+
+![Dock 歌词真实动效：玻璃收缩、冰蓝白字、极光波浪、玫瑰霓虹、楷体聚焦和恢复 Dock](docs/media/dock-lyrics.gif)
+
+播放时玻璃条平滑收拢，换句时应用所选字效；鼠标靠近后恢复 Dock。动图依次展示 **冰蓝白字 / 浮起 → 极光流彩 / 波浪 → 玫瑰霓虹 / 弹性 → 月白楷体 / 聚焦**。
+
+[查看高清 MP4](docs/media/dock-lyrics.mp4) · [素材与复现说明](docs/media/README.md#歌词效果素材)
+
+> 约 13 秒循环，无音轨；文字均为演示句子。采集运行的是当前歌词与玻璃代码，只展示 WebView 图层，未包含 Rainmeter 应用图标。录制帧率不代表桌面实际帧率。
+
+#### 在音乐面板里调整效果
+
+<table>
+  <tr><th>风格预设与实时预览</th><th>字体、字号与动效调节</th></tr>
+  <tr>
+    <td><img src="docs/media/lyrics-settings.png" alt="音乐面板的歌词外观：实时预览与八套风格预设" width="360"></td>
+    <td><img src="docs/media/lyrics-controls.png" alt="音乐面板的歌词字体、字号、字重、字距、亮度和动效选项" width="360"></td>
+  </tr>
+</table>
+
+打开 **音乐 → 歌词外观**：8 套预设、8 类字体、4 种排布、12 种换句动效和 5 种文字光效可以自由组合；颜色、强度、速度及宽度调整会自动保存。
+
+<details>
+<summary><strong>展开查看四种歌词风格的静态细节</strong></summary>
+
+<table>
+  <tr><th>冰蓝白字</th><th>极光流彩</th></tr>
+  <tr>
+    <td><img src="docs/media/lyrics-ice.png" alt="冰蓝白字歌词胶囊，纯色主字与柔和光晕" width="440"></td>
+    <td><img src="docs/media/lyrics-aurora.png" alt="极光流彩歌词胶囊，浅绿色渐变字效" width="440"></td>
+  </tr>
+  <tr><th>玫瑰霓虹</th><th>月白书笺</th></tr>
+  <tr>
+    <td><img src="docs/media/lyrics-rose.png" alt="玫瑰霓虹歌词胶囊，粉色文字与霓虹光晕" width="440"></td>
+    <td><img src="docs/media/lyrics-ink.png" alt="月白书笺歌词胶囊，楷体与月白配色" width="440"></td>
+  </tr>
+</table>
+
+</details>
 
 ### 顶部栏 → 灵动岛 → 展开面板
 
