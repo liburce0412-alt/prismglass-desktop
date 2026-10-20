@@ -1,0 +1,27 @@
+#lyrics-layer{position:absolute;inset:0;transform-origin:0 0;pointer-events:none;user-select:none}
+#dock-lyrics{position:absolute;opacity:0;pointer-events:none}
+.lyric-copy{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#fff;font-family:"Segoe UI Variable Display","Microsoft YaHei UI",sans-serif;text-align:center;isolation:isolate}
+.lyric-window{width:var(--copy-width,260px);max-width:calc(100% - 40px);overflow:hidden;white-space:nowrap;line-height:1.25;flex:none;padding:3px 0;box-sizing:content-box}
+.lyric-window.overflowing{text-align:left;mask-image:linear-gradient(90deg,transparent,#000 12px,#000 calc(100% - 12px),transparent)}
+.lyric-main,.lyric-secondary{display:inline-block;white-space:pre;max-width:none}
+.lyric-main{font-size:var(--lyric-size,26px);font-weight:var(--lyric-weight,650);letter-spacing:var(--lyric-spacing,.02em);color:var(--lyric-color,#fff);text-shadow:0 1px 2px #071327,0 0 var(--lyric-glow,3px) var(--lyric-accent,#9edfff);-webkit-text-stroke:.15px currentColor}
+.lyric-secondary{font-size:var(--lyric-secondary-size,18px);font-weight:500;letter-spacing:var(--lyric-spacing,.02em);color:var(--lyric-secondary,#dceaf9);text-shadow:0 1px 2px #071327;opacity:var(--lyric-secondary-opacity,.8)}
+.lyric-letter{display:inline-block;white-space:pre}
+.lyric-copy [hidden]{display:none!important}
+.lyric-copy[data-layout=single] .next-window{display:none}
+.lyric-copy[data-layout=split]{flex-direction:row;gap:20px}
+.lyric-copy[data-layout=split] .lyric-window{max-width:calc(50% - 30px)}
+.lyric-copy[data-layout=split] .next-window{border-left:1px solid #ffffff35;padding-left:20px}
+.lyric-copy[data-layout=stack] .next-window{order:-1}
+.lyric-copy[data-layout=stack]{gap:0}
+.lyric-copy[data-texture=gradient] .lyric-main,.lyric-copy[data-texture=shimmer] .lyric-main{background:linear-gradient(110deg,var(--lyric-color) 18%,var(--lyric-accent) 50%,var(--lyric-color) 82%);background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 1px 2px #07132733}
+.lyric-copy[data-texture=shimmer] .lyric-main{background-size:220% 100%;animation:lyric-sheen var(--lyric-light-duration,6s) ease-in-out infinite alternate}
+.lyric-copy:is([data-texture=gradient],[data-texture=shimmer]) .lyric-letter{background:linear-gradient(110deg,var(--lyric-color),var(--lyric-accent));background-clip:text;-webkit-background-clip:text}
+.lyric-copy[data-texture=neon] .lyric-main{text-shadow:0 1px 2px #071327,0 0 calc(2px + var(--lyric-glow,3px)) var(--lyric-accent),0 0 calc(4px + var(--lyric-glow,3px)*1.5) var(--lyric-accent);animation:lyric-breathe var(--lyric-light-duration,6s) ease-in-out infinite alternate}
+.lyric-copy[data-texture=outline] .lyric-main{-webkit-text-stroke:1px var(--lyric-color);-webkit-text-fill-color:transparent;text-shadow:0 0 var(--lyric-glow,3px) var(--lyric-accent)}
+.lyric-copy.interlude .lyric-main{opacity:.85}
+.lyric-copy.reduced .lyric-window{mask-image:none;text-overflow:ellipsis}
+.lyric-copy.reduced *{animation:none!important}
+@keyframes lyric-sheen{from{background-position:100% 0}to{background-position:0 0}}
+@keyframes lyric-breathe{from{opacity:1}to{opacity:calc(1 - var(--lyric-light-opacity,.2))}}
+@media(prefers-reduced-motion:reduce){.lyric-copy *{animation:none!important}}

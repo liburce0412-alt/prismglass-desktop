@@ -7,14 +7,15 @@ function Update()
  if f then stamp,theme=f:read('*a'):match('(%d+)%s+(%a+)');f:close() end
  local active=stamp and math.abs(os.time()-tonumber(stamp))<7
  local mode=active and 'live' or 'legacy'
- if mode~=lastMode then
+ local modeChanged=mode~=lastMode
+ if modeChanged then
   SKIN:Bang(active and '!HideMeterGroup' or '!ShowMeterGroup','LegacyGlass')
   lastMode=mode
  end
  theme=active and theme or 'Sky'
- if theme~=lastTheme then
-  SKIN:Bang('!SetVariable','Ink',theme=='Astro' and '231,239,252' or '27,42,66')
-  SKIN:Bang('!SetVariable','Muted',theme=='Astro' and '180,198,224' or '60,79,110')
+ if theme~=lastTheme or modeChanged then
+  SKIN:Bang('!SetVariable','Ink',active and '255,255,255' or '27,42,66')
+  SKIN:Bang('!SetVariable','Muted',active and '227,237,249' or '60,79,110')
   SKIN:Bang('!SetVariable','Blue',theme=='Astro' and '119,184,255' or '32,108,236')
   if SKIN:GetMeter('ThemeToggle') then
   SKIN:Bang('!SetOption','ThemeToggle','Text',theme=='Astro' and '' or '')

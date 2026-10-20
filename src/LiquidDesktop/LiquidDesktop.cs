@@ -24,6 +24,9 @@ internal sealed class LiquidDesktop : Form {
  DateTime windowProbe=DateTime.MinValue;bool screenCovered,manualMotionPause;string componentVisibility="";
  readonly CursorTrail cursorTrail=new CursorTrail();
  readonly TaskbarVisibility taskbarVisibility=new TaskbarVisibility();
+ readonly DockLyrics lyrics;
+ bool systemAnimations=true;
+ [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint parameter,[MarshalAs(UnmanagedType.Bool)]out bool value,uint flags);
  Rectangle screen; List<object> cards=new List<object>(); Point lastPointer=new Point(-999,-999);
 
  IntPtr lastSkin,dockWindow; Rectangle dockRectangle; bool dockShown=true; readonly DockVisibilityPolicy dockPolicy=new DockVisibilityPolicy();string dockDecision=""; int ticks; DockBackend backend; readonly DockPlate dockPlate=new DockPlate();
@@ -64,6 +67,7 @@ internal sealed class LiquidDesktop : Form {
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
  void Taskbar(bool visible){
   if(!visible&&!File.Exists(Path.Combine(root,"desktop-ready.flag")))return;
+  if(!visible&&SystemTray.KeepVisible){SystemTray.Show();return;}
   taskbarVisibility.Set(visible,screen);
  }
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
@@ -80,7 +84,7 @@ internal sealed class LiquidDesktop : Form {
   bool hasBounds=application&&(DwmGetWindowAttribute(front,9,out rect,Marshal.SizeOf(typeof(RECT)))==0||GetWindowRect(front,out rect));
   var visualDock=new Rectangle(dockRectangle.X,dockRectangle.Y+16,dockRectangle.Width,Math.Max(0,dockRectangle.Height-16));
   bool overlap=DesktopVisibilityPolicy.OverlapsDock(desktopWindows,visualDock);
-  bool show=dockPolicy.Update(now,overlap,edge,hovering);
+  bool show=dockPolicy.Update(now,overlap,edge,hovering)&&!SystemTray.KeepVisible;
   string decision=show+"|"+overlap+"|"+pid+"|"+cl;
   if(decision!=dockDecision){dockDecision=decision;File.WriteAllText(Path.Combine(root,"dock-visibility.json"),json.Serialize(new{shown=show,covered=overlap,foregroundPid=pid,foregroundClass=cl.ToString(),ignoredOwnedWindow=!application,window=new{left=rect.L,top=rect.T,right=rect.R,bottom=rect.B},atEdge=edge,updated=now.ToString("o")}));}
   if(show!=dockShown){dockShown=show;UpdateVisibleRegion();Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,(show?"!Show":"!Hide")+" \"PrismGlass\\Dock\""){UseShellExecute=false,CreateNoWindow=true});dockPlate.Sync(Handle,show?dockWindow:IntPtr.Zero,dockRectangle,screen);}
@@ -97,6 +101,8 @@ internal sealed class LiquidDesktop : Form {
  protected override CreateParams CreateParams {get {var p=base.CreateParams;p.ExStyle|=0x08000000|0x80;p.ExStyle&=~0x40000;return p;}}
  protected override void WndProc(ref Message m){if(shellMessage!=0&&(uint)m.Msg==shellMessage&&m.WParam.ToInt64()==0x8006&&backend!=null)backend.Attention(m.LParam.ToInt64());if(m.Msg==0x84){m.Result=new IntPtr(-1);return;}base.WndProc(ref m);}
  public LiquidDesktop(){
+  lyrics=new DockLyrics(root);
+  lyrics.VisualChanged+=Send;
   backend=new DockBackend(root); backend.Refresh();
   Text="Liquid Desktop · 玻璃渲染层";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;
   screen=Screen.PrimaryScreen.Bounds;Bounds=screen;Region=new Region(Rectangle.Empty);Enabled=false;
@@ -123,7 +129,7 @@ internal sealed class LiquidDesktop : Form {
    view.Source=new Uri("https://desktop.local/index.html");
    timer.Interval=16;timer.Tick+=(ss,a)=>Tick();timer.Start();
   }catch(Exception ex){File.WriteAllText(Path.Combine(root,"error.txt"),ex.ToString());Close();}};
-  FormClosed+=(s,e)=>{closing=true;DeregisterShellHookWindow(Handle);timer.Stop();timer.Dispose();cursorTrail.Dispose();if(sideDock!=null)sideDock.Dispose();if(topIsland!=null)topIsland.Dispose();if(fileShelf!=null)fileShelf.Dispose();LegacyTopbar(false);RestoreIcons();if(preview!=null)preview.Dispose();dockPlate.Dispose();view.Dispose();Taskbar(true);try{File.Delete(Path.Combine(root,"heartbeat.txt"));}catch{}};
+  FormClosed+=(s,e)=>{closing=true;SystemTray.Cancel();DeregisterShellHookWindow(Handle);timer.Stop();timer.Dispose();lyrics.Dispose();cursorTrail.Dispose();if(sideDock!=null)sideDock.Dispose();if(topIsland!=null)topIsland.Dispose();if(fileShelf!=null)fileShelf.Dispose();LegacyTopbar(false);RestoreIcons();if(preview!=null)preview.Dispose();dockPlate.Dispose();view.Dispose();Taskbar(true);try{File.Delete(Path.Combine(root,"heartbeat.txt"));}catch{}};
  }
  string Read(string file,string fallback){try{return File.ReadAllText(Path.Combine(root,file)).Trim();}catch{return fallback;}}
  void Send(object value){if(view.CoreWebView2!=null&&!closing)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
@@ -139,7 +145,9 @@ internal sealed class LiquidDesktop : Form {
    var panelRequest=Path.Combine(root,"panel.request");
    if(File.Exists(panelRequest)){string mode=Read("panel.request","");File.Delete(panelRequest);if(sideDock!=null&&!sideDock.IsDisposed&&(mode=="battery"||mode=="network"||mode=="both"||mode=="calendar"))sideDock.Open(mode,new Point(p.X,p.Y));}
    var widgetRequest=Path.Combine(root,"widget.request");if(File.Exists(widgetRequest)){string name=Read("widget.request","");File.Delete(widgetRequest);if(sideDock!=null&&!sideDock.IsDisposed)sideDock.Open(name.ToLowerInvariant(),new Point(p.X,p.Y));}
+   var trayRequest=Path.Combine(root,"tray.request");if(File.Exists(trayRequest)){File.Delete(trayRequest);if(topIsland!=null&&!topIsland.IsDisposed)topIsland.OpenTray();}
    if(painted)DockVisibility(cursor);
+   if(painted){bool near=Rectangle.Inflate(dockRectangle,24,32).Contains(new Point(p.X,p.Y))||(preview!=null&&!preview.IsDisposed);lyrics.Tick(now,dockShown&&dockWindow!=IntPtr.Zero&&!screenCovered,near,manualMotionPause||!systemAnimations);}
    if(painted&&ticks%5==0)PreviewTick(cursor);
    bool down=(GetAsyncKeyState(1)&0x8000)!=0;
    if(cursor!=lastPointer||down!=lastDown){lastPointer=cursor;lastDown=down;Send(new {type="pointer",x=cursor.X,y=cursor.Y,down=down});}
@@ -221,6 +229,7 @@ internal sealed class LiquidDesktop : Form {
   screenCovered=DesktopVisibilityPolicy.AnyCovered(desktopWindows,screen,Screen.PrimaryScreen.WorkingArea);
  }
  void Probe(){
+  SystemParametersInfo(0x1042,0,out systemAnimations,0);
   if(painted)EnsureComponents();if(closing)return;backend.Refresh(); IntPtr dockHandle=IntPtr.Zero;Rectangle dockBounds=Rectangle.Empty;
   var current=Screen.PrimaryScreen.Bounds;if(current!=screen){screen=current;Bounds=screen;layoutKey="";}
   string nextTheme=Read("theme.txt","Sky")=="Astro"?"Astro":"Sky";
@@ -260,6 +269,7 @@ internal sealed class LiquidDesktop : Form {
  }
  [STAThread] static void Main(string[] args){
   SetProcessDPIAware();string root=AppDomain.CurrentDomain.BaseDirectory;
+  if(args.Length==1&&args[0]=="--tray"){File.WriteAllText(Path.Combine(root,"tray.request"),"open");return;}
   if(args.Length==2&&args[0]=="--widget"&&Array.IndexOf(new[]{"Weather","Music","Focus","Folders","System","Tools","Life"},args[1])>=0){File.WriteAllText(Path.Combine(root,"widget.request"),args[1]);return;}
   if(args.Length==2&&args[0]=="--panel"&&(args[1]=="battery"||args[1]=="network"||args[1]=="both"||args[1]=="calendar")){File.WriteAllText(Path.Combine(root,"panel.request"),args[1]);return;}
   if(args.Length>0){string flag=args[0];if(flag=="--side-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SideDock(root,true));return;}if(flag=="--dock-menu"&&args.Length==2){Application.EnableVisualStyles();DockBackend.Menu(root,args[1]);return;}if((flag=="--dock"||flag=="--dock-new")&&args.Length==2){Application.EnableVisualStyles();DockBackend.Click(root,args[1],flag=="--dock-new");return;}if(flag=="--toggle-theme"){var p=Path.Combine(root,"theme.txt");File.WriteAllText(p,File.Exists(p)&&File.ReadAllText(p).Trim()=="Astro"?"Sky":"Astro");return;}

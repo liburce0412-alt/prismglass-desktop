@@ -6,8 +6,9 @@ local function decode(s)
  end)
  bits=bits:sub(1,math.floor(#bits/8)*8);return bits:gsub('%d%d%d%d%d%d%d%d',function(b) local n=0;for i=1,8 do n=n*2+tonumber(b:sub(i,i)) end;return string.char(n) end)
 end
-function Initialize() root=SKIN:GetVariable('LiquidRoot');last='';stamp=0;hover=0;items={};sizes={};drawn={};cell=60;dirty=true;elapsed=0;attentionSeen={};bounce={};Hover(0) end
-function Hover(i) if i~=hover then hoverStart=elapsed end;hover=i;local f=io.open(root..'dock-hover.txt','w');if f then f:write(items[i] and items[i].id or '');f:close() end end
+function Initialize() root=SKIN:GetVariable('LiquidRoot');last='';stamp=0;hover=0;items={};sizes={};drawn={};cell=60;dirty=true;elapsed=0;attentionSeen={};bounce={};lyricAlpha=0;lyricTarget=0;lyricPoll=0;lyricExpiry=0;lyricQuiet=0;lyricPaint='';lyricMotion=false;divider=false;Hover(0) end
+function Approach() lyricQuiet=elapsed+.7;lyricAlpha=0;lyricTarget=0;lyricPaint='';dirty=true end
+function Hover(i) if i~=hover then hoverStart=elapsed end;hover=i;if i>0 then Approach() end;local f=io.open(root..'dock-hover.txt','w');if f then f:write(items[i] and items[i].id or '');f:close() end end
 local function option(m,k,v) SKIN:Bang('!SetOption',m,k,tostring(v)) end
 local function load()
  local f=io.open(root..'dock-state.txt','r');if not f then return end;local data=f:read('*a');f:close();if data==last then return end;last=data;items={};drawn={};dirty=true
@@ -29,10 +30,10 @@ local function load()
  SKIN:Bang('!SetVariable','DockWidth',width);SKIN:Bang('!Move',left,sh-136)
  local diagnostic=io.open(root..'dock-layout.json','w')
  if diagnostic then diagnostic:write(string.format('{"left":%s,"width":%s,"cell":%s,"count":%s,"dpi":%s}',left,width,cell,#items,dpi));diagnostic:close() end
- local gap=0;SKIN:Bang('!HideMeter','Divider')
+ local gap=0;divider=false;SKIN:Bang('!HideMeter','Divider');lyricPaint=''
  for i=1,32 do local e=items[i]
   if e then
-   if not e.pinned and i>1 and items[i-1].pinned then gap=20;option('Divider','X',16+(i-1)*cell+10);SKIN:Bang('!ShowMeter','Divider') end
+   if not e.pinned and i>1 and items[i-1].pinned then gap=20;divider=true;option('Divider','X',16+(i-1)*cell+10);SKIN:Bang('!ShowMeter','Divider') end
    e.x=16+(i-1)*cell+gap;e.cx=e.x+cell/2
    for _,m in ipairs({'Hit'..i,'Icon'..i}) do
     SKIN:Bang('!ShowMeter',m);option(m,'ToolTipHidden','1')
@@ -46,9 +47,33 @@ local function load()
   else for _,m in ipairs({'Hit','Icon','Dot'}) do SKIN:Bang('!HideMeter',m..i) end end
  end
 end
+local function lyrics()
+ if elapsed>=lyricPoll then
+  lyricPoll=elapsed+.096
+  local f=io.open(root..'dock-lyrics.txt','r')
+  local expiry,show,motion
+  if f then
+   expiry,show,motion=f:read('*a'):match('^(%d+)|([01])|([01])\n[^\n]*\n[^\n]*\n');f:close()
+   lyricExpiry=tonumber(expiry) or 0;lyricMotion=motion=='1';lyricTarget=show=='1' and 1 or 0
+  end -- A busy file is not a hide command; the existing heartbeat still expires.
+ end
+ if os.time()>lyricExpiry or elapsed<lyricQuiet or hover>0 then lyricTarget=0 end
+ if lyricMotion then lyricAlpha=lyricTarget else lyricAlpha=lyricAlpha+(lyricTarget-lyricAlpha)*.2;if math.abs(lyricTarget-lyricAlpha)<.005 then lyricAlpha=lyricTarget end end
+ local a=math.floor(lyricAlpha*255+.5);local iconAlpha=255-a
+ local key=tostring(a)
+ if key~=lyricPaint then
+  lyricPaint=key;dirty=true
+  for i,e in ipairs(items) do
+   option('Icon'..i,'ImageAlpha',iconAlpha)
+   SKIN:Bang(a<64 and e.count>0 and '!ShowMeter' or '!HideMeter','Dot'..i)
+  end
+  SKIN:Bang(a<64 and divider and '!ShowMeter' or '!HideMeter','Divider')
+ end
+end
 function Update()
  elapsed=elapsed+.016
  local now=os.time();if now~=stamp then stamp=now;load() end
+ lyrics()
  for i,e in ipairs(items) do
   local target=math.min(48,cell-10)+(i==hover and 30 or 0);local size=(sizes[i] or target);size=size+(target-size)*.14;sizes[i]=size
   local pixels=math.floor(size+.5)

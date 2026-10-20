@@ -63,6 +63,7 @@ internal sealed class TopIsland : Form {
  void Tick(bool force){if(!ready||closed)return;if(force||ticks%(paused?15:2)==0){var data=widgets.Read();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}if(ticks++%15==0){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Path.Combine(root,"island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}}
  void Script(string name,string args){string file=Path.GetFullPath(Path.Combine(root,"..",name));if(!File.Exists(file))throw new FileNotFoundException(name);Process.Start(new ProcessStartInfo("pwsh.exe","-NoProfile -WindowStyle Hidden -File \""+file+"\" "+args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
+ public async void OpenTray(){if(preview||closed)return;bool opened=await SystemTray.OpenAsync();Send(new{type="feedback",message=opened?"系统托盘已打开":"系统任务栏已显示，可点击隐藏图标箭头"});}
  void Action(string id){switch(id){
   case "theme":File.WriteAllText(Path.Combine(root,"theme.txt"),theme=="Astro"?"Sky":"Astro");break;
   case "motion":File.WriteAllText(Path.Combine(root,"paused.txt"),paused?"false":"true");break;
@@ -71,6 +72,7 @@ internal sealed class TopIsland : Form {
   case "settings":Launch("ms-settings:","");break;
   case "bluetooth":Launch("ms-settings:bluetooth","");break;
   case "tasks":Launch("explorer.exe","shell:::{3080F90E-D7AD-11D9-BD98-0000947B0257}");break;
+  case "tray":OpenTray();break;
   case "disk":Launch("explorer.exe","C:\\");break;
   case "calendar":File.WriteAllText(Path.Combine(root,"panel.request"),"calendar");break;
   case "media-prev":Media(0xB1);break;case "media-toggle":Media(0xB3);break;case "media-next":Media(0xB0);break;

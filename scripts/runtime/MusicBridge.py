@@ -1,7 +1,7 @@
 """Read NetEase's current window title and local queue; publish metadata for Rainmeter."""
 import ctypes as C
 from ctypes import wintypes as W
-import json, time, urllib.request, os, subprocess
+import json, time, urllib.request, os
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
@@ -54,9 +54,6 @@ def metadata(title):
    break
  except Exception:pass
  return song,artist,cover,album
-helper=ROOT/'LiquidDesktop'/'MediaSession.ps1'
-if helper.exists():
- subprocess.Popen([str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(helper),'-OwnerPid',str(os.getpid()),'-DataRoot',str(DATA)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 last=None
 while True:
  try:

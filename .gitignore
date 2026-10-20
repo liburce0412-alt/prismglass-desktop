@@ -22,3 +22,6 @@ __pycache__/
 *.pyc
 **/pegline-path.txt
 **/pegline-session.json
+**/lyrics-settings.json
+**/lyrics-status.txt
+**/dock-lyrics.txt*

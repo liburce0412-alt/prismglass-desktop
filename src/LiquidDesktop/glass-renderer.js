@@ -26,11 +26,30 @@ void main(){vec2 p=vec2(uv.x,1.-uv.y)*size;vec3 original=texture2D(wallpaper,(or
  if(liquidAmplitude>.001)d.y=(d.y-liquidAmplitude)/(1.+liquidAmplitude/max(halfSize.y,1.)*liquidProfile(d.x/max(halfSize.x,1.)));
  vec2 glassSize=halfSize-vec2(2.)+vec2((hover*1.5-press*2.5)*(1.-fixedShape));float dist=sd(d,glassSize,radius);if(dist>8.)discard;vec3 result=original*(1.-exp(-max(dist,0.)/3.)*.08);
  if(dist<1.){float e=.7;vec2 grad=normalize(vec2(sd(d+vec2(e,0.),glassSize,radius)-sd(d-vec2(e,0.),glassSize,radius),sd(d+vec2(0.,e),glassSize,radius)-sd(d-vec2(0.,e),glassSize,radius))+.0001);
- float depth=max(-dist,0.);float rim=exp(-depth/12.);vec3 normal=normalize(vec3(grad*exp(-depth/23.)*.85,1.));
- vec3 ray=refract(vec3(0.,0.,-1.),normal,1./1.46);vec2 localCursor=lean*halfSize*.82;vec2 toCursor=d-localCursor;float focus=exp(-dot(toCursor,toCursor)/4800.);vec2 bend=ray.xy*(44.+hover*10.)+d*.025+lean*27.+toCursor*focus*hover*.22;vec2 at=uv+vec2(bend.x,-bend.y)*mix(.45,1.,rimStrength)/size;
- vec2 split=vec2(grad.x,-grad.y)*rim*.6*(1.-astro)/size;
- vec3 c=vec3(texture2D(scene,at+split).r,texture2D(scene,at).g,texture2D(scene,at-split).b);
- c=mix(c,astro>.5?vec3(.12,.17,.27):vec3(.97,.99,1.),astro>.5?.10:.19);
+ // Circular thickness/bevel and Snell/Fresnel model adapted from Oliver Nemo's
+ // MIT webgl-apple-liquid-glass; see THIRD-PARTY-NOTICES and preserved license.
+ float depth=max(-dist,0.);float bevel=min(24.,max(8.,halfSize.y*.42));float rim=exp(-depth/bevel);
+ float t=clamp(depth/bevel,0.,1.);float arc=sqrt(max(1.-(1.-t)*(1.-t),0.));
+ float slope=.72*(1.-t)/max(arc,.16);vec3 normal=normalize(vec3(-grad*slope,1.));
+ vec2 localCursor=lean*halfSize*.82;vec2 toCursor=d-localCursor;float focus=exp(-dot(toCursor,toCursor)/4800.);
+ float opticalPath=bevel*(.55+.85*arc)*(1.+hover*.12);
+ vec3 rayR=refract(vec3(0.,0.,-1.),normal,1./(1.46-.018*(1.-astro)));
+ vec3 rayG=refract(vec3(0.,0.,-1.),normal,1./1.46);
+ vec3 rayB=refract(vec3(0.,0.,-1.),normal,1./(1.46+.018*(1.-astro)));
+ // Preserve the original cursor-driven lens and light response on every glass surface.
+ vec2 drift=d*.008+lean*27.+toCursor*focus*hover*.22;
+ vec2 bendR=rayR.xy/max(-rayR.z,.3)*opticalPath+drift;
+ vec2 bendG=rayG.xy/max(-rayG.z,.3)*opticalPath+drift;
+ vec2 bendB=rayB.xy/max(-rayB.z,.3)*opticalPath+drift;
+ vec2 axis=vec2(1.,-1.)/size;float opticalStrength=mix(.78,1.,rimStrength);
+ vec2 at=uv+bendG*axis*opticalStrength;
+ vec3 c=vec3(texture2D(scene,uv+bendR*axis*opticalStrength).r,texture2D(scene,at).g,texture2D(scene,uv+bendB*axis*opticalStrength).b);
+ float luminance=dot(c,vec3(.2126,.7152,.0722));c=mix(vec3(luminance),c,1.12);
+ // Keep the centre transmissive; readability belongs to the text layer.
+ c=mix(c,astro>.5?vec3(.09,.13,.22):vec3(.92,.97,1.),astro>.5?.045:.065);
+ float fresnel=.04+.96*pow(1.-normal.z,5.);
+ vec3 reflection=texture2D(scene,uv+grad*axis*bevel*2.).rgb;
+ c=mix(c,reflection*.65+vec3(.28,.32,.36),fresnel*.38);
  if(astro>.5&&hover>.003){
   vec2 a=(d+halfSize)/(halfSize*2.);float t=motionTime+effectSeed;
   float wave=.57+sin(a.x*5.5+t*.38+lean.x*.6)*.16+sin(a.x*12.-t*.28)*.055;
@@ -50,8 +69,10 @@ void main(){vec2 p=vec2(uv.x,1.-uv.y)*size;vec3 original=texture2D(wallpaper,(or
   }
  }
  float light=pow(max(dot(grad,normalize(vec2(-.65,-.85)+lean*.25)),0.),4.);
- c+=exp(-pow((depth-1.3)/.95,2.))*(.18+.44*light)*rimStrength+rim*light*.12*rimStrength;
- c+=focus*hover*(astro>.5?.075:.13)+rim*hover*.07;c-=rim*(1.-light)*.045;c+=exp(-pow((depth-5.)/2.4,2.))*.03;
+ float specular=pow(max(dot(normal,normalize(vec3(.4,.6,1.))),0.),32.);
+ c+=exp(-pow((depth-1.1)/.68,2.))*(.10+.48*light)*mix(.5,1.,rimStrength)+specular*rim*.16;
+ c+=focus*hover*(astro>.5?.075:.13)+rim*hover*.07;c-=rim*(1.-light)*.09;
+ c+=exp(-pow((depth-bevel*.6)/2.8,2.))*light*.045;
  vec2 edgeCursor=lean/max(max(abs(lean.x),abs(lean.y)),.05)*halfSize;
  vec2 edgeDelta=d-edgeCursor;
  float following=exp(-dot(edgeDelta,edgeDelta)/20000.);
@@ -83,7 +104,7 @@ function dockOutline(c,v){
   const flowingY=dy*(1+liquid.amplitude/Math.max(c.h/2,1)*liquidProfile(dx/Math.max(c.w/2,1),liquid.direction))+liquid.amplitude;
   const ay=flowingY-Math.sin(dx/(c.w/2)*1.4)*v.y*11*m;
   const ax=dx-Math.sin(ay/(c.h/2)*1.5)*v.x*15*m;
-  points.push([26+c.w/2+v.x*5*(v.h||0)*m+ax*(1-h*.045-p*.025),26+(c.insetY||0)+c.h/2+v.y*4*(v.h||0)*m+ay*(1+h*.035-p*.065)]);
+  points.push([26+(c.clipOffsetX||0)+c.w/2+v.x*5*(v.h||0)*m+ax*(1-h*.045-p*.025),26+(c.clipOffsetY||0)+(c.insetY||0)+c.h/2+v.y*4*(v.h||0)*m+ay*(1+h*.035-p*.065)]);
  }
  for(let corner=0;corner<4;corner++){
   const [cx,cy,start]=corners[corner];

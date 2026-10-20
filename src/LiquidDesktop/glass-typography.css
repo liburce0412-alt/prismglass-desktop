@@ -1,0 +1,24 @@
+/* White lettering stays legible over both glass themes and the user's wallpaper. */
+body,body[data-theme=Astro],body.astro{
+ color:#fff;
+ --ink:#fff;
+ text-shadow:0 1px 2px rgba(6,14,28,.72),0 0 6px rgba(7,18,36,.22);
+}
+body #dock #detail :is(h1,h2,h3,h4,strong,b,button,input,select,textarea),
+body #dock #widget-title,
+body #shelf #manage-trigger{
+ color:#fff;
+}
+body #dock #detail :is(p,small,label,dd,.note,.life-note,.eyebrow,.eyebrow span,
+ .chart-axis,.chart-title span,#full-date,.garden-resources,.garden-log,
+ .garden-section>summary>span,.solar-heading span:last-child,.moon-credit,
+ .garden-heading>span){
+ color:#e3edf9;
+}
+body #dock #detail select option{background:#25364b;color:#fff;text-shadow:none}
+body #dock #widget-title{color:#fff!important}
+body #dock #detail .life-note{color:#e3edf9!important}
+body #shelf :is(.intro,.footnote,#hint,#path,.rail-summary){color:#e3edf9}
+body #dock .rail-item.selected:after,
+body #shelf #triggers button[aria-expanded=true]:before{background:#c5e4ff}
+body :is(button,input,textarea,select):focus-visible{outline-color:#d2eaff}

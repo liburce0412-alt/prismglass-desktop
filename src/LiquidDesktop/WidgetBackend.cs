@@ -16,13 +16,31 @@ internal sealed class WidgetBackend {
   string title="等待播放",artist="",cover="";
   try{var lines=File.ReadAllLines(Path.Combine(root,"..","music-data","now.txt"));if(lines.Length>0)title=lines[0];if(lines.Length>1)artist=lines[1];if(lines.Length>2&&File.Exists(lines[2])){string media=Path.GetFullPath(Path.Combine(root,"..","music-data"))+Path.DirectorySeparatorChar;string full=Path.GetFullPath(lines[2]);if(full.StartsWith(media,StringComparison.OrdinalIgnoreCase))cover="https://prism-media.local/"+Uri.EscapeDataString(Path.GetFileName(full))+"?v="+File.GetLastWriteTimeUtc(full).Ticks;}}catch{}
   bool? playing=null;try{var status=Path.Combine(root,"..","music-data","playback.txt");if((DateTime.UtcNow-File.GetLastWriteTimeUtc(status)).TotalSeconds<12){var state=File.ReadAllText(status).Trim();if(state=="playing"||state=="paused")playing=state=="playing";}}catch{}
-  return new{type="widgets",weather=Snapshot("Weather"),system=Snapshot("System"),volume=Snapshot("Music"),music=new{title=title,artist=artist,cover=cover,playing=playing},focus=new{available=focusReady,total=total,remaining=remaining,deadline=deadline,completed=completed,lastCompleted=lastCompleted}};
+  var lyrics=LyricsSettings.Load(root);var session=lyrics.enabled?MediaSnapshot.Read(root,DateTime.UtcNow):null;
+  if(session!=null){if(title!=session.title||artist!=session.artist)cover="";title=session.title;artist=session.artist;playing=session.status=="playing";}
+  string lyricStatus=lyrics.enabled?"等待播放器提供歌曲信息":"Dock 歌词已关闭";
+  try{lyricStatus=File.ReadAllText(Path.Combine(root,"lyrics-status.txt"));}catch{}
+  return new{type="widgets",weather=Snapshot("Weather"),system=Snapshot("System"),volume=Snapshot("Music"),music=new{title=title,artist=artist,cover=cover,playing=playing},lyrics=new{enabled=lyrics.enabled,online=lyrics.online,offsetMs=lyrics.offsetMs,status=lyricStatus,holdGaps=lyrics.holdGaps,appearance=lyrics.appearance},focus=new{available=focusReady,total=total,remaining=remaining,deadline=deadline,completed=completed,lastCompleted=lastCompleted}};
  }
  [DllImport("user32.dll")]static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
  static void Brightness(int delta){using(var query=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightness")){foreach(ManagementObject item in query.Get()){int level=Math.Max(0,Math.Min(100,Convert.ToInt32(item["CurrentBrightness"])+delta));using(var methods=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightnessMethods")){foreach(ManagementObject method in methods.Get())method.InvokeMethod("WmiSetBrightness",new object[]{(uint)1,(byte)level});}return;}}throw new InvalidOperationException("此显示器不支持系统亮度控制，请使用显示器按键。");}
  static void Launch(string file,string args){Process.Start(new ProcessStartInfo(file,args){UseShellExecute=true,WindowStyle=ProcessWindowStyle.Normal});}
  static void Bang(string args){Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,args){UseShellExecute=false,CreateNoWindow=true});}
  public void Action(string id){
+  if(id.StartsWith("lyrics-style:",StringComparison.Ordinal)&&id.Length<4096){
+   var settings=LyricsSettings.Load(root);settings.appearance=(json.Deserialize<LyricsAppearance>(id.Substring(13))??new LyricsAppearance()).Normalize();settings.Save(root);return;
+  }
+  if(id=="lyrics-style-reset"){var settings=LyricsSettings.Load(root);settings.appearance=new LyricsAppearance();settings.Save(root);return;}
+  if(id=="lyrics-toggle"||id=="lyrics-online"||id=="lyrics-earlier"||id=="lyrics-later"||id=="lyrics-reset"||id=="lyrics-gaps"){
+   var settings=LyricsSettings.Load(root);
+   if(id=="lyrics-toggle")settings.enabled=!settings.enabled;
+   if(id=="lyrics-online")settings.online=!settings.online;
+   if(id=="lyrics-earlier")settings.offsetMs=Math.Min(5000,settings.offsetMs+200);
+   if(id=="lyrics-later")settings.offsetMs=Math.Max(-5000,settings.offsetMs-200);
+   if(id=="lyrics-reset")settings.offsetMs=0;
+   if(id=="lyrics-gaps")settings.holdGaps=!settings.holdGaps;
+   settings.Save(root);return;
+  }
   switch(id){
    case "theme-sky":File.WriteAllText(Path.Combine(root,"theme.txt"),"Sky");break;
    case "theme-astro":File.WriteAllText(Path.Combine(root,"theme.txt"),"Astro");break;

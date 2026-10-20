@@ -16,10 +16,11 @@ Get-ChildItem "$repo/src/LiquidDesktop" -File | Copy-Item -Destination $app
 foreach($name in @('Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll')){Copy-Item "$package/lib/net462/$name" $app}
 Copy-Item "$package/runtimes/win-x64/native/WebView2Loader.dll" $app
 $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+$uia=Join-Path (Split-Path $csc) 'WPF'
 Push-Location $app
 try{
  $sources=@(Get-ChildItem -Filter '*.cs' | ForEach-Object {$_.FullName})
- & $csc /nologo /target:winexe /platform:x64 /optimize+ /out:LiquidDesktop.exe /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.Management.dll /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll @sources
+ & $csc /nologo /target:winexe /platform:x64 /optimize+ /out:LiquidDesktop.exe /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.Management.dll /r:System.Net.Http.dll /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll "/r:$uia/UIAutomationClient.dll" "/r:$uia/UIAutomationTypes.dll" "/r:$uia/WindowsBase.dll" @sources
  if($LASTEXITCODE -ne 0){throw 'Compilation failed'}
 }finally{Pop-Location}
 Copy-Item "$repo/scripts/runtime/*" $out

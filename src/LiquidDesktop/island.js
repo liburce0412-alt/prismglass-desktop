@@ -11,7 +11,7 @@ function draw(){if(!config)return;const d=dims(),w=clamp(s.w.x,80,innerWidth-6),
 main.style.cssText=`left:${x}px;top:${y}px;width:${w}px;height:${h}px;--s:${d.q};border-radius:${Math.min(h/2,30*d.q)}px`;
 const bar=clamp((w-d.wide)/(Math.max(1,d.bar-d.wide)),0,1),content=clamp((h-d.low)/(d.high-d.low),0,1);
 $('bar-left').style.opacity=bar;$('bar-right').style.opacity=bar;for(const id of ['bar-left','bar-right']){$(id).inert=mode!=='bar';$(id).style.pointerEvents=mode==='bar'?'auto':'none';}
-handle.style.width=mode==='bar'?Math.max(100,w-(innerWidth<850?430:720)*d.q)+'px':'100%';handle.style.height=(mode==='bar'?42*d.q:d.low)+'px';$('island-orb').style.opacity=1-bar;$('island-summary').style.opacity=1-bar;$('grip').style.opacity=(1-bar)*.25;
+handle.style.width=mode==='bar'?Math.max(100,w-(innerWidth<850?470:760)*d.q)+'px':'100%';handle.style.height=(mode==='bar'?42*d.q:d.low)+'px';$('island-orb').style.opacity=1-bar;$('island-summary').style.opacity=1-bar;$('grip').style.opacity=(1-bar)*.25;
 details.style.opacity=clamp((content-.62)/.38,0,1);details.style.pointerEvents=mode==='open'&&content>.98?'auto':'none';details.style.transform=`translateY(${(1-content)*-8*d.q}px)`;
 const moving=!!drag||Object.values(s).some(p=>Math.abs(p.x-p.target)>.2||Math.abs(p.v)>.4),card={name:'TopIsland',x,y,w,h,r:Math.min(h/2,30*d.q),rimStrength:.45,fixedShape:mode==='bar'||moving,motionFluid:reduced.matches?0:fluid,flowY:flow};glassReceive?.({type:'geometry',externallyDriven:true,cards:[card]});
 window.islandState={mode,width:w,height:h,velocityWidth:s.w.v,velocityHeight:s.h.v,dragging:!!drag,paused,ready:painted,motionFluid:card.motionFluid,flowY:flow};if(window.islandTrace)window.islandTrace.push({time:performance.now(),...window.islandState});}
