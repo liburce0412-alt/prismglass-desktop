@@ -1,0 +1,37 @@
+name: 问题反馈
+description: 报告安装、桌面或伴随屏使用问题
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿上传整个运行目录、私人笔记、账号、配对密钥或证书私钥。截图与日志可选，请先脱敏。
+  - type: input
+    id: version
+    attributes:
+      label: PrismGlass 版本
+      description: 托盘“关于 PrismGlass”中可查看；升级问题请同时填写旧版本。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 使用环境
+      description: Windows 版本；显示问题补充屏幕数量、分辨率与缩放；伴随屏问题补充浏览器/iPadOS 版本。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤与出现频率
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏截图或日志（可选）

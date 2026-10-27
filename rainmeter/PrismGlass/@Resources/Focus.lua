@@ -14,6 +14,9 @@ end
 
 function Initialize()
 
+ total=1500 remaining=1500 deadline=0 companionHeartbeat=nil
+ local valid=false
+
  statePath=SKIN:GetVariable('@')..'focus-state.txt'
 
  local f=io.open(statePath,'r')
@@ -22,13 +25,21 @@ function Initialize()
 
   local a,b,c=f:read('*a'):match('^(%d+) (%d+) (%d+)') f:close()
 
-  if a then total=tonumber(a) remaining=tonumber(b) deadline=tonumber(c) end
+  if a and tonumber(a)>0 and tonumber(a)<=86400 and tonumber(b)<=tonumber(a) then total=tonumber(a) remaining=tonumber(b) deadline=tonumber(c) valid=true end
 
  end
+
+ -- Publish the initial paused state so a fresh installation can accept its first command.
+ if not valid then Save() end
 
 end
 
 function Update()
+
+ if not companionHeartbeat or os.time()-companionHeartbeat>=4 then
+  local f=io.open(SKIN:GetVariable('LiquidRoot')..'widget-Focus.json','w')
+  if f then f:write('{"available":true}') f:close() companionHeartbeat=os.time() end
+ end
 
  if deadline>0 then
 

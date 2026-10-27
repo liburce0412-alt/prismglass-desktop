@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "PrismGlass · 伴随屏",
+  "short_name": "PrismGlass",
+  "description": "让桌面，来到手边。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#183e68",
+  "theme_color": "#183e68",
+  "icons": [
+    {
+      "src": "/companion-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -2,13 +2,29 @@
 param([Parameter(Mandatory=$true)][int]$OwnerPid,[Parameter(Mandatory=$true)][string]$DataRoot,[int]$MaxSamples=0)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
+Add-Type -Path (Join-Path $PSScriptRoot 'MediaCoverReader.cs')
 $null=[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime]
 $null=[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties,Windows.Media.Control,ContentType=WindowsRuntime]
+$null=[Windows.Storage.Streams.IRandomAccessStreamWithContentType,Windows.Storage.Streams,ContentType=WindowsRuntime]
 $asTask=[System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {$_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'} | Select-Object -First 1
 function Await-WinRT($Operation,[Type]$ResultType){
  $task=$asTask.MakeGenericMethod($ResultType).Invoke($null,@($Operation))
  if(!$task.Wait(2500)){throw 'Media request timed out'}
  $task.Result
+}
+function Save-MediaCover($Thumbnail){
+ if($null -eq $Thumbnail){return ''}
+ $random=$null;$target=$null;$pending=$null
+ try{
+  $random=Await-WinRT ($Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+  $bytes=[MediaCoverReader]::Read($random,2097152);if(!$bytes.Length){return ''}
+  $name='session-cover-'+[guid]::NewGuid().ToString('N').Substring(0,16)+'.bin';$target=Join-Path $DataRoot $name;$pending=$target+'.pending'
+  [IO.File]::WriteAllBytes($pending,$bytes)
+  [IO.File]::Move($pending,$target);$pending=$null
+  # This cache owns only generated session-cover names, never the player's artwork.
+  Get-ChildItem -LiteralPath $DataRoot -Filter 'session-cover-*.bin' -File | Where-Object {$_.Name -ne $name -and $_.Name -match '^session-cover-[a-f0-9]{16}\.bin$'} | Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip 7 | ForEach-Object {Remove-Item -LiteralPath $_.FullName -Force}
+  return $name
+ }catch{return ''}finally{if($random -and [Runtime.InteropServices.Marshal]::IsComObject($random)){try{[void][Runtime.InteropServices.Marshal]::ReleaseComObject($random)}catch{}};if($pending -and [IO.File]::Exists($pending)){[IO.File]::Delete($pending)}}
 }
 New-Item -ItemType Directory -Path $DataRoot -Force | Out-Null
 $DataRoot=(Resolve-Path -LiteralPath $DataRoot).Path
@@ -17,11 +33,12 @@ $ownerStart=$owner.StartTime.ToUniversalTime().Ticks
 $epoch=[datetime]::SpecifyKind([datetime]'1970-01-01',[DateTimeKind]::Utc)
 $manager=Await-WinRT ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
 $lastSession=$null;$properties=$null;$nextMetadata=[datetime]::MinValue;$previousStatus='';$previousTimeline='';$anchor=0.0;$anchorAt=[datetime]::UtcNow;$count=0
+$coverTrack='';$coverName='';$nextCover=[datetime]::MinValue
 try {
  while($true){
   $owner.Refresh()
   if($owner.HasExited -or $owner.StartTime.ToUniversalTime().Ticks -ne $ownerStart){break}
-  $snapshot=@{source='';title='';artist='';album='';status='none';timeline=$false;position=0.0;duration=0.0;rate=1.0;sampledAt=0.0}
+  $snapshot=@{source='';title='';artist='';album='';status='none';cover='';timeline=$false;position=0.0;duration=0.0;rate=1.0;sampledAt=0.0}
   try {
    $session=$manager.GetCurrentSession()
    if($null -ne $session){
@@ -34,6 +51,8 @@ try {
     if($source -ne $lastSession -or [datetime]::UtcNow -ge $nextMetadata){
      $properties=Await-WinRT ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
      $nextMetadata=[datetime]::UtcNow.AddMilliseconds(700)
+     $nextCoverTrack=$source+"`n"+$properties.Title+"`n"+$properties.Artist+"`n"+$properties.AlbumTitle
+     if($nextCoverTrack -ne $coverTrack -or (!$coverName -and [datetime]::UtcNow -ge $nextCover)){$coverTrack=$nextCoverTrack;$coverName='';$coverName=Save-MediaCover $properties.Thumbnail;$nextCover=[datetime]::UtcNow.AddSeconds(5)}
     }
     $now=[datetime]::UtcNow
     $timeline=$session.GetTimelineProperties()
@@ -54,7 +73,7 @@ try {
      $anchorAt=$now;$previousStatus=$status;$previousRate=$rate
     }
     $elapsed=if($status -eq 'playing'){($now-$anchorAt).TotalSeconds*$rate}else{0}
-    $snapshot=@{source=$source;title=$properties.Title;artist=$properties.Artist;album=$properties.AlbumTitle;status=$status;timeline=($duration -gt 0 -and $updated.Year -gt 2000);position=[Math]::Max(0,[Math]::Min($duration,$anchor+$elapsed));duration=$duration;rate=$rate;sampledAt=($now-$epoch).TotalSeconds}
+    $snapshot=@{source=$source;title=$properties.Title;artist=$properties.Artist;album=$properties.AlbumTitle;status=$status;cover=$coverName;timeline=($duration -gt 0 -and $updated.Year -gt 2000);position=[Math]::Max(0,[Math]::Min($duration,$anchor+$elapsed));duration=$duration;rate=$rate;sampledAt=($now-$epoch).TotalSeconds}
     $lastSession=$source
    }else{$lastSession=$null;$properties=$null;$previousTimeline=''}
   }catch{$snapshot.status='unavailable';$lastSession=$null;$properties=$null}

@@ -1,7 +1,10 @@
 'use strict';
 // Shared by the real Dock and the music-panel preview. No fabricated word timings.
 window.PrismLyrics=(()=>{
- const defaults={font:'sans',layout:'duo',align:'center',effect:'float',texture:'solid',widthMode:'adaptive',color:'#ffffff',secondary:'#dceaf9',accent:'#9edfff',fontSize:26,weight:650,spacing:2,intensity:65,speed:100,glow:30,width:900,secondaryOpacity:80};
+ const defaults={font:'sans',layout:'duo',align:'center',effect:'float',texture:'solid',widthMode:'adaptive',color:'#ffffff',secondary:'#dceaf9',accent:'#9edfff',fontSize:26,weight:650,spacing:2,intensity:65,speed:100,glow:30,width:900,secondaryOpacity:80,backgroundTheme:'transparent',backgroundOpacity:35,backgroundMotion:false};
+ const backgrounds={album:'专辑流光',wallpaper:'跟随壁纸',transparent:'透明配色',ocean:'深海',pine:'松林',sand:'暖沙',violet:'夜紫'};
+ const palettes={ocean:['#0b315c','#124b70','#173150'],pine:['#123d32','#285746','#183e43'],sand:['#614128','#805738','#46382f'],violet:['#302347','#493568','#252546']};
+ const backgroundStates=new WeakMap();
  const fonts={
   sans:['现代无衬线','"Segoe UI Variable Display","Microsoft YaHei UI",sans-serif'],
   humanist:['清新人文','"等线","DengXian","Segoe UI",sans-serif'],
@@ -26,11 +29,12 @@ window.PrismLyrics=(()=>{
  };
  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
  function normalize(input={}){
-  const s={...defaults},choices={font:Object.keys(fonts),layout:['duo','single','split','stack'],align:['left','center','right'],effect:Object.keys(effects),texture:Object.keys(textures),widthMode:['adaptive','fixed']};
+  const s={...defaults},choices={font:Object.keys(fonts),layout:['duo','single','split','stack'],align:['left','center','right'],effect:Object.keys(effects),texture:Object.keys(textures),widthMode:['adaptive','fixed'],backgroundTheme:Object.keys(backgrounds)};
   for(const [key,values] of Object.entries(choices))if(values.includes(input?.[key]))s[key]=input[key];
   for(const key of ['color','secondary','accent'])if(/^#[0-9a-f]{6}$/i.test(input?.[key]))s[key]=input[key].toLowerCase();
-  const ranges={fontSize:[18,32],weight:[400,900],spacing:[-2,12],intensity:[0,100],speed:[50,180],glow:[0,100],width:[420,1200],secondaryOpacity:[30,100]};
+  const ranges={fontSize:[18,32],weight:[400,900],spacing:[-2,12],intensity:[0,100],speed:[50,180],glow:[0,100],width:[420,1200],secondaryOpacity:[30,100],backgroundOpacity:[0,100]};
   for(const [key,[a,b]] of Object.entries(ranges))if(typeof input?.[key]==='number'&&Number.isFinite(input[key]))s[key]=Math.round(clamp(input[key],a,b));
+  if(typeof input?.backgroundMotion==='boolean')s.backgroundMotion=input.backgroundMotion;
   return s;
  }
  function apply(container,input,still=false){
@@ -41,6 +45,30 @@ window.PrismLyrics=(()=>{
   const vars={color:s.color,secondary:s.secondary,accent:s.accent,size:s.fontSize+'px',weight:s.weight,spacing:s.spacing/100+'em','secondary-size':Math.round(s.fontSize*.69)+'px','secondary-opacity':s.secondaryOpacity/100,glow:s.glow/100*12+'px','light-opacity':s.intensity/100*.3,'light-duration':600000/s.speed+'ms'};
   for(const [key,value] of Object.entries(vars))container.style.setProperty('--lyric-'+key,String(value));
   return s;
+ }
+ const rgb=value=>[1,3,5].map(at=>parseInt(value.slice(at,at+2),16));
+ const hex=values=>'#'+values.map(value=>Math.round(value).toString(16).padStart(2,'0')).join('');
+ function backgroundColors(style,palette){
+  const neutral=['#263f62','#39595f','#40365d'];
+  const colors=palettes[style.backgroundTheme]||(style.backgroundTheme==='album'?palette?.album:palette?.wallpaper)||neutral;
+  return [0,1,2].map(i=>/^#[0-9a-f]{6}$/i.test(colors[i]||'')?colors[i]:neutral[i]);
+ }
+ function gradient(colors){return `radial-gradient(ellipse at 12% 28%,${colors[0]},transparent 65%),radial-gradient(ellipse at 85% 78%,${colors[1]},transparent 65%),linear-gradient(115deg,${colors[2]},${colors[0]})`;}
+ function background(container,input,palette,still=false){
+  const style=normalize(input),colors=backgroundColors(style,palette),key=colors.join('|');let state=backgroundStates.get(container);
+  if(!state){const layer=document.createElement('div');layer.className='lyric-background';layer.setAttribute('aria-hidden','true');const first=document.createElement('div'),second=document.createElement('div');first.className=second.className='lyric-background-color';layer.append(first,second);container.prepend(layer);state={layer,first,second,from:colors,to:colors,key:'',started:0,animation:null};backgroundStates.set(container,state);}
+  const hidden=style.backgroundTheme==='transparent'||style.backgroundOpacity===0;
+  state.layer.hidden=hidden;state.layer.style.opacity=String(style.backgroundOpacity/100);
+  state.layer.classList.toggle('flowing',style.backgroundMotion&&!hidden);state.layer.style.setProperty('--background-play',still?'paused':'running');
+  if(key!==state.key){
+   const fraction=state.started?clamp((performance.now()-state.started)/1200,0,1):1;
+   const from=state.to.map((color,i)=>hex(rgb(state.from[i]).map((value,k)=>value+(rgb(color)[k]-value)*fraction)));
+   if(state.animation)state.animation.cancel();state.animation=null;state.first.style.backgroundImage=gradient(from);state.second.style.backgroundImage=gradient(colors);state.second.style.opacity='1';
+   state.from=from;state.to=colors;state.started=performance.now();const initial=!state.key;state.key=key;
+   if(!still&&!initial&&!hidden){const animation=state.second.animate([{opacity:0},{opacity:1}],{duration:1200,easing:'linear'});animation.id='lyric-background-transition';state.animation=animation;animation.finished.then(()=>{if(state.animation===animation)state.animation=null;},()=>{});}else{state.first.style.backgroundImage=gradient(colors);state.started=0;}
+  }else if(still&&state.animation){state.animation.cancel();state.animation=null;state.first.style.backgroundImage=gradient(colors);state.second.style.opacity='1';state.started=0;}
+  container.dataset.background=style.backgroundTheme;container.dataset.backgroundFlow=String(style.backgroundMotion&&!hidden&&!still);
+  return state.layer;
  }
  function cancel(container){
   for(const a of container.getAnimations({subtree:true}))if(a.id==='lyric-effect')a.cancel();
@@ -80,5 +108,5 @@ window.PrismLyrics=(()=>{
   }else run(line,entrances[s.effect]||entrances.float);
   if(secondary&&!secondary.hidden)run(secondary,[{opacity:.15,transform:`translateY(${4*k}px)`},finish],{duration:duration*.85,delay:40});
  }
- return {defaults,fonts,effects,textures,presets,normalize,apply,animate,cancel};
+ return {defaults,fonts,effects,textures,presets,backgrounds,normalize,apply,animate,cancel,background,backgroundColors};
 })();

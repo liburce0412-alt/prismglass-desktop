@@ -33,7 +33,8 @@ try{
  $canvas.Save($temp,[System.Drawing.Imaging.ImageFormat]::Png)
 }finally{$graphics.Dispose();$canvas.Dispose();$image.Dispose()}
 Move-Item -LiteralPath $temp -Destination $target -Force
-$skin=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins\PrismGlass'
+$configured=Join-Path $PSScriptRoot 'LiquidDesktop/skin-path.txt'
+$skin=if([IO.File]::Exists($configured)){[IO.Path]::GetFullPath([IO.File]::ReadAllText($configured).Trim())}else{Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter/Skins/PrismGlass'}
 foreach($file in Get-ChildItem -LiteralPath $skin -Filter Main.ini -Recurse){
  $text=[IO.File]::ReadAllText($file.FullName)
  $text=[regex]::Replace($text,'(?m)^ImagePath=.*$','ImagePath='+$target)

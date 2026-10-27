@@ -1,9 +1,11 @@
-param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe')
+param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe',[ValidateSet('lyrics','drag')][string]$Case='lyrics')
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $fixture=Join-Path $repo ('artifacts/lua-'+[guid]::NewGuid().ToString('N'))
 $skin=Join-Path $fixture 'Skins/DockTest'
-$evidence=Join-Path $repo 'artifacts/tests/dock-lua-checks.txt'
+$testScript=if($Case -eq 'drag'){'TestDockDragLua.lua'}else{'TestDockLua.lua'}
+$expected=if($Case -eq 'drag'){'Completed 17 native Dock interaction Lua checks.'}else{'Completed 23 native Lua checks.'}
+$evidence=Join-Path $repo ("artifacts/tests/dock-$Case-lua-checks.txt")
 $process=$null
 New-Item -ItemType Directory -Force -Path $skin,(Split-Path $evidence) | Out-Null
 try{
@@ -28,7 +30,7 @@ Fixture=$fixture\
 ProductionScript=$repo\rainmeter\PrismGlass\@Resources\Dock.lua
 [Check]
 Measure=Script
-ScriptFile=$repo\tests\TestDockLua.lua
+ScriptFile=$repo\tests\$testScript
 [Invisible]
 Meter=Shape
 Shape=Rectangle 0,0,1,1 | Fill Color 0,0,0,1 | StrokeWidth 0
@@ -41,7 +43,7 @@ Shape=Rectangle 0,0,1,1 | Fill Color 0,0,0,1 | StrokeWidth 0
  }while($text -notmatch 'Completed|ERROR' -and [datetime]::UtcNow -lt $deadline -and !$process.HasExited)
  $text | Set-Content -LiteralPath $evidence -Encoding utf8
  if(Test-Path -LiteralPath "$fixture/Rainmeter.log"){Copy-Item -LiteralPath "$fixture/Rainmeter.log" -Destination (Join-Path $repo 'artifacts/tests/dock-lua-rainmeter.log') -Force}
- if($text -notmatch 'Completed 13 native Lua checks.' -or $text -match 'FAIL|ERROR'){throw "Native Lua checks failed. See $evidence and $fixture"}
+ if(!$text.Contains($expected) -or $text -match 'FAIL|ERROR'){throw "Native Lua checks failed. See $evidence and $fixture"}
  $text
 }finally{
  if($process){if(!$process.HasExited){Stop-Process -Id $process.Id};$process.WaitForExit(5000) | Out-Null;$process.Dispose()}

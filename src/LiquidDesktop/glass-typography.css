@@ -22,3 +22,4 @@ body #shelf :is(.intro,.footnote,#hint,#path,.rail-summary){color:#e3edf9}
 body #dock .rail-item.selected:after,
 body #shelf #triggers button[aria-expanded=true]:before{background:#c5e4ff}
 body :is(button,input,textarea,select):focus-visible{outline-color:#d2eaff}
+body.prism-reduced-motion *,body.prism-reduced-motion *::before,body.prism-reduced-motion *::after{transition-duration:0s!important;animation-duration:0s!important;scroll-behavior:auto!important}

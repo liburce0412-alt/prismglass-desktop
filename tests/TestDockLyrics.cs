@@ -56,6 +56,21 @@ internal static class TestDockLyrics {
   Check(loaded.enabled&&loaded.online&&loaded.holdGaps&&loaded.appearance.font=="kai"&&loaded.appearance.color=="#ffeecc"&&loaded.appearance.fontSize==32&&loaded.appearance.width==420,"appearance persists and clamps unsafe geometry without losing switches");
   var invalid=new LyricsAppearance{font="url(bad)",effect="bad",color="red;display:none"}.Normalize();
   Check(invalid.font=="sans"&&invalid.effect=="float"&&invalid.color=="#ffffff","appearance accepts only safe supported values");
+  string styleRoot=Path.Combine(root,"style-fixture"),styleFile=Path.Combine(styleRoot,"lyrics-settings.json");Directory.CreateDirectory(styleRoot);
+  var desktop=new LyricsSettings{enabled=true,online=false,holdGaps=false,offsetMs=345};desktop.Save(styleRoot);var styleStore=new LyricsStyleStore(styleRoot);
+  var styleState=json.Deserialize<Dictionary<string,object>>(json.Serialize(styleStore.Read(true)));string styleRevision=(string)styleState["revision"];
+  styleStore.Write(styleRevision,new Dictionary<string,object>{{"effect","spring"},{"backgroundTheme","ocean"}},()=>true);
+  bool conflict=false;try{desktop.online=true;desktop.Save(styleRoot);}catch(LyricsSettingsConflictException){conflict=true;}
+  var styleSaved=LyricsSettings.Load(styleRoot);Check(conflict&&styleSaved.appearance.effect=="spring"&&!styleSaved.online&&styleSaved.offsetMs==345&&!styleSaved.holdGaps,"stale desktop writer cannot overwrite newer companion style or switches");
+  desktop=LyricsSettings.Load(styleRoot);styleState=json.Deserialize<Dictionary<string,object>>(json.Serialize(styleStore.Read(true)));desktop.appearance.font="mono";desktop.Save(styleRoot);conflict=false;
+  try{styleStore.Write((string)styleState["revision"],new Dictionary<string,object>{{"effect","fade"}},()=>true);}catch(LyricsSettingsConflictException){conflict=true;}
+  Check(conflict&&LyricsSettings.Load(styleRoot).appearance.font=="mono","stale companion writer cannot overwrite newer desktop appearance");
+  string validStyle=File.ReadAllText(styleFile);File.WriteAllText(styleFile,"{bad");var fallback=LyricsSettings.Load(styleRoot);bool invalidWrite=false;try{fallback.Save(styleRoot);}catch(IOException){invalidWrite=true;}
+  Check(invalidWrite&&File.ReadAllText(styleFile)=="{bad","desktop fallback for invalid lyrics cannot silently replace the original file");
+  File.WriteAllText(styleFile,"{\"appearance\":{\"speed\":\"bad\"}}");invalidWrite=false;try{styleStore.Read(true);}catch(IOException){invalidWrite=true;}Check(invalidWrite,"incorrect stored appearance types are unavailable instead of silently normalized");
+  File.WriteAllText(styleFile,validStyle);styleState=json.Deserialize<Dictionary<string,object>>(json.Serialize(styleStore.Read(true)));int authorizationChecks=0;bool denied=false;try{styleStore.Write((string)styleState["revision"],new Dictionary<string,object>{{"effect","fade"}},()=>++authorizationChecks==1);}catch(UnauthorizedAccessException){denied=true;}
+  Check(denied&&authorizationChecks==2&&File.ReadAllText(styleFile)==validStyle,"lyric style checks authorization again immediately before commit");
+  File.WriteAllText(styleFile,new string('x',8192));invalidWrite=false;try{styleStore.Read(true);}catch(IOException){invalidWrite=true;}Check(invalidWrite&&new FileInfo(styleFile).Length==8192,"oversized lyric settings remain intact");
   settings.appearance=new LyricsAppearance();settings.Save(root);
   var http=new FakeHttp();
   using(var service=new DockLyrics(root,http,false)){
@@ -70,23 +85,43 @@ internal static class TestDockLyrics {
    string settingsFile=Path.Combine(root,"lyrics-settings.json");
    using(var locked=new FileStream(settingsFile,FileMode.Open,FileAccess.Read,FileShare.None)){Step(service,s);Check(Showing(),"brief settings read failure does not disable lyrics");}
    Step(service,s,true,true);Check(!Showing(),"pointer approach restores applications immediately");
+   var companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));Check((bool)companion["available"]&&(string)companion["current"]=="B first","companion lyrics survive pointer approach");
+   var companionPalette=companion["palette"] as Dictionary<string,object>;Check(companionPalette.ContainsKey("album")&&companionPalette.ContainsKey("wallpaper")&&!companionPalette.ContainsKey("albumKey")&&!companionPalette.ContainsKey("wallpaperKey")&&!json.Serialize(companion).Contains(root),"companion shares the desktop palette colors without local source paths");
+   service.Tick(now,true,true,true);companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));Check((bool)companion["motionPaused"]&&(string)((Dictionary<string,object>)companion["appearance"])["effect"]=="float","companion shares normalized desktop appearance and motion pause state");
    Step(service,s);Check(!Showing(),"short leave avoids oscillation");
    Step(service,s);Step(service,s);Check(Showing(),"lyrics return after pointer settles away");
    Step(service,s,false);Check(!Showing(),"covered Dock never displays lyrics");
+   companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));Check((bool)companion["available"]&&(string)companion["current"]=="B first","companion lyrics survive covered Dock");
    s.status="paused";Step(service,s);Check(!Showing(),"pause restores icons");
    s.status="playing";s.position=12;Step(service,s);Check(Current()=="B second","forward seek replaces current line");
    s.position=1;Step(service,s);Check(Current()=="B first","backward seek replaces current line");
    s.position=22;Step(service,s);Check(Showing()&&Current()=="B","instrumental break keeps the capsule with track information");
+   companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));Check((bool)companion["gap"]&&(string)companion["current"]=="B"&&((string)companion["next"]).Contains("间奏"),"companion follows the desktop instrumental gap display");
    settings.holdGaps=false;settings.Save(root);Step(service,s);Check(!Showing(),"users can still restore applications during instrumental breaks");
    settings.holdGaps=true;settings.Save(root);
    s.position=120;Step(service,s);Check(!Showing(),"finished timeline never retains the last lyric forever");
    s.position=9.9;settings.offsetMs=200;settings.Save(root);Step(service,s);Check(Current()=="B second","manual timing adjustment advances line");
    settings.online=false;settings.Save(root);Step(service,s);Check(Showing()&&http.calls==2,"cached lyrics work offline without new requests");
    now=now.AddSeconds(5);service.Tick(now,true,false,false);Check(!Showing(),"lost media heartbeat restores icons");
+   companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));Check(!(bool)companion["available"],"companion clears stale media heartbeat");
    s=Session("C");Step(service,s);Check(!Showing()&&http.calls==2,"uncached offline track leaves Dock usable");
    settings.enabled=false;settings.Save(root);Step(service,s);Check(!Showing(),"disable takes effect without restarting desktop");
   }
   Check(!Showing(),"dispose restores icons");
+  settings.enabled=false;settings.online=true;settings.Save(root);http=new FakeHttp();
+  using(var service=new DockLyrics(root,http,false)){
+   service.CompanionActive=true;s=Session("Companion metadata");Step(service,s);
+   var companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
+   Check((bool)companion["available"]&&(string)companion["title"]=="Companion metadata"&&!Showing(),"companion reads current media with desktop lyrics disabled");
+   Check((string)companion["current"]==""&&!(bool)companion["lyricsEnabled"]&&http.calls==0,"companion metadata never enables lyric lookup or renders disabled lyrics");
+   Check(!LyricsSettings.Load(root).enabled&&LyricsSettings.Load(root).online,"companion leaves saved lyric and online preferences unchanged");
+   now=now.AddSeconds(5);service.Tick(now,true,false,false);
+   companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
+   Check(!(bool)companion["available"],"companion-only metadata expires with the original media heartbeat");
+   Step(service,s);service.CompanionActive=false;Step(service,s);
+   companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
+   Check(!(bool)companion["available"]&&!Showing()&&http.calls==0,"closing companion restores the disabled media source without network calls");
+  }
   settings.enabled=true;settings.online=false;settings.offsetMs=0;settings.Save(root);
   using(var service=new DockLyrics(root,new FakeHttp(),false)){s=Session("B");Step(service,s);Check(Showing(),"bounded disk cache survives restart offline");}
   settings.online=true;settings.Save(root);http=new FakeHttp();

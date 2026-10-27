@@ -16,7 +16,24 @@ jobs:
       - name: Build
         shell: pwsh
         run: ./scripts/Build.ps1
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (!(Test-Path -LiteralPath $compiler)) {
+            $download = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+            Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $download
+            if ((Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash -ne '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732') { throw 'Compiler download integrity check failed' }
+            if ((Get-AuthenticodeSignature -LiteralPath $download).Status -ne 'Valid') { throw 'Compiler signature is invalid' }
+            $directory = Join-Path $env:RUNNER_TEMP 'InnoSetup'
+            $setup = Start-Process -FilePath $download -ArgumentList '/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOICONS',('/DIR="'+$directory+'"') -WindowStyle Hidden -Wait -PassThru
+            if ($setup.ExitCode -ne 0) { throw 'Compiler installation failed' }
+            $compiler = Join-Path $directory 'ISCC.exe'
+          }
+          ./scripts/Package.ps1 -CompilerPath $compiler -Version ((Get-Content VERSION -Raw).Trim())
       - uses: actions/upload-artifact@v4
         with:
           name: PrismGlass-windows-x64
-          path: dist/PrismGlass
+          path: |
+            dist/PrismGlass
+            artifacts/release/PrismGlass-Setup-*-x64.exe

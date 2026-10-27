@@ -3,7 +3,7 @@ using System.IO;
 class TestCursorPreferences {
  static void Check(bool value,string name){if(!value)throw new Exception(name);Console.WriteLine("PASS "+name);}
  static void Main(){
-  string root=Path.Combine(Path.GetTempPath(),"PrismCursorPreferences-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
+  string root=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"PrismCursorPreferences-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
   try{
    var original=CursorPreferences.Load(root);
    Check(original.style=="rounded-dark"&&original.trailEnabled&&original.trailStyle=="particles","existing users retain the rounded pointer and particles");

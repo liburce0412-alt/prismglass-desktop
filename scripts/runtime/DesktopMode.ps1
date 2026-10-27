@@ -1,5 +1,26 @@
 param([ValidateSet('Game','Beauty','Recovery','Login')][string]$Mode='Beauty')
 $ErrorActionPreference='Stop'
+function Test-StartupReadiness($State,[int]$ProcessId,[datetime]$Started,[datetime]$Written,[datetime]$Now=[datetime]::UtcNow){
+ return $null -ne $State -and $State.version -eq 1 -and $State.pid -eq $ProcessId -and $State.ready -is [bool] -and $State.ready -and $Written -ge $Started -and ($Now-$Written).TotalSeconds -ge 0 -and ($Now-$Written).TotalSeconds -lt 6
+}
+function Update-PrismGlassSkinCatalog([string]$Executable,[string]$PendingFile,[bool]$WasRunning){
+ if(!$WasRunning -or !(Test-Path -LiteralPath $PendingFile)){return}
+ & $Executable '!RefreshApp'
+ if($LASTEXITCODE -ne 0){throw 'Rainmeter could not refresh its skin catalog. Retry after closing its settings window.'}
+ # RefreshApp registers new directories asynchronously; do not combine it with activation.
+ Start-Sleep -Milliseconds 1000
+}
+function Stop-PrismGlassSkins([string]$Executable){
+ if(!(Get-Process Rainmeter -ErrorAction SilentlyContinue)){return}
+ foreach($config in @('Dock','Focus','Music','System','Weather','Topbar')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
+ $configured=Join-Path $PSScriptRoot 'LiquidDesktop/skin-path.txt'
+ $skins=if([IO.File]::Exists($configured)){[IO.Path]::GetFullPath([IO.File]::ReadAllText($configured).Trim())}else{Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter/Skins/PrismGlass'}
+ if(Test-Path -LiteralPath $skins){foreach($folder in Get-ChildItem -LiteralPath $skins -Directory -Filter 'Dock-monitor-*'){
+  $file=Join-Path $folder.FullName 'Main.ini'
+  if($folder.Name -match '^Dock-monitor-[0-9]+$' -and (Test-Path -LiteralPath $file) -and (Get-Content -LiteralPath $file -TotalCount 1) -eq '; PrismGlass generated monitor instance'){& $Executable '!DeactivateConfig' ('PrismGlass\'+$folder.Name)}
+ }}
+}
+$startedRenderer=$null;$startedBridge=$null;$beautySkinsActivated=$false;$otherInstallationRunning=$false
 $modeLock=[Threading.Mutex]::new($false,'Local\PrismGlassDesktopMode')
 if(!$modeLock.WaitOne(45000)){$modeLock.Dispose();throw 'Another desktop mode change is still running.'}
 try {
@@ -43,7 +64,7 @@ public static class DesktopTaskbar {
  [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint param,ref RECT rect,uint flags);
  [DllImport("user32.dll")]static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
  public static void FullWorkArea(){var old=SetThreadDpiAwarenessContext(new IntPtr(-4));try{var m=new MONITOR{size=Marshal.SizeOf(typeof(MONITOR))};if(GetMonitorInfo(MonitorFromWindow(IntPtr.Zero,1),ref m)){var rect=m.monitor;if(!SystemParametersInfo(47,0,ref rect,2))throw new InvalidOperationException("Unable to release the taskbar work area");}}finally{if(old!=IntPtr.Zero)SetThreadDpiAwarenessContext(old);}}
- public static void Set(int state,bool visible){var d=new DATA();d.cbSize=Marshal.SizeOf(d);d.hWnd=FindWindow("Shell_TrayWnd",null);d.param=new IntPtr(state);SHAppBarMessage(10,ref d);{ShowWindow(d.hWnd,visible?5:0);IntPtr h=IntPtr.Zero;while((h=FindWindowEx(IntPtr.Zero,h,"Shell_SecondaryTrayWnd",null))!=IntPtr.Zero)ShowWindow(h,5);}}
+ public static void Set(int state,bool visible){var d=new DATA();d.cbSize=Marshal.SizeOf(d);d.hWnd=FindWindow("Shell_TrayWnd",null);d.param=new IntPtr(state);SHAppBarMessage(10,ref d);{ShowWindow(d.hWnd,visible?5:0);IntPtr h=IntPtr.Zero;while((h=FindWindowEx(IntPtr.Zero,h,"Shell_SecondaryTrayWnd",null))!=IntPtr.Zero)ShowWindow(h,visible?5:0);}}
 }
 '@
 $ownedBridge={Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object {$_.CommandLine -and $_.CommandLine.Contains($bridge)}}
@@ -83,14 +104,15 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  }
  & $ownedBridge | ForEach-Object {Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue}
 
- if(Get-Process Rainmeter -ErrorAction SilentlyContinue){
-  foreach($config in @('Dock','Focus','Music','System','Weather','Topbar')){& $rainmeter '!DeactivateConfig' ('PrismGlass\'+$config)}
- }
+ Stop-PrismGlassSkins $rainmeter
  [DesktopTaskbar]::Set(2,$true)
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
  if([DesktopTaskbar]::ShellReady()){[DesktopIcons]::SetVisible($true)}
  'GAME: Desktop renderer, Rainmeter and music bridge stopped; Windows taskbar and desktop icons shown.'
 }else{
+ $glassPath=Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe'
+ $otherGlass=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -ne $glassPath}
+ if($otherGlass){$otherInstallationRunning=$true;throw 'Another PrismGlass installation is running. Exit that installation before starting this one.'}
  if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath}
  # Keep the ordinary desktop usable until every required component has painted.
  [DesktopTaskbar]::Set(2,$true)
@@ -104,37 +126,34 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   $saved=Get-Content $statePath -Raw|ConvertFrom-Json
   if($null -ne $saved.DesktopIconsVisible){$iconsVisible=[bool]$saved.DesktopIconsVisible}
  }
- if(!(Get-Process Rainmeter -ErrorAction SilentlyContinue)){Start-Process $rainmeter -WindowStyle Hidden}
+ $rainmeterWasRunning=[bool](Get-Process Rainmeter -ErrorAction SilentlyContinue)
+ if(!$rainmeterWasRunning){Start-Process $rainmeter -WindowStyle Hidden}
  Start-Sleep -Milliseconds 500
- foreach($config in @('Dock','Focus','Music','System','Weather')){& $rainmeter '!ActivateConfig' ('PrismGlass\'+$config) 'Main.ini'}
- $dockReady=$false
- for($check=0;$check -lt 40;$check++){
-  Start-Sleep -Milliseconds 200
-  $rp=Get-Process Rainmeter -ErrorAction SilentlyContinue | Select-Object -First 1
-  if($rp -and [DesktopTaskbar]::BottomDockReady($rp.Id)){$dockReady=$true;break}
- }
- if(!$dockReady){[DesktopTaskbar]::Set(2,$true);throw 'Rainmeter Dock not ready; Windows taskbar retained.'}
- if($python -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'music-bridge.enabled')) -and !(& $ownedBridge)){Start-Process $python -ArgumentList ('"'+$bridge+'"') -WindowStyle Hidden}
- if(!(Get-Process LiquidDesktop -ErrorAction SilentlyContinue)){Start-Process (Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe') -WindowStyle Hidden}
+ $catalogPending=Join-Path $PSScriptRoot 'LiquidDesktop/skin-catalog-pending.flag'
+ Update-PrismGlassSkinCatalog $rainmeter $catalogPending $rainmeterWasRunning
+ $beautySkinsActivated=$true
+ foreach($config in @('Focus','Music','System','Weather')){& $rainmeter '!ActivateConfig' ('PrismGlass\'+$config) 'Main.ini'}
+ if($python -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'music-bridge.enabled')) -and !(& $ownedBridge)){$startedBridge=Start-Process $python -ArgumentList ('"'+$bridge+'"') -WindowStyle Hidden -PassThru}
+ if(!(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $glassPath})){$startedRenderer=Start-Process $glassPath -WindowStyle Hidden -PassThru}
  $rendererDeadline=(Get-Date).AddSeconds(35)
  $renderReady=$false
  while((Get-Date) -lt $rendererDeadline){
-  $glassProcess=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq (Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe')}
-  $heartbeat=Join-Path $PSScriptRoot 'LiquidDesktop\heartbeat.txt'
-  $sideHeartbeat=Join-Path $PSScriptRoot 'LiquidDesktop\side-heartbeat.txt'
-  $freshMain=$false;$freshSide=$false;$freshExtensions=$false
-  if($glassProcess -and (Test-Path -LiteralPath $heartbeat)){$mainStamp=(Get-Item -LiteralPath $heartbeat).LastWriteTime;$freshMain=($mainStamp -ge $glassProcess.StartTime -and ((Get-Date)-$mainStamp).TotalSeconds -lt 6)}
-  if($glassProcess -and (Test-Path -LiteralPath $sideHeartbeat)){$sideStamp=(Get-Item -LiteralPath $sideHeartbeat).LastWriteTime;$freshSide=($sideStamp -ge $glassProcess.StartTime -and ((Get-Date)-$sideStamp).TotalSeconds -lt 12)}
-  $extensionBeat=Join-Path $PSScriptRoot 'LiquidDesktop\extensions-heartbeat.txt'; if($glassProcess -and (Test-Path -LiteralPath $extensionBeat)){$extensionStamp=(Get-Item -LiteralPath $extensionBeat).LastWriteTime;$freshExtensions=($extensionStamp -ge $glassProcess.StartTime -and ((Get-Date)-$extensionStamp).TotalSeconds -lt 6)}
-  if($freshMain -and $freshSide -and $freshExtensions){$renderReady=$true;break}
+  $glassProcess=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $glassPath} | Select-Object -First 1
+  $readinessPath=Join-Path $PSScriptRoot 'LiquidDesktop\readiness.json'
+  if($glassProcess -and (Test-Path -LiteralPath $readinessPath)){
+   try{$readiness=Get-Content -LiteralPath $readinessPath -Raw | ConvertFrom-Json
+    if(Test-StartupReadiness $readiness $glassProcess.Id $glassProcess.StartTime.ToUniversalTime() (Get-Item -LiteralPath $readinessPath).LastWriteTimeUtc){$renderReady=$true;break}
+   }catch{Write-Verbose ('Readiness pending: '+$_.Exception.Message)}
+  }
   Start-Sleep -Milliseconds 250
  }
- if(!$renderReady){throw 'Glass renderer or side dock did not become ready; ordinary desktop retained.'}
+ if(!$renderReady){throw 'Enabled PrismGlass components did not become ready; ordinary desktop retained.'}
+ if(Test-Path -LiteralPath $catalogPending){Remove-Item -LiteralPath $catalogPending}
  Set-Content -LiteralPath $readyPath -Value (Get-Date).ToString('o') -Encoding ascii
  # Clear both Explorer's cached FWF_NOICONS and saved folder-view preference.
  # Only the current icon window is hidden; next login remains ordinary.
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
- [DesktopIcons]::SetVisible($iconsVisible)
+ [DesktopIcons]::SetVisible($(if($readiness.primaryEnabled){$iconsVisible}else{$true}))
  # LiquidDesktop temporarily hides the taskbar and releases its work area after readiness.
  # Do not enable persistent auto-hide or preempt its work-area restore snapshot here.
  if(Test-Path $statePath){Remove-Item -LiteralPath $statePath}
@@ -143,6 +162,12 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  'BEAUTY: Current desktop layout restored.'
 }
 } catch {
+ if($otherInstallationRunning){throw}
+ if($startedRenderer -and !$startedRenderer.HasExited){
+  try{& (Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe') '--quit';if(!$startedRenderer.WaitForExit(3000)){Stop-Process -Id $startedRenderer.Id -ErrorAction SilentlyContinue}}catch{Write-Warning $_.Exception.Message}
+ }
+ if($beautySkinsActivated){try{Stop-PrismGlassSkins $rainmeter}catch{Write-Warning $_.Exception.Message}}
+ if($startedBridge -and !$startedBridge.HasExited){Stop-Process -Id $startedBridge.Id -ErrorAction SilentlyContinue}
  try { & (Join-Path $PSScriptRoot 'CursorTheme.ps1') -Mode Restore } catch { Write-Warning $_.Exception.Message }
  # Also covers manual Beauty launches, not only the login wrapper.
  if('DesktopTaskbar' -as [type]){
@@ -151,4 +176,4 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   if([DesktopTaskbar]::ShellReady()){[DesktopIcons]::SetVisible($true)}
  }
  throw
-} finally {$modeLock.ReleaseMutex();$modeLock.Dispose()}
+} finally {if($startedRenderer){$startedRenderer.Dispose()};if($startedBridge){$startedBridge.Dispose()};$modeLock.ReleaseMutex();$modeLock.Dispose()}

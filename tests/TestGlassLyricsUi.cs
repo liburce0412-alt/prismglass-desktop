@@ -1,7 +1,10 @@
 // Isolated off-screen WebView: actual shared shader and music-page HTML, fictional data.
 using System;using System.IO;using System.Drawing;using System.Drawing.Drawing2D;using System.Threading.Tasks;using System.Windows.Forms;using System.Collections.Generic;using System.Web.Script.Serialization;using Microsoft.Web.WebView2.Core;using Microsoft.Web.WebView2.WinForms;
 internal static class TestGlassLyricsUi {
- static WebView2 view;static Form form;static string root,output;static int checks;static bool musicOnly;static readonly List<string> errors=new List<string>();static readonly List<string> messages=new List<string>();
+ static WebView2 view;static Form form;static string root,output;static int checks;static bool musicOnly,autoAck=true;static string pendingIcon;static readonly List<string> errors=new List<string>();static readonly List<string> messages=new List<string>();
+ // This renderer fixture acknowledges a simulated skin. Native meter ordering is
+ // exercised separately by TestDockIconBridge against an isolated Rainmeter.
+ static void Ack(string message){var parts=message.Split(':');view.CoreWebView2.PostWebMessageAsJson("{\"type\":\"dock-icons-ack\",\"sequence\":"+parts[1]+",\"alpha\":"+parts[2]+"}");}
  [System.Runtime.InteropServices.DllImport("user32.dll")]static extern bool SetProcessDPIAware();
  [System.Runtime.InteropServices.DllImport("user32.dll")]static extern uint GetDpiForWindow(IntPtr handle);
  static Task<string> Eval(string script){return view.CoreWebView2.ExecuteScriptAsync(script);}
@@ -25,7 +28,7 @@ internal static class TestGlassLyricsUi {
  static async Task Run(){
   await view.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,"ui-preview-runtime")));
   view.ZoomFactor=96.0/GetDpiForWindow(form.Handle);view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-test.local",root,CoreWebView2HostResourceAccessKind.DenyCors);
-  view.CoreWebView2.WebMessageReceived+=(s,e)=>{var m=e.TryGetWebMessageAsString();messages.Add(m);if(m.StartsWith("error:"))errors.Add(m);};
+  view.CoreWebView2.WebMessageReceived+=(s,e)=>{var m=e.TryGetWebMessageAsString();messages.Add(m);if(m.StartsWith("error:"))errors.Add(m);if(m.StartsWith("dock-icons:")){pendingIcon=m;if(autoAck)Ack(m);}};
   await view.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));");
   if(!musicOnly){
   foreach(var version in new[]{"before","after"}){
@@ -58,6 +61,16 @@ internal static class TestGlassLyricsUi {
   }
   await Load("index.html","!!document.querySelector('#dock-lyrics')&&document.readyState==='complete'");
   await Message("{type:'layout',width:1200,height:800,theme:'Sky',paused:false,cards:[{name:'Dock',x:65,y:620,w:1070,h:100,r:28,insetY:16}]}");
+  await Task.Delay(80);autoAck=false;
+  await Message("{type:'lyrics',show:true,current:'迟缓宿主测试',next:'等待图标隐藏',motionPaused:false}");await Task.Delay(450);
+  await Assert("dockLyricsState.reveal===.18&&dockLyricsState.opacity===0&&dockLyricsState.width>dockLyricsState.targetWidth","busy native skin holds entry before collapse and lyric reveal");
+  Ack(pendingIcon);await Task.Delay(80);var oldZero=pendingIcon;
+  await Message("{type:'lyrics',show:false,current:'',next:'',motionPaused:false}");
+  await Message("{type:'lyrics',show:true,current:'快速反向',next:'旧回执不能显示',motionPaused:false}");Ack(oldZero);await Task.Delay(100);
+  await Assert("!dockLyricsState.iconsHidden&&dockLyricsState.opacity===0","delayed zero acknowledgement cannot reveal a later transition");
+  autoAck=true;Ack(pendingIcon);await Task.Delay(1100);
+  await Assert("dockLyricsState.iconsHidden&&dockLyricsState.opacity===1","current zero acknowledgement releases the same geometry spring");
+  await Message("{type:'lyrics',show:false,current:'',next:'',motionPaused:true}");await Task.Delay(100);
   await Message("{type:'lyrics',show:true,current:'玻璃里的光 · 星に願いを 🎵',next:'White core · 冰蓝微光',motionPaused:false}");
   await Task.Delay(180);await Save("lyrics-contracting");
   await Assert("dockLyricsState.width<1070&&dockLyricsState.width>dockLyricsState.targetWidth&&dockLyricsState.velocity<0","lyrics contract progressively instead of jumping to a fixed width");
@@ -72,10 +85,10 @@ internal static class TestGlassLyricsUi {
   await Assert("document.querySelector('#lyric-current').textContent.includes('<img')&&!document.querySelector('#dock-lyrics img')&&document.querySelector('#dock-lyrics').getAnimations({subtree:true}).length>0","literal text stays safe and a real line change starts the entrance effect");
   await Message("{type:'pointer',x:600,y:670,down:false}");
   await Task.Delay(140);
-  await Assert("!dockLyricsState.active&&dockLyricsState.opacity===0&&dockLyricsState.width<1070&&dockLyricsState.velocity>0","pointer approach hides lyrics and smoothly expands the Dock");
+  await Assert("!dockLyricsState.active&&dockLyricsState.opacity>0&&dockLyricsState.opacity<1&&dockLyricsState.width<1070&&dockLyricsState.velocity>0","pointer approach fades lyrics while smoothly expanding the Dock");
   await Eval("window.interruptedWidth=dockLyricsState.width");
   await Message("{type:'lyrics',show:true,current:'接住正在移动的玻璃',next:'保留速度，继续收拢',motionPaused:false}");
-  await Assert("Math.abs(dockLyricsState.width-interruptedWidth)<80","reversing during expansion preserves position without snapping");
+  await Assert("Math.abs(dockLyricsState.width-interruptedWidth)<80&&dockLyricsState.opacity>0","reversing during expansion preserves position and text without flashing off");
   await Message("{type:'lyrics',show:true,current:'这是一句用于检查超长歌词可以完整保留并缓慢滚动的演示文字。'.repeat(4),next:'下一句仍然清晰',motionPaused:false}");
   await Task.Delay(100);
   await Assert("dockLyricsState.targetWidth<=900&&document.querySelector('.current-window').classList.contains('overflowing')&&document.querySelector('#lyric-current').getAnimations().some(a=>a.effect.getTiming().iterations===Infinity)","long lines have a bounded capsule and readable overflow scrolling");

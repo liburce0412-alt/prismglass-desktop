@@ -1,10 +1,17 @@
 'use strict';
 window.PrismGlassRenderer = function(canvas,post,subscribe){
 const gl=canvas.getContext('webgl',{alpha:false,antialias:false,powerPreference:'low-power',preserveDrawingBuffer:true});
-let width=2560,height=1440,sceneWidth=2560,sceneHeight=1440,originX=0,originY=0,cards=[],theme='Sky',paused=false,loaded=false,raf=0,last=0,frames=0;
+let width=2560,height=1440,sceneWidth=2560,sceneHeight=1440,originX=0,originY=0,cards=[],theme='Sky',paused=false,material=1,loaded=false,raf=0,last=0,frames=0;
 let mouse={x:-999,y:-999,down:false},leans=new Map();
+const outlineKeys=new Map();
+function postOutline(type,outline){
+ // Compare at a quarter physical pixel, but preserve the original clip points.
+ const key=JSON.stringify(outline,(_,value)=>typeof value==='number'?Math.round(value*4)/4:value);
+ if(outlineKeys.get(type)===key)return;
+ outlineKeys.set(type,key);stats.outlineMessages++;post(type+':'+JSON.stringify(outline));
+}
 function randomEffect(){const value=new Uint32Array(1);crypto.getRandomValues(value);return value[0]/4294967296;}
-const stats={ready:false,frames:0,theme:'Sky',paused:false,errors:[],cards:0};
+const stats={ready:false,frames:0,outlineMessages:0,theme:'Sky',paused:false,errors:[],cards:0};
 const vertex='attribute vec2 a;varying vec2 uv;void main(){uv=a*.5+.5;gl_Position=vec4(a,0.,1.);}';
 const sceneFrag=`precision highp float;varying vec2 uv;uniform sampler2D wallpaper;uniform float astro;uniform vec2 size;uniform vec2 sceneSize;uniform vec2 origin;
 float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
@@ -15,7 +22,7 @@ void main(){vec2 p=(origin+vec2(uv.x,1.-uv.y)*size)/sceneSize;vec3 c=texture2D(w
  float rays=(exp(-abs(st.x)*3.-abs(st.y)*.65)+exp(-abs(st.y)*3.-abs(st.x)*.65))*.14*step(.985,seed);
  vec3 starColor=mix(vec3(.68,.84,1.),vec3(1.,.96,.82),step(.92,seed));c+=(core+glow+rays)*step(.78,seed)*starColor*mix(.38,.8,step(.96,seed));}
  gl_FragColor=vec4(c,1.);}`;
-const glassFrag=`precision highp float;varying vec2 uv;uniform sampler2D scene;uniform sampler2D wallpaper;uniform vec2 size;uniform vec2 sceneSize;uniform vec2 origin;uniform vec2 center;uniform vec2 halfSize;uniform float radius;uniform vec2 lean;uniform float astro;uniform float onlyBackground;uniform float hover;uniform float press;uniform float fixedShape;uniform float rimStrength;uniform float liquidAmplitude;uniform float liquidDirection;uniform float motionTime;uniform float auroraColor;uniform float effectSeed;uniform vec4 meteorHead[5];uniform vec2 meteorDir[5];
+const glassFrag=`precision highp float;varying vec2 uv;uniform sampler2D scene;uniform sampler2D wallpaper;uniform vec2 size;uniform vec2 sceneSize;uniform vec2 origin;uniform vec2 center;uniform vec2 halfSize;uniform float radius;uniform vec2 lean;uniform float astro;uniform float onlyBackground;uniform float hover;uniform float press;uniform float fixedShape;uniform float rimStrength;uniform float material;uniform float liquidAmplitude;uniform float liquidDirection;uniform float motionTime;uniform float auroraColor;uniform float effectSeed;uniform vec4 meteorHead[5];uniform vec2 meteorDir[5];
 float sd(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}
 float liquidProfile(float nx){float a=min(abs(nx),1.);float middle=exp(-a*a*6.);float shoulders=exp(-pow((a-.55)*3.,2.));return mix(.8*shoulders-.25*middle,.9*middle-.3*pow(a,1.4),(liquidDirection+1.)*.5);}
 void main(){vec2 p=vec2(uv.x,1.-uv.y)*size;vec3 original=texture2D(wallpaper,(origin+vec2(uv.x,1.-uv.y)*size)/sceneSize).rgb;
@@ -80,7 +87,7 @@ void main(){vec2 p=vec2(uv.x,1.-uv.y)*size;vec3 original=texture2D(wallpaper,(or
  vec3 flowingColor=mix(vec3(.20,.88,1.),vec3(.80,.43,1.),flow);
  float edgeBand=exp(-pow((depth-2.)/1.7,2.));
  c+=flowingColor*following*hover*(edgeBand*.65+exp(-depth/7.)*.12);
- result=mix(original,c,1.-smoothstep(-.7,.7,dist));}
+ result=mix(original,c,material*(1.-smoothstep(-.7,.7,dist)));}
  gl_FragColor=vec4(result,1.);}`;
 function fail(e){stats.errors.push(String(e));post('error:'+e);}
 if(!gl){fail('WebGL unavailable');return;}
@@ -115,7 +122,7 @@ function dockOutline(c,v){
    for(let i=1;i<32;i++)point(fromX+(toX-fromX)*i/32,fromY);
   }
  }
- if(c.name==='Dock')post('dock-shape:'+JSON.stringify(points));
+ if(c.name==='Dock')postOutline('dock-shape',points);
  return points;
 }
 function drawCard(c,lean){
@@ -125,11 +132,11 @@ function drawCard(c,lean){
   const age=now-m.start;heads.set([m.x+age*m.speed*m.dx,m.y+age*m.speed*m.dy,m.tail,Math.min(1,age*8)*Math.min(1,Math.max(0,m.life-age)*3)],i*4);dirs.set([m.dx,m.dy],i*2);
  }
  gl.uniform4fv(loc(glassProgram,'meteorHead[0]'),heads);gl.uniform2fv(loc(glassProgram,'meteorDir[0]'),dirs);one(glassProgram,'auroraColor',lean.auroraColor||0);one(glassProgram,'effectSeed',lean.effectSeed||0);one(glassProgram,'motionTime',now);one(glassProgram,'rimStrength',c.rimStrength===undefined?1:c.rimStrength);one(glassProgram,'fixedShape',c.name==='TopIsland'&&lean.lock!==undefined?lean.lock:c.fixedShape?1:0);two(glassProgram,'center',c.x+c.w/2,c.y+c.h/2);two(glassProgram,'halfSize',c.w/2,c.h/2);two(glassProgram,'lean',lean.x,lean.y);one(glassProgram,'radius',c.r);one(glassProgram,'hover',lean.h||0);one(glassProgram,'press',lean.p||0);const pad=26+Math.ceil(liquid.amplitude*2),left=Math.max(0,Math.floor(c.x-pad)),top=Math.max(0,Math.floor(c.y-pad)),right=Math.min(width,Math.ceil(c.x+c.w+pad)),bottom=Math.min(height,Math.ceil(c.y+c.h+pad));gl.scissor(left,height-bottom,Math.max(0,right-left),Math.max(0,bottom-top));gl.drawArrays(gl.TRIANGLES,0,6);if(c.name==='Dock')dockOutline(c,lean);}
-function render(){gl.viewport(0,0,width,height);use(glassProgram);bind(glassProgram,'scene',scene,0);bind(glassProgram,'wallpaper',wallpaper,1);two(glassProgram,'size',width,height);two(glassProgram,'sceneSize',sceneWidth,sceneHeight);two(glassProgram,'origin',originX,originY);one(glassProgram,'astro',theme==='Astro'?1:0);one(glassProgram,'onlyBackground',1);gl.disable(gl.SCISSOR_TEST);gl.drawArrays(gl.TRIANGLES,0,6);one(glassProgram,'onlyBackground',0);gl.enable(gl.SCISSOR_TEST);
+function render(){gl.viewport(0,0,width,height);use(glassProgram);bind(glassProgram,'scene',scene,0);bind(glassProgram,'wallpaper',wallpaper,1);two(glassProgram,'size',width,height);two(glassProgram,'sceneSize',sceneWidth,sceneHeight);two(glassProgram,'origin',originX,originY);one(glassProgram,'astro',theme==='Astro'?1:0);one(glassProgram,'material',material);one(glassProgram,'onlyBackground',1);gl.disable(gl.SCISSOR_TEST);gl.drawArrays(gl.TRIANGLES,0,6);one(glassProgram,'onlyBackground',0);gl.enable(gl.SCISSOR_TEST);
 
  const outlines=[];
  for(const c of cards){const v=leans.get(c.name)||{x:0,y:0};drawCard(c,v);if(c.name!=='Dock')outlines.push(dockOutline(c,v).map(p=>[p[0]+c.x-26,p[1]+c.y-26]));}
- post('widget-shapes:'+JSON.stringify(outlines));
+ postOutline('widget-shapes',outlines);
  gl.disable(gl.SCISSOR_TEST);frames++;stats.frames=frames;stats.theme=theme;stats.paused=paused;stats.cards=cards.length;stats.canvasWidth=width;stats.canvasHeight=height;stats.sceneWidth=sceneWidth;stats.sceneHeight=sceneHeight;stats.activeCards=cards.filter(c=>(leans.get(c.name)?.h||0)>.05).map(c=>c.name);stats.maxDeformation=Math.max(0,...[...leans.values()].map(v=>Math.abs(v.x)*20+Math.abs(v.y)*15+v.h*8));if(!stats.ready)post('painted');stats.ready=true;}
 function frame(now){raf=0;if(!loaded)return;const dt=Math.max(.001,Math.min((now-last)/1000||.016,.034));last=now;let moving=false;
  for(const c of cards){let v=leans.get(c.name);if(!v){v={x:0,y:0,h:0,p:0,vx:0,vy:0};leans.set(c.name,v);}const inside=!paused&&mouse.x>=c.x&&mouse.x<=c.x+c.w&&mouse.y>=c.y&&mouse.y<=c.y+c.h;const tx=inside?(mouse.x-c.x-c.w/2)/(c.w/2):0,ty=inside?(mouse.y-c.y-c.h/2)/(c.h/2):0;const th=inside?1:0,tp=inside&&mouse.down?1:0;
@@ -160,7 +167,9 @@ function frame(now){raf=0;if(!loaded)return;const dt=Math.max(.001,Math.min((now
  render();if(moving)raf=requestAnimationFrame(frame);}
 function wake(){if(!raf&&loaded)raf=requestAnimationFrame(frame);}
 function loadWallpaper(version){const img=new Image();img.onload=()=>{gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,wallpaper);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);loaded=true;buildScene();};img.onerror=()=>fail('wallpaper load failed');img.src='wallpaper.png?v='+encodeURIComponent(version);}
-subscribe(m=>{if(m.type==='layout'){const sw=m.sceneWidth||m.width,sh=m.sceneHeight||m.height,ox=m.originX||0,oy=m.originY||0;const rebuild=width!==m.width||height!==m.height||theme!==m.theme||sceneWidth!==sw||sceneHeight!==sh||originX!==ox||originY!==oy;width=m.width;height=m.height;sceneWidth=sw;sceneHeight=sh;originX=ox;originY=oy;cards=m.cards;theme=m.theme;paused=m.paused;if(rebuild)buildScene();else wake();}else if(m.type==='geometry'){cards=m.cards;if(m.externallyDriven)wake();else if(loaded)render();}else if(m.type==='pointer'){const before=mouse;mouse={x:m.x,y:m.y,down:!!m.down};if(!paused&&cards.some(c=>(mouse.x>=c.x&&mouse.x<=c.x+c.w&&mouse.y>=c.y&&mouse.y<=c.y+c.h)||(before.x>=c.x&&before.x<=c.x+c.w&&before.y>=c.y&&before.y<=c.y+c.h)))wake();}else if(m.type==='wallpaper')loadWallpaper(m.version);else if(m.type==='stats')post('stats:'+JSON.stringify(stats));});
+// A native layout can reset window regions even when the next local points match.
+subscribe(m=>{if(m.type==='layout'){outlineKeys.clear();const sw=m.sceneWidth||m.width,sh=m.sceneHeight||m.height,ox=m.originX||0,oy=m.originY||0;const rebuild=width!==m.width||height!==m.height||theme!==m.theme||sceneWidth!==sw||sceneHeight!==sh||originX!==ox||originY!==oy;width=m.width;height=m.height;sceneWidth=sw;sceneHeight=sh;originX=ox;originY=oy;cards=m.cards;theme=m.theme;paused=m.paused;if(rebuild)buildScene();else wake();}else if(m.type==='geometry'){cards=m.cards;if(m.externallyDriven)wake();else if(loaded)render();}else if(m.type==='pointer'){const before=mouse;mouse={x:m.x,y:m.y,down:!!m.down};if(!paused&&cards.some(c=>(mouse.x>=c.x&&mouse.x<=c.x+c.w&&mouse.y>=c.y&&mouse.y<=c.y+c.h)||(before.x>=c.x&&before.x<=c.x+c.w&&before.y>=c.y&&before.y<=c.y+c.h)))wake();}else if(m.type==='wallpaper')loadWallpaper(m.version);else if(m.type==='stats')post('stats:'+JSON.stringify(stats));});
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();cancelAnimationFrame(raf);fail('graphics context lost');});
+window.addEventListener('prism-preferences',e=>{material=Math.max(.6,Math.min(1,(e.detail.glassOpacity||100)/100));wake();});
 post('ready');loadWallpaper(Date.now());
 };

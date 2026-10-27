@@ -12,18 +12,20 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 internal static class LyricsFiles {
+ public static void Locked(Action action){using(var mutex=new Mutex(false,"Local\\PrismGlassLyricsSettings")){bool held=false;try{try{held=mutex.WaitOne(3000);}catch(AbandonedMutexException){held=true;}if(!held)throw new IOException("歌词设置正被另一端保存，请稍后重试。");action();}finally{if(held)mutex.ReleaseMutex();}}}
  public static string Read(string file){
   using(var stream=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
   using(var reader=new StreamReader(stream,Encoding.UTF8,true))return reader.ReadToEnd();
  }
  public static void Write(string file,string value){
-  string temp=file+".tmp";File.WriteAllText(temp,value,new UTF8Encoding(false));
-  if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);
+  string temp=file+".pending-"+Guid.NewGuid().ToString("N");try{File.WriteAllText(temp,value,new UTF8Encoding(false));
+  if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);}finally{if(File.Exists(temp))File.Delete(temp);}
  }
 }
 internal sealed class LyricsAppearance {
  public string font="sans",layout="duo",align="center",effect="float",texture="solid",widthMode="adaptive";
  public string color="#ffffff",secondary="#dceaf9",accent="#9edfff";
+ public string backgroundTheme="transparent";public int backgroundOpacity=35;public bool backgroundMotion=false;
  public int fontSize=26,weight=650,spacing=2,intensity=65,speed=100,glow=30,width=900,secondaryOpacity=80;
  static string Choice(string value,string choices,string fallback){return ("|"+choices+"|").Contains("|"+value+"|")&&!String.IsNullOrEmpty(value)?value:fallback;}
  static string Color(string value,string fallback){return Regex.IsMatch(value??"",@"^#[a-fA-F0-9]{6}$")?value.ToLowerInvariant():fallback;}
@@ -34,6 +36,7 @@ internal sealed class LyricsAppearance {
   effect=Choice(effect,"float|spring|fade|flip|slide|zoom|blur|wave|ripple|cascade|stretch|none","float");
   texture=Choice(texture,"solid|gradient|shimmer|neon|outline","solid");widthMode=Choice(widthMode,"adaptive|fixed","adaptive");
   color=Color(color,"#ffffff");secondary=Color(secondary,"#dceaf9");accent=Color(accent,"#9edfff");
+  backgroundTheme=Choice(backgroundTheme,"album|wallpaper|transparent|ocean|pine|sand|violet","transparent");backgroundOpacity=Bound(backgroundOpacity,0,100);
   fontSize=Bound(fontSize,18,32);weight=Bound(weight,400,900);spacing=Bound(spacing,-2,12);
   intensity=Bound(intensity,0,100);speed=Bound(speed,50,180);glow=Bound(glow,0,100);width=Bound(width,420,1200);secondaryOpacity=Bound(secondaryOpacity,30,100);
   return this;
@@ -44,14 +47,50 @@ internal sealed class LyricsSettings {
  public bool holdGaps=true;
  public int offsetMs;
  public LyricsAppearance appearance=new LyricsAppearance();
+ internal string loadedSource;internal bool loaded;
+ internal static LyricsSettings ReadStrict(string root,out string source,out Dictionary<string,object> document){
+  string file=Path.Combine(root,"lyrics-settings.json");source=null;document=new Dictionary<string,object>();
+  if(!File.Exists(file))return new LyricsSettings{loaded=true};
+  if(new FileInfo(file).Length>=8192)throw new IOException("歌词设置文件过大，原文件已保留。");
+  source=LyricsFiles.Read(file);var json=new JavaScriptSerializer();
+  try{document=json.DeserializeObject(source) as Dictionary<string,object>;if(document==null)throw new ArgumentException();
+   foreach(string key in new[]{"enabled","online","holdGaps"})if(document.ContainsKey(key)&&!(document[key] is bool))throw new ArgumentException();
+   if(document.ContainsKey("offsetMs")&&!(document["offsetMs"] is int))throw new ArgumentException();
+   object raw;if(document.TryGetValue("appearance",out raw)){var map=raw as Dictionary<string,object>;if(map==null)throw new ArgumentException();ValidateAppearance(map,false);}
+   var value=json.Deserialize<LyricsSettings>(source);value.offsetMs=Math.Max(-5000,Math.Min(5000,value.offsetMs));value.appearance=(value.appearance??new LyricsAppearance()).Normalize();value.loaded=true;value.loadedSource=source;return value;
+  }catch(ArgumentException){throw new IOException("歌词设置暂时无法读取，原文件已保留。");}catch(InvalidOperationException){throw new IOException("歌词设置暂时无法读取，原文件已保留。");}
+ }
+ internal static void ValidateAppearance(Dictionary<string,object> patch,bool rejectUnknown){
+  foreach(var pair in patch){var field=typeof(LyricsAppearance).GetField(pair.Key);if(field==null){if(rejectUnknown)throw new ArgumentException();continue;}if(pair.Value==null||pair.Value.GetType()!=field.FieldType)throw new ArgumentException();}
+ }
  public static LyricsSettings Load(string root,LyricsSettings previous=null){
-  try{var file=Path.Combine(root,"lyrics-settings.json");if(File.Exists(file)&&new FileInfo(file).Length<8192){var s=new JavaScriptSerializer().Deserialize<LyricsSettings>(LyricsFiles.Read(file));if(s!=null){s.offsetMs=Math.Max(-5000,Math.Min(5000,s.offsetMs));s.appearance=(s.appearance??new LyricsAppearance()).Normalize();return s;}}}catch{}
+  try{string source;Dictionary<string,object> document;return ReadStrict(root,out source,out document);}catch{}
   return previous??new LyricsSettings{enabled=false,online=false};
  }
- public void Save(string root){appearance=(appearance??new LyricsAppearance()).Normalize();LyricsFiles.Write(Path.Combine(root,"lyrics-settings.json"),new JavaScriptSerializer().Serialize(this));}
+ public void Save(string root){LyricsFiles.Locked(()=>{string source;Dictionary<string,object> document;ReadStrict(root,out source,out document);if(source!=loadedSource||(!loaded&&source!=null))throw new LyricsSettingsConflictException();
+  appearance=(appearance??new LyricsAppearance()).Normalize();document["enabled"]=enabled;document["online"]=online;document["holdGaps"]=holdGaps;document["offsetMs"]=Math.Max(-5000,Math.Min(5000,offsetMs));document["appearance"]=appearance;
+  string next=new JavaScriptSerializer().Serialize(document);LyricsFiles.Write(Path.Combine(root,"lyrics-settings.json"),next);loadedSource=next;loaded=true;});}
+}
+internal sealed class LyricsSettingsConflictException:IOException {public LyricsSettingsConflictException():base("歌词设置已在另一端更新，请重新载入后重试。"){} }
+internal sealed class LyricsStyleStore {
+ readonly string root;readonly JavaScriptSerializer json=new JavaScriptSerializer();string source,revision="";
+ public LyricsStyleStore(string directory){root=directory;}
+ void Observe(string value){if(revision==""||source!=value){source=value;revision=Guid.NewGuid().ToString("N");}}
+ object Snapshot(LyricsSettings value,bool editable){return new{available=true,editable=editable,reason="",revision=revision,appearance=value.appearance,enabled=value.enabled,online=value.online,holdGaps=value.holdGaps,offsetMs=value.offsetMs};}
+ public object Read(bool editable){object result=null;LyricsFiles.Locked(()=>{string actual;Dictionary<string,object> document;var value=LyricsSettings.ReadStrict(root,out actual,out document);Observe(actual);result=Snapshot(value,editable);});return result;}
+ public object Write(string expected,Dictionary<string,object> patch,Func<bool> authorize){
+  if(patch==null||patch.Count==0||patch.Count>22)throw new ArgumentException();LyricsSettings.ValidateAppearance(patch,true);object result=null;
+  LyricsFiles.Locked(()=>{if(!authorize())throw new UnauthorizedAccessException();string actual;Dictionary<string,object> document;var value=LyricsSettings.ReadStrict(root,out actual,out document);Observe(actual);if(expected!=revision)throw new LyricsSettingsConflictException();
+   foreach(var pair in patch)typeof(LyricsAppearance).GetField(pair.Key).SetValue(value.appearance,pair.Value);value.appearance.Normalize();
+   var appearance=document.ContainsKey("appearance")?document["appearance"] as Dictionary<string,object>:new Dictionary<string,object>();foreach(var pair in json.Deserialize<Dictionary<string,object>>(json.Serialize(value.appearance)))appearance[pair.Key]=pair.Value;document["appearance"]=appearance;
+   string next=json.Serialize(document);if(Encoding.UTF8.GetByteCount(next)>=8192)throw new IOException("歌词设置文件过大，原文件已保留。");
+   string current;Dictionary<string,object> ignored;LyricsSettings.ReadStrict(root,out current,out ignored);if(current!=actual)throw new LyricsSettingsConflictException();if(!authorize())throw new UnauthorizedAccessException();
+   LyricsFiles.Write(Path.Combine(root,"lyrics-settings.json"),next);Observe(next);result=Snapshot(value,true);
+  });return result;
+ }
 }
 internal sealed class MediaSnapshot {
- public string source="",title="",artist="",album="",status="";
+ public string source="",title="",artist="",album="",status="",cover="";
  public double sampledAt=0,position=0,duration=0,rate=1;
  public bool timeline=false;
  public static double Unix(DateTime now){return (now-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;}
@@ -116,7 +155,9 @@ internal sealed class DockLyrics : IDisposable {
  string track="",requestTrack="",lastOutput="",state="",requestState="";
  List<LyricLine> lines=new List<LyricLine>();
  DateTime sample=DateTime.MinValue,published=DateTime.MinValue,retry=DateTime.MinValue,helperRetry=DateTime.MinValue,approached=DateTime.MinValue;
- int attempts;bool disposed;MediaSnapshot media;LyricsSettings settings;
+ int attempts;bool disposed,lastMotionPaused;MediaSnapshot media;LyricsSettings settings;
+ public bool CompanionActive {get;set;}
+ LyricPaletteState palette;DateTime paletteRead=DateTime.MinValue;string paletteTrack="";
  public DockLyrics(string directory,HttpMessageHandler transport=null,bool readSystemMedia=true){
   this.readSystemMedia=readSystemMedia;
   http=transport==null?new HttpClient():new HttpClient(transport);
@@ -140,13 +181,18 @@ internal sealed class DockLyrics : IDisposable {
  void Status(string value){if(value==state)return;state=value;try{File.WriteAllText(Path.Combine(root,"lyrics-status.txt"),value);}catch(IOException){}}
  public void Tick(DateTime now,bool dockVisible,bool pointerNear,bool motionPaused){
   if(disposed)return;
+  lastMotionPaused=motionPaused;
   if(pointerNear)approached=now;
   if((now-sample).TotalMilliseconds>=250){
    sample=now;var next=LyricsSettings.Load(root,settings);
    if(settings!=null&&settings.online!=next.online){CancelLookup();attempts=0;retry=DateTime.MinValue;}
    settings=next;
-   if(netease!=null)netease.Enable(settings.enabled);
-   if(!settings.enabled){StopHelper();CancelLookup();media=null;track="";lines.Clear();Status("Dock 歌词已关闭");}
+   if(netease!=null)netease.Enable(settings.enabled||CompanionActive);
+   if(!settings.enabled){
+    CancelLookup();track="";lines.Clear();Status("Dock 歌词已关闭");
+    if(CompanionActive){StartHelper(now);var observed=MediaSnapshot.Read(root,now);media=observed??(media!=null&&media.Fresh(now)?media:null);}
+    else{StopHelper();media=null;}
+   }
    else {
     StartHelper(now);var observed=MediaSnapshot.Read(root,now);
     // A file replacement or missed sample is not a track change. Keep the last
@@ -184,13 +230,23 @@ internal sealed class DockLyrics : IDisposable {
   }
   Publish(now,current,nextLine,motionPaused,gap);
  }
+ public object CompanionSnapshot(DateTime now){
+  if(disposed||settings==null||(!settings.enabled&&!CompanionActive)||media==null||!media.Fresh(now))return new{available=false};
+  var pair=settings.enabled&&media.timeline?LyricsTimeline.At(lines,media.Position(now)+settings.offsetMs/1000.0):new[]{"",""};
+  bool gap=settings.enabled&&media.timeline&&pair[0].Length==0&&lines.Count>0&&settings.holdGaps&&media.Position(now)<media.duration;
+  if(gap){pair[0]=media.title;pair[1]=(media.Position(now)<lines[0].time?"前奏":"间奏")+(String.IsNullOrWhiteSpace(media.artist)?"":" · "+media.artist);}
+  ReadPalette(now);
+  return new{available=true,updatedAt=(long)(media.sampledAt*1000),title=media.title,artist=media.artist,source=media.source,playing=media.status=="playing",position=media.Position(now),duration=media.duration,current=pair[0],next=pair[1],lyricsEnabled=settings.enabled,lyricsOnline=settings.online,appearance=settings.appearance,motionPaused=lastMotionPaused,gap=gap,palette=new{album=palette.album,wallpaper=palette.wallpaper,status=palette.status}};
+ }
+ void ReadPalette(DateTime now){string key=media==null?"":media.Key+"|"+media.cover;if(palette==null||paletteTrack!=key||(now-paletteRead).TotalMilliseconds>=750){palette=LyricBackgroundPalette.Read(root,media);paletteRead=now;paletteTrack=key;}}
  void Publish(DateTime now,string current,string next,bool motionPaused,bool gap=false){
   string value=(current.Length>0?"1":"0")+"|"+(motionPaused?"1":"0")+"\n"+Convert.ToBase64String(Encoding.UTF8.GetBytes(LyricsTimeline.DisplayText(current)))+"\n"+Convert.ToBase64String(Encoding.UTF8.GetBytes(LyricsTimeline.DisplayText(next)))+"\n";
   var appearance=settings==null?new LyricsAppearance():settings.appearance;
-  string signature=value+json.Serialize(appearance)+gap;
+  ReadPalette(now);
+  string signature=value+json.Serialize(appearance)+json.Serialize(palette)+gap;
   if(signature==lastOutput&&(now-published).TotalMilliseconds<750)return;
   // Send Unicode directly to the glass WebView; Rainmeter only controls icon visibility.
-  var changed=VisualChanged;if(changed!=null)changed(new {type="lyrics",show=current.Length>0,current=current,next=next,motionPaused=motionPaused,gap=gap,appearance=appearance});
+  var changed=VisualChanged;if(changed!=null)changed(new {type="lyrics",show=current.Length>0,current=current,next=next,motionPaused=motionPaused,gap=gap,appearance=appearance,palette=palette});
   try{LyricsFiles.Write(Path.Combine(root,"dock-lyrics.txt"),Math.Floor(MediaSnapshot.Unix(now)+3).ToString(CultureInfo.InvariantCulture)+"|"+value);lastOutput=signature;published=now;}catch(IOException){}
  }
  async Task<string> Get(string url,CancellationToken token){

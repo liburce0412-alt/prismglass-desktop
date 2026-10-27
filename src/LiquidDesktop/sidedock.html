@@ -42,6 +42,12 @@
   <div id="lyrics-preview" class="lyric-copy"><div class="lyric-window current-window"><span class="lyric-main">让光停在歌声里</span></div><div class="lyric-window next-window"><span class="lyric-secondary">下一句 · 风从身边经过</span></div></div>
   <div class="lyrics-preview-caption"><span>效果预览</span><button id="lyrics-replay" type="button">重播动效 ↻</button></div>
  </div>
+ <details open><summary>背景配色 <small>保留液态玻璃材质</small></summary>
+  <label class="lyrics-field">主题<select data-lyric-field="backgroundTheme" aria-label="歌词背景主题"><option value="album">专辑流光</option><option value="wallpaper">跟随壁纸</option><option value="transparent">透明配色</option><option value="ocean">深海</option><option value="pine">松林</option><option value="sand">暖沙</option><option value="violet">夜紫</option></select></label>
+  <label class="lyrics-field">配色强度 <output data-lyric-output="backgroundOpacity"></output><input data-lyric-field="backgroundOpacity" type="range" min="0" max="100" step="1"></label>
+  <label class="lyrics-field">背景颜色流动<input data-lyric-field="backgroundMotion" type="checkbox" aria-label="背景颜色流动"></label>
+  <p id="lyrics-background-status" class="life-note" role="status">等待背景配色</p>
+ </details>
  <details open><summary>风格预设 <small>8 种搭配</small></summary><div id="lyrics-presets" class="lyrics-preset-grid"></div></details>
  <details><summary>颜色与字体 <small>自由搭配</small></summary>
   <div class="lyrics-color-row"><label>主歌词<input type="color" data-lyric-field="color" aria-label="主歌词颜色"></label><label>下一句<input type="color" data-lyric-field="secondary" aria-label="下一句颜色"></label><label>光泽色<input type="color" data-lyric-field="accent" aria-label="歌词光泽颜色"></label></div>
@@ -106,4 +112,4 @@
   <article id="calendar-page" class="page" hidden><div class="eyebrow">TODAY <span id="today-date"></span></div><span class="clock-face" aria-hidden="true"><i class="hand hour"></i><i class="hand minute"></i><i class="hand second"></i><b></b></span><strong id="large-time"></strong><p id="full-date"></p><div class="month-nav"><button id="previous-month" aria-label="上个月">‹</button><button id="calendar-today" aria-label="回到本月"></button><button id="next-month" aria-label="下个月">›</button></div><div id="full-calendar"></div></article>
  </section>
 </main><script src="glass-renderer.js"></script><script src="lyrics-style.js"></script><script src="lyrics-settings.js"></script><script src="sidedock.js"></script><script src="moon.js"></script><script src="lifestyle.js"></script>
-</body></html>
+<script src="desktop-preferences.js"></script></body></html>
