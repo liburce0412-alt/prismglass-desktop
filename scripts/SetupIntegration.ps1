@@ -59,9 +59,12 @@ function Remove-SetupLegacyDesktopShortcuts([string]$InstallRoot,[string]$Deskto
  foreach($name in @('开启 PrismGlass.lnk','退出 PrismGlass.lnk')){
   $path=Join-Path $DesktopRoot $name
   if(!(Test-Path -LiteralPath $path -PathType Leaf)){continue}
-  $shell=New-Object -ComObject WScript.Shell
-  $shortcut=$shell.CreateShortcut($path)
-  if([IO.Path]::GetFileName($shortcut.TargetPath) -eq 'pwsh.exe' -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
+  # WScript's shortcut filenames depend on the system code page; Shell preserves Unicode paths.
+  $shell=New-Object -ComObject Shell.Application
+  $folder=$shell.Namespace($DesktopRoot)
+  if(!$folder){continue};$item=$folder.ParseName($name)
+  if(!$item -or !$item.IsLink){continue};$shortcut=$item.GetLink()
+  if([IO.Path]::GetFileName($shortcut.Path) -eq 'pwsh.exe' -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
  }
 }
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {

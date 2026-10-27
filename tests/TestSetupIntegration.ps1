@@ -110,8 +110,10 @@ try{
  $shell=New-Object -ComObject WScript.Shell
  $oldShortcut=Join-Path $desktop '开启 PrismGlass.lnk'
  $otherShortcut=Join-Path $desktop '退出 PrismGlass.lnk'
- $link=$shell.CreateShortcut($oldShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $install 'DesktopMode.ps1')+'" -Mode Beauty';$link.Save()
- $link=$shell.CreateShortcut($otherShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $foreign 'DesktopMode.ps1')+'" -Mode Game';$link.Save()
+ # Create through WScript at an ASCII filename, then exercise real Unicode shortcut paths.
+ $temporaryShortcut=Join-Path $fixture 'shortcut.lnk'
+ $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $install 'DesktopMode.ps1')+'" -Mode Beauty';$link.Save();Move-Item -LiteralPath $temporaryShortcut -Destination $oldShortcut
+ $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $foreign 'DesktopMode.ps1')+'" -Mode Game';$link.Save();Move-Item -LiteralPath $temporaryShortcut -Destination $otherShortcut
  Remove-SetupLegacyDesktopShortcuts $install $desktop
  Check (!(Test-Path -LiteralPath $oldShortcut)) 'Upgrade removes the old desktop entry owned by this installation'
  Check (Test-Path -LiteralPath $otherShortcut) 'Upgrade preserves a same-name shortcut targeting another installation'
