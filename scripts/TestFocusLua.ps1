@@ -27,6 +27,7 @@ Update=1000
 [Variables]
 Fixture=$fixture\
 ProductionScript=$repo\rainmeter\PrismGlass\@Resources\Focus.lua
+ProductionWeather=$repo\rainmeter\PrismGlass\@Resources\Weather.lua
 ProductionExport=$repo\rainmeter\PrismGlass\@Resources\WidgetExport.lua
 [Check]
 Measure=Script
@@ -44,7 +45,7 @@ Shape=Rectangle 0,0,1,1 | Fill Color 0,0,0,1 | StrokeWidth 0
  }while($text -notmatch '(?m)^(Completed |ERROR )' -and [datetime]::UtcNow -lt $deadline -and !$process.HasExited)
  $text | Set-Content -LiteralPath $evidence -Encoding utf8
  if(Test-Path -LiteralPath (Join-Path $fixture 'Rainmeter.log')){Copy-Item -LiteralPath (Join-Path $fixture 'Rainmeter.log') -Destination (Join-Path $repo 'artifacts/tests/focus-lua-rainmeter.log') -Force}
- if(!$text.Contains('Completed 23 native Focus Lua checks.') -or $text -match '(?m)^(FAIL |ERROR )'){throw "Native Focus checks failed. See $evidence"}
+ if(!$text.Contains('Completed 30 native Focus Lua checks.') -or $text -match '(?m)^(FAIL |ERROR )'){throw "Native Focus checks failed. See $evidence"}
  $text
 }finally{
  if($process){if(!$process.HasExited){Stop-Process -Id $process.Id};$process.WaitForExit(5000) | Out-Null;$process.Dispose()}

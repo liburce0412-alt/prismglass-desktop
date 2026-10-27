@@ -1,4 +1,4 @@
-param(
+﻿param(
  [ValidateSet('Preflight','Configure','Uninstall')][string]$Mode='Preflight',
  [Parameter(Mandatory=$true)][string]$Root,
  [string]$RainmeterPath,
@@ -20,7 +20,7 @@ function Resolve-SetupPath([string]$Path) {
 function Read-SetupRecord([string]$Path) {
  if(!(Test-Path -LiteralPath $Path -PathType Leaf)){return $null}
  if((Get-Item -LiteralPath $Path).Length -gt 262144){throw 'Installation record exceeds its size limit.'}
- try{return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -ErrorAction Stop}catch{throw 'Installation record is invalid; existing files were not replaced.'}
+ try{return Get-Content -LiteralPath $Path -Encoding UTF8 -Raw | ConvertFrom-Json -ErrorAction Stop}catch{throw 'Installation record is invalid; existing files were not replaced.'}
 }
 function Read-SetupIni([string]$Path,[string]$Section,[string]$Key) {
  if(!(Test-Path -LiteralPath $Path -PathType Leaf)){return ''}
@@ -64,7 +64,7 @@ function Remove-SetupLegacyDesktopShortcuts([string]$InstallRoot,[string]$Deskto
   $folder=$shell.Namespace($DesktopRoot)
   if(!$folder){continue};$item=$folder.ParseName($name)
   if(!$item -or !$item.IsLink){continue};$shortcut=$item.GetLink()
-  if([IO.Path]::GetFileName($shortcut.Path) -eq 'pwsh.exe' -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
+  if([IO.Path]::GetFileName($shortcut.Path) -in @('pwsh.exe','powershell.exe') -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
  }
 }
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {
@@ -79,7 +79,7 @@ function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,
  # Record ownership before copying so an interrupted install remains repairable.
  Write-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json') $owner
  foreach($file in $files){
-  $relative=[IO.Path]::GetRelativePath($source,$file.FullName)
+  $relative=$file.FullName.Substring($source.TrimEnd('\','/').Length+1)
   $target=Resolve-SetupPath (Join-Path $SkinRoot $relative)
   if(!$target.StartsWith($SkinRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Skin file escaped its installation directory.'}
   New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
@@ -140,7 +140,7 @@ if($Mode -eq 'Uninstall'){
  return
 }
 if(!(Test-Path -LiteralPath $RainmeterPath -PathType Leaf) -or [IO.Path]::GetFileName($RainmeterPath) -ne 'Rainmeter.exe'){throw 'Select the installed Rainmeter.exe.'}
-if(!(Test-Path -LiteralPath $PowerShellPath -PathType Leaf) -or [IO.Path]::GetFileName($PowerShellPath) -ne 'pwsh.exe'){throw 'Select PowerShell 7 pwsh.exe.'}
+if(!(Test-Path -LiteralPath $PowerShellPath -PathType Leaf) -or [IO.Path]::GetFileName($PowerShellPath) -notin @('pwsh.exe','powershell.exe')){throw '请选择 Windows PowerShell 5.1 或 PowerShell 7 程序。'}
 $RainmeterPath=Resolve-SetupPath $RainmeterPath;$PowerShellPath=Resolve-SetupPath $PowerShellPath
 $skin=Resolve-SetupSkin $RainmeterPath $RainmeterIni
 [void](Assert-SetupOwnership $Root $skin ($Mode -eq 'Preflight'))

@@ -1,8 +1,8 @@
-﻿#ifndef BundleRoot
+#ifndef BundleRoot
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.9.0-beta.2"
+  #define AppVersion "0.9.0-beta.3"
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"
@@ -30,6 +30,7 @@ OutputBaseFilename=PrismGlass-Setup-{#AppVersion}-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+WizardSizePercent=110,120
 SetupIconFile={#BundleRoot}\LiquidDesktop\PrismGlass.ico
 UninstallDisplayIcon={app}\LiquidDesktop\LiquidDesktop.exe
 CloseApplications=no
@@ -42,24 +43,29 @@ Name: chinesesimp; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
 Source: "{#BundleRoot}\SetupIntegration.ps1"; Flags: dontcopy
+Source: "VerifyDependency.ps1"; Flags: dontcopy
 #include FileList
 
 [Tasks]
 Name: desktopicon; Description: "创建桌面快捷方式"
 
 [Icons]
-Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
-Name: "{group}\退出 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Game"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
+Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
+Name: "{group}\退出 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Game -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
 Name: "{group}\卸载 PrismGlass"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
+Name: "{autodesktop}\PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; Description: "启动 PrismGlass"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent runhidden
+Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; Description: "启动 PrismGlass"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent runhidden
 
 [Code]
 var
   Dependencies: TInputFileWizardPage;
   WebViewStatus: TNewStaticText;
+  DependencyDownload: TDownloadWizardPage;
+  DependencyProgress: TOutputMarqueeProgressWizardPage;
+  InstallDependenciesButton: TNewButton;
+  DependencyRestartRequired: Boolean;
   PowerShellPath, RainmeterPath: String;
 
 function Quoted(const Value: String): String;
@@ -86,65 +92,232 @@ begin
   Result := RegQueryDWordValue(HKLM32, 'Software\Microsoft\NET Framework Setup\NDP\v4\Full', 'Release', Release) and (Release >= 528040);
 end;
 
+function ValidRainmeter(const Path: String): Boolean;
+begin
+  Result := FileExists(Path) and (CompareText(ExtractFileName(Path), 'Rainmeter.exe') = 0);
+end;
+
+function ValidPowerShell(const Path: String): Boolean;
+begin
+  Result := FileExists(Path) and ((CompareText(ExtractFileName(Path), 'powershell.exe') = 0) or (CompareText(ExtractFileName(Path), 'pwsh.exe') = 0));
+end;
+
+function InstalledRoot: String;
+begin
+  if not RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\PrismGlass.Desktop_is1', 'InstallLocation', Result) then Result := '';
+end;
+
+procedure DetectDependencies;
+var Candidate, Root: String; Stored: TArrayOfString;
+begin
+  Root := InstalledRoot;
+  if not ValidRainmeter(Dependencies.Values[0]) then begin
+    if (Root <> '') and LoadStringsFromFile(AddBackslash(Root) + 'LiquidDesktop\rainmeter-path.txt', Stored) and (GetArrayLength(Stored) > 0) then begin
+      Candidate := Trim(Stored[0]);
+      if ValidRainmeter(Candidate) then Dependencies.Values[0] := Candidate;
+    end;
+    if not ValidRainmeter(Dependencies.Values[0]) and RegQueryStringValue(HKLM64, 'Software\Rainmeter', '', Candidate) then
+      if ValidRainmeter(AddBackslash(Candidate) + 'Rainmeter.exe') then Dependencies.Values[0] := AddBackslash(Candidate) + 'Rainmeter.exe';
+    if not ValidRainmeter(Dependencies.Values[0]) and RegQueryStringValue(HKLM32, 'Software\Rainmeter', '', Candidate) then
+      if ValidRainmeter(AddBackslash(Candidate) + 'Rainmeter.exe') then Dependencies.Values[0] := AddBackslash(Candidate) + 'Rainmeter.exe';
+    if not ValidRainmeter(Dependencies.Values[0]) and RegQueryStringValue(HKCU, 'Software\Rainmeter', 'PortableInstallPath', Candidate) then
+      if ValidRainmeter(AddBackslash(Candidate) + 'Rainmeter.exe') then Dependencies.Values[0] := AddBackslash(Candidate) + 'Rainmeter.exe';
+    Candidate := ExpandConstant('{pf64}\Rainmeter\Rainmeter.exe');
+    if not ValidRainmeter(Dependencies.Values[0]) and ValidRainmeter(Candidate) then Dependencies.Values[0] := Candidate;
+  end;
+  if not ValidPowerShell(Dependencies.Values[1]) then begin
+    if Root <> '' then begin
+      Candidate := GetIniString('Runtime', 'PowerShell', '', AddBackslash(Root) + 'installer-runtime.ini');
+      if ValidPowerShell(Candidate) then Dependencies.Values[1] := Candidate;
+    end;
+    Candidate := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+    if not ValidPowerShell(Dependencies.Values[1]) and ValidPowerShell(Candidate) then Dependencies.Values[1] := Candidate;
+  end;
+  RainmeterPath := Dependencies.Values[0]; PowerShellPath := Dependencies.Values[1];
+end;
+
+function MissingDependencies: String;
+begin
+  Result := '';
+  if not ValidRainmeter(RainmeterPath) then Result := 'Rainmeter';
+  if not HasWebView then begin
+    if Result <> '' then Result := Result + '、';
+    Result := Result + 'WebView2';
+  end;
+  if not HasFramework then begin
+    if Result <> '' then Result := Result + '、';
+    Result := Result + '.NET Framework 4.8';
+  end;
+end;
+
+procedure RefreshDependencies(Sender: TObject);
+var Missing: String;
+begin
+  DetectDependencies;
+  Missing := MissingDependencies;
+  InstallDependenciesButton.Enabled := (Missing <> '') and not DependencyRestartRequired;
+  if DependencyRestartRequired then WebViewStatus.Caption := '组件要求重启电脑。请保存工作并手动重启，再重新运行安装器；不会自动重启。'
+  else if not ValidPowerShell(PowerShellPath) then WebViewStatus.Caption := '未找到系统 PowerShell。请恢复 Windows PowerShell，或在上方选择已有的 pwsh.exe。'
+  else if Missing = '' then WebViewStatus.Caption := '必需组件已就绪，可以点击“下一步”。支持系统自带 PowerShell 5.1，无需另装 PowerShell 7。'
+  else WebViewStatus.Caption := '待安装：' + Missing + '。点击“一键补齐缺失组件”；也可从下方官网手动安装后重新检查。';
+end;
+
+function VerifyMicrosoftInstaller(const Path: String): Boolean;
+var Code: Integer;
+begin
+  ExtractTemporaryFile('VerifyDependency.ps1');
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + Quoted(ExpandConstant('{tmp}\VerifyDependency.ps1')) + ' -Path ' + Quoted(Path),
+    '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+function InstallDependency(const Name, URL, FileName, SHA256, Arguments: String; MicrosoftSigned, Elevated: Boolean): Boolean;
+var Path: String; Code: Integer; Started: Boolean;
+begin
+  Result := False;
+  Path := ExpandConstant('{tmp}\') + FileName;
+  DependencyDownload.Clear;
+  DependencyDownload.Add(URL, FileName, SHA256);
+  DependencyDownload.Show;
+  try
+    try
+      DependencyDownload.Download;
+    except
+      if DependencyDownload.AbortedByUser then
+        SuppressibleMsgBox('已取消下载。已装好的组件会保留，可以稍后重试。', mbInformation, MB_OK, IDOK)
+      else SuppressibleMsgBox('无法下载或校验 ' + Name + '。请检查网络后重试，或从下方官网手动安装。' + #13#10 + GetExceptionMessage, mbError, MB_OK, IDOK);
+      DeleteFile(Path);
+      Exit;
+    end;
+  finally
+    DependencyDownload.Hide;
+  end;
+  DependencyProgress.SetText('正在校验并安装 ' + Name + '…', '如出现 Windows 权限提示，请核对官方发布者。请等待组件安装完成；不会自动重启。');
+  DependencyProgress.Show;
+  try
+    DependencyProgress.Animate;
+    if MicrosoftSigned and not VerifyMicrosoftInstaller(Path) then begin
+      SuppressibleMsgBox(Name + ' 的 Microsoft 数字签名验证未通过，已停止执行。请检查系统时间和网络，或从官网手动安装。', mbError, MB_OK, IDOK);
+      Exit;
+    end;
+    if Elevated then Started := ShellExec('runas', Path, Arguments, '', SW_SHOWNORMAL, ewWaitUntilTerminated, Code)
+    else Started := Exec(Path, Arguments, '', SW_SHOWNORMAL, ewWaitUntilTerminated, Code);
+    if (not Started) or ((Code <> 0) and (Code <> 3010) and (Code <> 1641)) then begin
+      if (Code = 1223) or (Code = 1602) then
+        SuppressibleMsgBox('已取消 ' + Name + ' 的安装。已完成的组件会保留，可以重新点击补齐。', mbInformation, MB_OK, IDOK)
+      else SuppressibleMsgBox(Name + ' 未安装成功（代码 ' + IntToStr(Code) + '）。请重试或从官网手动安装。', mbError, MB_OK, IDOK);
+      Exit;
+    end;
+    DependencyRestartRequired := (Code = 3010) or (Code = 1641);
+    Result := not DependencyRestartRequired;
+    if DependencyRestartRequired then SuppressibleMsgBox(Name + ' 已安装，需要重启电脑后继续。请保存工作并手动重启，再重新运行本安装器；不会自动重启。', mbInformation, MB_OK, IDOK);
+  finally
+    DependencyProgress.Hide;
+    DeleteFile(Path);
+  end;
+end;
+
+procedure InstallMissingDependencies(Sender: TObject);
+var Missing: String;
+begin
+  // A silent install never invokes this interactive download action.
+  if WizardSilent then Exit;
+  RefreshDependencies(nil);
+  Missing := MissingDependencies;
+  if (Missing = '') or DependencyRestartRequired then Exit;
+  if SuppressibleMsgBox('将从官方源下载并安装：' + Missing + '。' + #13#10 +
+    '组件按各自许可提供；如需管理员权限，Windows 会提示确认。不会开启开机启动、远程控制或伴随屏网络服务。' + #13#10 +
+    '开始下载并安装？', mbConfirmation, MB_OKCANCEL, IDCANCEL) <> IDOK then Exit;
+  try
+    if not HasFramework then
+      if not InstallDependency('.NET Framework 4.8', 'https://go.microsoft.com/fwlink/?linkid=2088631', 'NDP48-Setup.exe', '', '/passive /norestart', True, True) then Exit;
+    if not ValidRainmeter(RainmeterPath) then
+      if not InstallDependency('Rainmeter', 'https://builds.rainmeter.net/Rainmeter-4.5.28.exe', 'Rainmeter-4.5.28.exe', 'de6e010f8c28882bc28dcd8f319c899f34dfddec51e1e4dd4e7a23f68ebfe14d', '/S /AUTOSTARTUP=0 /RESTART=0 /VERSION=64 /LANGUAGE=2052', False, True) then Exit;
+    if not HasWebView then
+      if not InstallDependency('WebView2', 'https://go.microsoft.com/fwlink/?LinkId=2124703', 'MicrosoftEdgeWebview2Setup.exe', '', '/silent /install', True, False) then Exit;
+  finally
+    RefreshDependencies(nil);
+  end;
+  if MissingDependencies <> '' then
+    SuppressibleMsgBox('组件安装结束，但尚未全部检测到。请点击“重新检查”，或从官网手动安装缺失项。', mbInformation, MB_OK, IDOK);
+end;
+
 procedure OpenDependency(Sender: TObject);
 var Code: Integer; URL: String;
 begin
   case TNewButton(Sender).Tag of
-    1: URL := 'https://www.rainmeter.net/';
-    2: URL := 'https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows';
-    4: URL := 'https://dotnet.microsoft.com/download/dotnet-framework/net48';
+    0: URL := 'https://www.rainmeter.net/';
+    1: URL := 'https://developer.microsoft.com/microsoft-edge/webview2/';
   else
-    URL := 'https://developer.microsoft.com/microsoft-edge/webview2/';
+    URL := 'https://dotnet.microsoft.com/download/dotnet-framework/net48';
   end;
   if not ShellExec('open', URL, '', '', SW_SHOWNORMAL, ewNoWait, Code) then
     SuppressibleMsgBox('无法打开官方下载页面。请检查网络，或手动打开：' + URL, mbError, MB_OK, IDOK);
 end;
 
 procedure InitializeWizard;
-var Button: TNewButton; I: Integer;
+var Button: TNewButton; I, Width: Integer;
 begin
   WizardForm.LicenseAcceptedRadio.Checked := True;
-  Dependencies := CreateInputFilePage(wpSelectDir, '检查必需组件',
-    'PrismGlass 需要 Rainmeter、PowerShell 7、WebView2 和 .NET Framework 4.8。',
-    '缺少组件时，请点击下方官方按钮下载安装，再返回此页继续。无需账号或开发工具。安装器不会设置开机启动或开启 iPad 网络服务。');
-  Dependencies.Add('Rainmeter 程序位置：', 'Rainmeter 程序|Rainmeter.exe', '.exe');
-  Dependencies.Add('PowerShell 7 程序位置：', 'PowerShell 程序|pwsh.exe', '.exe');
-  Dependencies.Values[0] := ExpandConstant('{param:RAINMETER|{pf64}\Rainmeter\Rainmeter.exe}');
+  Dependencies := CreateInputFilePage(wpSelectDir, '准备运行组件',
+    '自动检查缺少的组件，并提供一键安装。',
+    'Windows 自带的 PowerShell 5.1 即可使用，无需另装 PowerShell 7。已有组件会直接复用；下方路径通常无需修改。');
+  Dependencies.Add('Rainmeter 程序位置（自动识别）：', 'Rainmeter 程序|Rainmeter.exe', '.exe');
+  Dependencies.Add('PowerShell 程序位置（自动识别）：', 'PowerShell 程序|powershell.exe;pwsh.exe', '.exe');
+  Dependencies.Values[0] := ExpandConstant('{param:RAINMETER|}');
   Dependencies.Values[1] := ExpandConstant('{param:POWERSHELL|}');
-  if Dependencies.Values[1] = '' then Dependencies.Values[1] := FileSearch('pwsh.exe', GetEnv('PATH'));
-  if Dependencies.Values[1] = '' then Dependencies.Values[1] := ExpandConstant('{pf64}\PowerShell\7\pwsh.exe');
-  for I := 0 to 3 do begin
+  InstallDependenciesButton := TNewButton.Create(WizardForm);
+  InstallDependenciesButton.Parent := Dependencies.Surface;
+  InstallDependenciesButton.SetBounds(0, ScaleY(166), ScaleX(230), ScaleY(29));
+  InstallDependenciesButton.Caption := '一键补齐缺失组件';
+  InstallDependenciesButton.OnClick := @InstallMissingDependencies;
+  Button := TNewButton.Create(WizardForm);
+  Button.Parent := Dependencies.Surface;
+  Button.SetBounds(ScaleX(240), ScaleY(166), ScaleX(110), ScaleY(29));
+  Button.Caption := '重新检查';
+  Button.OnClick := @RefreshDependencies;
+  Width := (Dependencies.SurfaceWidth - ScaleX(12)) div 3;
+  for I := 0 to 2 do begin
     Button := TNewButton.Create(WizardForm);
     Button.Parent := Dependencies.Surface;
-    Button.SetBounds(ScaleX(I * 109), ScaleY(166), ScaleX(105), ScaleY(27));
-    Button.Tag := I + 1;
-    case I of 0: Button.Caption := 'Rainmeter'; 1: Button.Caption := 'PowerShell 7'; 2: Button.Caption := 'WebView2'; 3: Button.Caption := '.NET 4.8'; end;
+    Button.SetBounds(I * (Width + ScaleX(6)), ScaleY(205), Width, ScaleY(27));
+    Button.Tag := I;
+    case I of 0: Button.Caption := 'Rainmeter 官网'; 1: Button.Caption := 'WebView2 官网'; 2: Button.Caption := '.NET 官网'; end;
     Button.OnClick := @OpenDependency;
   end;
   WebViewStatus := TNewStaticText.Create(WizardForm);
   WebViewStatus.Parent := Dependencies.Surface;
-  WebViewStatus.SetBounds(0, ScaleY(203), Dependencies.SurfaceWidth, ScaleY(42));
+  WebViewStatus.SetBounds(0, ScaleY(245), Dependencies.SurfaceWidth, ScaleY(60));
   WebViewStatus.WordWrap := True;
-  WebViewStatus.Caption := '点击“下一步”会重新检查组件。组件下载与安装由其官方安装程序完成。';
+  DependencyDownload := CreateDownloadPage('下载运行组件', '仅下载缺少的官方安装包，下载完成后验证来源。', nil);
+  DependencyDownload.ShowBaseNameInsteadOfUrl := True;
+  DependencyProgress := CreateOutputMarqueeProgressPage('安装运行组件', '请稍候，完成后将重新检查。');
+  RefreshDependencies(nil);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = Dependencies.ID then RefreshDependencies(nil);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
   if CurPageID = Dependencies.ID then begin
-    RainmeterPath := Dependencies.Values[0]; PowerShellPath := Dependencies.Values[1];
-    if (not FileExists(RainmeterPath)) or (CompareText(ExtractFileName(RainmeterPath), 'Rainmeter.exe') <> 0) then begin
-      SuppressibleMsgBox('请安装 Rainmeter 并选择其 Rainmeter.exe，然后继续。', mbError, MB_OK, IDOK); Result := False;
-    end else if (not FileExists(PowerShellPath)) or (CompareText(ExtractFileName(PowerShellPath), 'pwsh.exe') <> 0) then begin
-      SuppressibleMsgBox('请安装 PowerShell 7 并选择其 pwsh.exe，然后继续。', mbError, MB_OK, IDOK); Result := False;
+    RefreshDependencies(nil);
+    if DependencyRestartRequired then begin
+      SuppressibleMsgBox('请保存工作并手动重启电脑，再运行安装器继续。', mbError, MB_OK, IDOK); Result := False;
+    end else if not ValidRainmeter(RainmeterPath) then begin
+      SuppressibleMsgBox('尚未安装 Rainmeter。请点击“一键补齐缺失组件”，或选择已安装的 Rainmeter.exe。', mbError, MB_OK, IDOK); Result := False;
+    end else if not ValidPowerShell(PowerShellPath) then begin
+      SuppressibleMsgBox('请恢复系统 Windows PowerShell，或选择已安装的 powershell.exe / pwsh.exe。', mbError, MB_OK, IDOK); Result := False;
     end else if not HasFramework then begin
-      SuppressibleMsgBox('请安装 Microsoft .NET Framework 4.8，然后重新点击“下一步”。', mbError, MB_OK, IDOK); Result := False;
+      SuppressibleMsgBox('尚未安装 .NET Framework 4.8。请点击“一键补齐缺失组件”。', mbError, MB_OK, IDOK); Result := False;
     end else if not HasWebView then begin
-      SuppressibleMsgBox('请安装 Microsoft WebView2 常青版运行时，然后重新点击“下一步”。', mbError, MB_OK, IDOK); Result := False;
+      SuppressibleMsgBox('尚未安装 WebView2。请点击“一键补齐缺失组件”。', mbError, MB_OK, IDOK); Result := False;
     end;
   end;
 end;
-
 function RunIntegration(const Script, Mode, Root: String): Boolean;
 var Code: Integer; Args: String;
 begin
@@ -156,6 +329,10 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  DetectDependencies;
+  if DependencyRestartRequired then begin Result := '运行组件要求重启电脑，请手动重启后重新运行安装器。'; Exit; end;
+  if not ValidPowerShell(PowerShellPath) then begin Result := '未找到系统 Windows PowerShell，请修复系统组件后重试。'; Exit; end;
+  if MissingDependencies <> '' then begin Result := '缺少运行组件：' + MissingDependencies + '。请使用图形向导的一键补齐，或先手动安装；静默安装不会下载组件。'; Exit; end;
   ExtractTemporaryFile('SetupIntegration.ps1');
   if not RunIntegration(ExpandConstant('{tmp}\SetupIntegration.ps1'), 'Preflight', ExpandConstant('{app}')) then
     Result := '安装前检查未通过。请先退出 PrismGlass，再检查组件路径和安装目录。此安装器只能升级由它创建的安装；已有手工安装或归属其他目录的 PrismGlass 皮肤会保留，不会被覆盖。';
@@ -173,9 +350,9 @@ end;
 function InitializeUninstall: Boolean;
 begin
   PowerShellPath := GetIniString('Runtime', 'PowerShell', '', ExpandConstant('{app}\installer-runtime.ini'));
-  if not FileExists(PowerShellPath) then PowerShellPath := FileSearch('pwsh.exe', GetEnv('PATH'));
-  Result := FileExists(PowerShellPath);
-  if not Result then SuppressibleMsgBox('安全退出 PrismGlass 并移除其 Rainmeter 皮肤需要 PowerShell 7。请重新安装 PowerShell 7 后重试。尚未删除任何文件。', mbError, MB_OK, IDOK);
+  if not ValidPowerShell(PowerShellPath) then PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Result := ValidPowerShell(PowerShellPath);
+  if not Result then SuppressibleMsgBox('未找到可用的 Windows PowerShell。请恢复系统 Windows PowerShell 后重试。尚未删除任何文件。', mbError, MB_OK, IDOK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -20,7 +20,8 @@ end
 function Update()
  local body
  if name=='Weather' then
-  body=string.format('{"ready":%s,"updatedAt":%.0f,"temp":%s,"code":%s,"high":%s,"low":%s,"sunrise":"%s","sunset":"%s"}',SKIN:GetVariable('WeatherReady','0')=='1' and 'true' or 'false',weatherUpdatedAt,value('Temp'),value('Code'),value('High'),value('Low'),safeText('Sunrise'),safeText('Sunset'))
+  local city=SKIN:GetVariable('WeatherCity','已配置位置'):gsub('["\\%c]','')
+  body=string.format('{"ready":%s,"updatedAt":%.0f,"location":"%s","temp":%s,"code":%s,"high":%s,"low":%s,"sunrise":"%s","sunset":"%s"}',SKIN:GetVariable('WeatherReady','0')=='1' and 'true' or 'false',weatherUpdatedAt,city,value('Temp'),value('Code'),value('High'),value('Low'),safeText('Sunrise'),safeText('Sunset'))
  elseif name=='System' then
   local m=SKIN:GetMeasure('RAM');local max=m and m:GetMaxValue() or 0
   body=string.format('{"cpu":%s,"ram":%s,"down":%s,"up":%s}',value('CPU'),max>0 and value('RAM')/max*100 or 0,value('Down'),value('Up'))

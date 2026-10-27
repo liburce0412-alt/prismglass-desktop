@@ -90,6 +90,7 @@ internal sealed class WidgetBackend {
    case "sound":Launch("ms-settings:sound","");break;
    case "music":Launch("mswindowsmusic:","");break;
    case "weather":Launch("https://www.msn.com/weather","");break;
+   case "weather-settings":File.WriteAllText(Path.Combine(root,"workspace.request"),"weather");break;
    case "task-manager":Launch("taskmgr.exe","");break;
    case "desktop":Launch("explorer.exe","\""+Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)+"\"");break;
    case "documents":Launch("explorer.exe","\""+Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+"\"");break;
@@ -98,7 +99,7 @@ internal sealed class WidgetBackend {
    case "capture":Launch("ms-screenclip:","");break;
    case "recycle":Launch("explorer.exe","shell:RecycleBinFolder");break;
    case "notes":Launch("notepad.exe","\""+Path.GetFullPath(Path.Combine(root,"..","随手记.txt"))+"\"");break;
-   case "clipboard":Process.Start(new ProcessStartInfo("pwsh.exe","-NoProfile -WindowStyle Hidden -File \""+Path.GetFullPath(Path.Combine(root,"..","OpenClipboardHistory.ps1"))+"\""){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});break;
+   case "clipboard":Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+Path.GetFullPath(Path.Combine(root,"..","OpenClipboardHistory.ps1"))+"\""){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});break;
    default:throw new ArgumentException("Unknown widget action: "+id);
   }
  }

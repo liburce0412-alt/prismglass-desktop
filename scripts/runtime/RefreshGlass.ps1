@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 # Sample the current static Windows wallpaper, without capturing windows or icons.
 $desktop=Get-ItemProperty 'HKCU:\Control Panel\Desktop'
 $source=[Environment]::ExpandEnvironmentVariables($desktop.WallPaper)
@@ -41,7 +41,7 @@ foreach($file in Get-ChildItem -LiteralPath $skin -Filter Main.ini -Recurse){
  [IO.File]::WriteAllText($file.FullName,$text,[Text.Encoding]::Unicode)
  $copy=Join-Path $PSScriptRoot ('PrismGlass\'+$file.Directory.Name+'\Main.ini')
  if(Test-Path -LiteralPath $copy){[IO.File]::WriteAllText($copy,$text,[Text.Encoding]::Unicode)}
- if(Get-Process Rainmeter -ErrorAction SilentlyContinue){& ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Raw).Trim()) '!Refresh' ('PrismGlass\'+$file.Directory.Name)}
+ if(Get-Process Rainmeter -ErrorAction SilentlyContinue){& ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Encoding UTF8 -Raw).Trim()) '!Refresh' ('PrismGlass\'+$file.Directory.Name)}
 }
 'Glass wallpaper sampling updated: '+$source
 

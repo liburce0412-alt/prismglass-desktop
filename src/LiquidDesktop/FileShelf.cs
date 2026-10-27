@@ -128,7 +128,7 @@ internal sealed class FileShelf : Form {
     if(name=="cursor-size"||name=="cursor-style"){
      string script=Path.Combine(CursorDirectory,"CursorTheme.ps1");
      await Task.Run(()=>{
-      var info=new ProcessStartInfo("pwsh.exe","-NoProfile -NonInteractive -WindowStyle Hidden -File \""+script+"\" -Mode Apply -Scale "+size+" -Style "+next.style){UseShellExecute=false,CreateNoWindow=true};
+      var info=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+script+"\" -Mode Apply -Scale "+size+" -Style "+next.style){UseShellExecute=false,CreateNoWindow=true};
       using(var process=Process.Start(info)){if(!process.WaitForExit(15000)){process.Kill();throw new IOException("鼠标设置应用超时，请重试。");}if(process.ExitCode!=0)throw new IOException("鼠标样式未能应用，请重试。");}
      });
     }

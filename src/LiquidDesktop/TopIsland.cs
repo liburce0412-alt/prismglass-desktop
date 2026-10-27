@@ -65,14 +65,14 @@ internal sealed class TopIsland : Form {
  void ReplaceRegion(Region next){var old=Region;Region=next;if(old!=null)old.Dispose();}
  void Tick(){Tick(false);}
  void Tick(bool force){if(!ready||closed)return;if(force||ticks%(paused?15:2)==0){var data=shared==null?widgets.Read():shared.ReadWidgets();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}if(ticks++%15==0){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Diagnostic("island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}}
- void Script(string name,string args){string file=Path.GetFullPath(Path.Combine(root,"..",name));if(!File.Exists(file))throw new FileNotFoundException(name);Process.Start(new ProcessStartInfo("pwsh.exe","-NoProfile -WindowStyle Hidden -File \""+file+"\" "+args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
+ void Script(string name,string args){string file=Path.GetFullPath(Path.Combine(root,"..",name));if(!File.Exists(file))throw new FileNotFoundException(name);Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+file+"\" "+args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
  public async void OpenTray(){if(preview||closed)return;bool opened=await SystemTray.OpenAsync();Send(new{type="feedback",message=opened?"系统托盘已打开":"系统任务栏已显示，可点击隐藏图标箭头"});}
  void Action(string id){switch(id){
   case "theme":File.WriteAllText(Path.Combine(root,"theme.txt"),theme=="Astro"?"Sky":"Astro");break;
   case "motion":var motion=Path.Combine(root,"paused.txt");File.WriteAllText(motion,File.Exists(motion)&&File.ReadAllText(motion).Trim()=="true"?"false":"true");break;
   case "refresh":Script("RefreshGlass.ps1","");break;
-  case "game":Script("DesktopMode.ps1","-Mode Game");break;
+  case "game":Script("DesktopMode.ps1","-Mode Game -ShowErrors");break;
   case "settings":File.WriteAllText(Path.Combine(root,"workspace.request"),"settings");break;
   case "apps":File.WriteAllText(Path.Combine(root,"workspace.request"),"apps");break;
   case "windows-settings":Launch("ms-settings:","");break;

@@ -1,10 +1,10 @@
-param([ValidateSet('Start','Stop')][string]$Mode='Start')
+﻿param([ValidateSet('Start','Stop')][string]$Mode='Start')
 $ErrorActionPreference='Stop'
 $config=Join-Path $PSScriptRoot 'pegline-path.txt'
 $marker=Join-Path $PSScriptRoot 'pegline-session.json'
 if($Mode -eq 'Stop'){
  if(!(Test-Path -LiteralPath $marker)){return}
- $saved=Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+ $saved=Get-Content -LiteralPath $marker -Encoding UTF8 -Raw | ConvertFrom-Json
  $process=Get-Process -Id $saved.Id -ErrorAction SilentlyContinue
  if($process -and $process.Path -eq $saved.Path -and $process.StartTime.ToUniversalTime().Ticks.ToString() -eq $saved.StartTicks){
   [void]$process.CloseMainWindow()
@@ -14,9 +14,9 @@ if($Mode -eq 'Stop'){
  return
 }
 if(!(Test-Path -LiteralPath $config)){return}
-$exe=(Get-Content -LiteralPath $config -Raw).Trim()
+$exe=(Get-Content -LiteralPath $config -Encoding UTF8 -Raw).Trim()
 if(!(Test-Path -LiteralPath $exe -PathType Leaf)){Write-Warning 'Pegline executable is missing; desktop continues without it.';return}
 if(Get-Process Pegline -ErrorAction SilentlyContinue){return}
 $process=Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru
-@{Id=$process.Id;Path=$exe;StartTicks=$process.StartTime.ToUniversalTime().Ticks.ToString()} | ConvertTo-Json | Set-Content -LiteralPath $marker
+@{Id=$process.Id;Path=$exe;StartTicks=$process.StartTime.ToUniversalTime().Ticks.ToString()} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 'Pegline started with the beauty session.'

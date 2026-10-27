@@ -58,6 +58,21 @@ function Initialize()
   check(total==300 and remaining==0 and deadline==0 and read('focus-completed.txt')=='1 '..completedAt..' 300','reloading completed timer does not issue another reward')
   Reset()
   check(remaining==300 and deadline==0 and read('focus-state.txt')=='300 300 0','reset preserves the current preset and paused state')
+  local weatherVariables={LiquidRoot=folder,WeatherReady='1',WeatherCity='Existing city'}
+  local weatherOptions={};local weatherRequests=0
+  SKIN={GetVariable=function(_,key,default)return weatherVariables[key] or default end,
+   GetMeter=function()return {GetOption=function()return 'Existing city' end}end,
+   GetMeasure=function()return {GetStringValue=function()return '0' end}end,
+   Bang=function(_,command,name,key,value)if command=='!SetVariable' then weatherVariables[name]=key elseif command=='!SetOption' then weatherOptions[name..'.'..key]=value elseif command=='!CommandMeasure' then weatherRequests=weatherRequests+1 end end}
+  dofile(nativeSkin:GetVariable('ProductionWeather'));Initialize()
+  check(weatherRequests==0 and weatherVariables.WeatherCity=='Existing city','missing city selection preserves existing weather location')
+  write('weather-location.txt','30.27\n120.15\nHangzhou\n');LoadLocation()
+  check(weatherRequests==1 and weatherOptions['Feed.URL']:find('latitude=30.27&longitude=120.15',1,true) and weatherOptions['Feed.URL']:find('timezone=auto',1,true),'selected coordinates refresh the existing forecast feed in local time')
+  check(weatherVariables.WeatherReady=='0' and weatherVariables.WeatherCity=='Hangzhou','changing cities clears old weather readiness before the next response')
+  LoadLocation();check(weatherRequests==1,'unchanged city file does not repeatedly issue forecast requests')
+  write('weather-location.txt','91\n120\nInvalid\n');LoadLocation();check(weatherRequests==1 and weatherVariables.WeatherCity=='Hangzhou','out-of-range coordinates never change the forecast')
+  write('weather-location.txt','30\n120\n[!Execute]\n');LoadLocation();check(weatherRequests==1,'Rainmeter expressions in saved city labels are rejected')
+  write('weather-location.txt','40\n116\nBeijing\n');Update();Update();Update();check(weatherRequests==2 and weatherVariables.WeatherCity=='Beijing','ordinary collector ticks apply a newly saved city without restarting Rainmeter')
   local config,ready='Weather','0'
   local values={Temp=23,Code=2,High=26,Low=18,CPU=35,RAM=50,Down=512,Up=128,Volume=72}
   SKIN={GetVariable=function(_,key,default)if key=='CURRENTCONFIG' then return 'PrismGlass\\'..config elseif key=='LiquidRoot' then return folder elseif key=='WeatherReady' then return ready end;return default end,

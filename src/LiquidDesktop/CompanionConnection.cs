@@ -7,6 +7,7 @@ using System.Management;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Security.Principal;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
@@ -45,15 +46,25 @@ internal static class CompanionConnection {
  public static int Number(Dictionary<string,object> value,string key){object result;return value!=null&&value.TryGetValue(key,out result)&&result is int?(int)result:0;}
  public static string Issues(Dictionary<string,object> value){object result;if(value==null||!value.TryGetValue("issues",out result))return "";var items=result as System.Collections.IEnumerable;return items==null?"":String.Join("\n",items.Cast<object>().Select(item=>Convert.ToString(item)));}
  internal static string Quote(string value){if(value==null||value.IndexOfAny(new[]{'\r','\n','\0','"'})>=0)throw new ArgumentException("连接参数无效。");return "\""+value+new string('\\',value.Length-value.TrimEnd('\\').Length)+"\"";}
- internal static string PowerShell(string root){var candidates=new List<string>{Text(ReadRecord(root),"powerShellPath"),Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"PowerShell","7","pwsh.exe")};foreach(string directory in (Environment.GetEnvironmentVariable("PATH")??"").Split(';'))if(Path.IsPathRooted(directory))candidates.Add(Path.Combine(directory,"pwsh.exe"));foreach(string path in candidates)try{if(path.Length<4||!Char.IsLetter(path[0])||path[1]!=':'||(path[2]!='\\'&&path[2]!='/')||!String.Equals(Path.GetFileName(path),"pwsh.exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(path))continue;var version=FileVersionInfo.GetVersionInfo(path);if(version.FileMajorPart>=7&&version.ProductName=="PowerShell")return Path.GetFullPath(path);}catch(ArgumentException){}string windowsShell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");if(File.Exists(windowsShell))return windowsShell;throw new InvalidOperationException("找不到可用的 PowerShell，请检查 Windows PowerShell 5.1 或 PowerShell 7。");}
- public static string Arguments(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool apply){
+ internal static string PowerShell(string root){string windowsShell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");if(File.Exists(windowsShell))return windowsShell;var candidates=new List<string>{Text(ReadRecord(root),"powerShellPath"),Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"PowerShell","7","pwsh.exe")};foreach(string directory in (Environment.GetEnvironmentVariable("PATH")??"").Split(';'))if(Path.IsPathRooted(directory))candidates.Add(Path.Combine(directory,"pwsh.exe"));foreach(string path in candidates)try{if(path.Length<4||!Char.IsLetter(path[0])||path[1]!=':'||(path[2]!='\\'&&path[2]!='/')||!String.Equals(Path.GetFileName(path),"pwsh.exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(path))continue;var version=FileVersionInfo.GetVersionInfo(path);if(version.FileMajorPart>=7&&version.ProductName=="PowerShell")return Path.GetFullPath(path);}catch(ArgumentException){}throw new InvalidOperationException("找不到 Windows PowerShell，请检查 Windows 系统组件后重试。");}
+ internal static byte[] CertificateBytes(X509Certificate2 certificate,string thumbprint,string subject){
+  if(certificate==null||String.IsNullOrEmpty(thumbprint)||thumbprint.Length!=40||!thumbprint.All(Uri.IsHexDigit)||String.IsNullOrEmpty(subject)||!subject.StartsWith("CN=PrismGlass Companion ",StringComparison.Ordinal)||!String.Equals(certificate.Thumbprint,thumbprint,StringComparison.OrdinalIgnoreCase)||certificate.Subject!=subject||certificate.Issuer!=subject)throw new InvalidOperationException("证书与此安装的连接记录不一致，请重新检查连接。");
+  var constraints=certificate.Extensions.Cast<X509Extension>().Where(e=>e.Oid.Value=="2.5.29.19").Select(e=>new X509BasicConstraintsExtension(e,e.Critical)).SingleOrDefault();if(constraints==null||!constraints.CertificateAuthority||certificate.NotBefore.ToUniversalTime()>DateTime.UtcNow||certificate.NotAfter.ToUniversalTime()<=DateTime.UtcNow)throw new InvalidOperationException("伴随屏证书无效或已到期，请重新配置后再导出。");
+  return certificate.Export(X509ContentType.Cert);
+ }
+ public static byte[] PublicCertificate(string root){
+  var record=ReadRecord(root);if(record==null)throw new InvalidOperationException("请先点击“检查并连接”完成电脑端配置，再导出 iPad 证书。");
+  using(var store=new X509Store(StoreName.My,StoreLocation.LocalMachine)){store.Open(OpenFlags.ReadOnly);var certificates=store.Certificates.Find(X509FindType.FindByThumbprint,Text(record,"caThumbprint"),false);try{if(certificates.Count!=1)throw new InvalidOperationException("找不到此安装的伴随屏证书，请重新检查连接。");return CertificateBytes(certificates[0],Text(record,"caThumbprint"),Text(record,"caSubject"));}finally{foreach(var certificate in certificates)certificate.Dispose();}}
+ }
+ public static string Arguments(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool apply,bool initialize=false){
   if(choice==null||choice.index<=0)throw new ArgumentException("没有可用的局域网连接。");CompanionServer.Endpoint(choice.address,port,hostName);
   root=Path.GetFullPath(root).TrimEnd('\\','/');string script=Path.Combine(Path.GetDirectoryName(root),"RepairCompanion.ps1");if(!File.Exists(script))throw new InvalidOperationException("连接修复工具尚未安装，请更新 PrismGlass。");
-  string args="-NoProfile -NonInteractive -File "+Quote(script)+" -AppRoot "+Quote(Path.GetFullPath(root))+" -Address "+Quote(choice.address)+" -InterfaceIndex "+choice.index+" -HostName "+Quote(hostName)+" -Port "+port+" -UserSid "+Quote(WindowsIdentity.GetCurrent().User.Value);
-  if(!String.IsNullOrEmpty(existingRecord))args+=" -ExistingSetupRecord "+Quote(Path.GetFullPath(existingRecord));if(trust)args+=" -TrustNetwork";if(apply)args+=" -Apply";return args;
+  string args="-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)+" -AppRoot "+Quote(Path.GetFullPath(root))+" -Address "+Quote(choice.address)+" -InterfaceIndex "+choice.index+" -HostName "+Quote(hostName)+" -Port "+port+" -UserSid "+Quote(WindowsIdentity.GetCurrent().User.Value);
+  if(initialize&&!String.IsNullOrEmpty(existingRecord))throw new ArgumentException("首次配置与导入旧配置不能同时进行。");
+  if(!String.IsNullOrEmpty(existingRecord))args+=" -ExistingSetupRecord "+Quote(Path.GetFullPath(existingRecord));if(initialize)args+=" -Initialize";if(trust)args+=" -TrustNetwork";if(apply)args+=" -Apply";return args;
  }
- public static async Task<Dictionary<string,object>> Check(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust){
-  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,false)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+ public static async Task<Dictionary<string,object>> Check(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool initialize=false){
+  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,false,initialize)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
   using(var process=Process.Start(start)){
    Task<string> output=process.StandardOutput.ReadToEndAsync(),error=process.StandardError.ReadToEndAsync();var wait=Task.Run(()=>process.WaitForExit(30000));
    if(!await wait){try{process.Kill();}catch{}throw new TimeoutException("连接检查超时，请稍后重试。");}string text=await output,details=await error;
@@ -61,8 +72,8 @@ internal static class CompanionConnection {
    if(process.ExitCode!=0)throw new InvalidOperationException(result!=null?Issues(result):String.IsNullOrWhiteSpace(details)?"连接检查未完成。":details.Trim());return result;
   }
  }
- public static async Task Apply(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust){
-  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,true)){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
+ public static async Task Apply(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool initialize=false){
+  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,true,initialize)){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
   using(var process=Process.Start(start)){await Task.Run(()=>process.WaitForExit());if(process.ExitCode!=0)throw new InvalidOperationException("系统配置未完成或已取消。原连接配置保留，请再次检查。");}
  }
 }

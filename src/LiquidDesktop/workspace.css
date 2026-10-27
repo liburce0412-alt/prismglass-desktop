@@ -8,3 +8,5 @@
 #apps-page.workspace-apps-opening{animation:workspace-apps-rise 180ms cubic-bezier(.2,.8,.3,1);transform-origin:center bottom}
 @keyframes workspace-apps-rise{from{transform:translateY(14px);opacity:.65}to{transform:translateY(0);opacity:1}}
 .reduced-motion #apps-page.workspace-apps-opening{animation:none}
+#settings-nav{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#bfdfff45 transparent}
+.weather-search-form{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}.weather-search-form input{flex:1;min-width:140px}.weather-results{display:flex;flex-direction:column;gap:9px}.weather-result{text-align:left;padding:12px 15px}.welcome-done{margin-top:20px;background:#b3ddff21}

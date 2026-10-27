@@ -36,7 +36,7 @@ internal sealed class LiquidDesktop : Form {
  readonly Dictionary<string,LiquidDesktop> displays=new Dictionary<string,LiquidDesktop>(StringComparer.OrdinalIgnoreCase);
  readonly HashSet<string> failedDisplays=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
  CompanionHost companion;AppLibrary library;WorkspaceWindow workspace;RuntimePolicy runtime;HotkeyBinding hotkeys;NotifyIcon tray;long preferenceRevision;string hotkeyError="",monitorError="",runtimeKey="",motionKey="";bool reconciling,tearingDown,draggingDock,legacyManagerOpen;DateTime settingsRead=DateTime.MinValue,displaysRead=DateTime.MinValue;string[] pauseReasons=new string[0];
- bool systemAnimations=true;
+ bool systemAnimations=true,welcomePending;
  [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint parameter,[MarshalAs(UnmanagedType.Bool)]out bool value,uint flags);
  Rectangle screen; List<object> cards=new List<object>(); Point lastPointer=new Point(-999,-999);
 
@@ -120,6 +120,7 @@ internal sealed class LiquidDesktop : Form {
   pixels=new WebViewPixelScale(view,()=>{layoutKey="";probe=DateTime.MinValue;});
   primaryHost=owner==null;coordinator=owner??this;monitor=display??MonitorCatalog.Read().Find(item=>item.Primary);instance=primaryHost?"primary":monitor.Instance;
   preferences=primaryHost?new DesktopPreferences(root):owner.preferences;sharedData=primaryHost?new SharedDesktopData(root):owner.sharedData;cursorTrail=primaryHost?new CursorTrail():null;monitorDock=new MonitorDock(root,instance);
+  welcomePending=primaryHost&&preferences.IsFirstRun&&!preferences.Current.welcomeShown;
   lyrics=primaryHost?new DockLyrics(root):owner.lyrics;
   if(primaryHost){lyrics.VisualChanged+=Broadcast;backend=new DockBackend(root);backend.Refresh();library=new AppLibrary(root);Task.Run(()=>library.Refresh());preferences.Changed+=PreferencesChanged;}
   else backend=owner.backend;
@@ -193,7 +194,8 @@ internal sealed class LiquidDesktop : Form {
    POINT p;GetCursorPos(out p);var cursor=new Point(p.X-screen.X,p.Y-screen.Y);
    if(primaryHost){cursorTrail.Update(new Point(p.X,p.Y),RuntimePolicy.Reasons(preferences.Current,runtime==null?new RuntimeSignals():runtime.Signals,false,false,systemAnimations).Length==0);
    if((now-displaysRead).TotalSeconds>=5){displaysRead=now;ReconcileDisplays();}
-   var workspaceRequest=Path.Combine(root,"workspace.request");if(File.Exists(workspaceRequest)){string page=Read("workspace.request","");File.Delete(workspaceRequest);if(page=="apps"||page=="settings")OpenWorkspace(page);}
+   if(welcomePending&&painted&&File.Exists(Path.Combine(root,"desktop-ready.flag"))){welcomePending=false;OpenWorkspace("welcome");preferences.Apply(new Dictionary<string,object>{{"welcomeShown",true}},preferences.Revision);}
+   var workspaceRequest=Path.Combine(root,"workspace.request");if(File.Exists(workspaceRequest)){string page=Read("workspace.request","");File.Delete(workspaceRequest);if(page=="apps"||page=="settings"||page=="weather"||page=="welcome")OpenWorkspace(page);}
    var companionRequest=Path.Combine(root,"companion.request");if(File.Exists(companionRequest)){File.Delete(companionRequest);companion.Show();}
    var shelfRequest=Path.Combine(root,"shelf.request");if(File.Exists(shelfRequest)){string requested=Read("shelf.request","");File.Delete(shelfRequest);if(requested=="manage"){if(workspace!=null&&!workspace.IsDisposed)workspace.Hide();var target=this;foreach(var host in Hosts())if(host.monitor.Screen.Bounds.Contains(new Point(p.X,p.Y))){target=host;break;}target.legacyManagerOpen=true;target.EnsureComponents();if(target.fileShelf!=null&&target.shelfReady)target.fileShelf.OpenLegacyManager();}}
    var panelRequest=Path.Combine(root,"panel.request");
@@ -232,7 +234,7 @@ internal sealed class LiquidDesktop : Form {
    if(!primaryHost){coordinator.failedDisplays.Add(monitor.Id);coordinator.monitorError=monitor.Name+" 的组件反复启动失败，已释放此屏实例；修改显示器设置后可重试。";Close();return;}
    try{File.WriteAllText(Path.Combine(root,"component-recovery.txt"),"Desktop component failed three times; restoring ordinary desktop.");
     var script=Path.GetFullPath(Path.Combine(root,"..","DesktopMode.ps1"));
-    Process.Start(new ProcessStartInfo("pwsh.exe","-NoProfile -NonInteractive -WindowStyle Hidden -File \""+script+"\" -Mode Recovery"){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});
+    Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+script+"\" -Mode Recovery"){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});
    }catch{}finally{Close();}
   }
  }

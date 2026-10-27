@@ -16,17 +16,17 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 
 ## 下载与安装
 
-免费开源，MIT 许可。普通用户从 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases) 下载 `PrismGlass-Setup-0.9.0-beta.2-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。
+免费开源，MIT 许可。普通用户从 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases) 下载 `PrismGlass-Setup-0.9.0-beta.3-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。
 
-1. 运行中文安装向导，按依赖页检查 Rainmeter、PowerShell 7、WebView2 Runtime 和 .NET Framework 4.8。缺少时可打开相应官方下载页安装，再返回检查；不需要 Git、Node.js 或开发工具。
+1. 运行中文安装向导，组件页自动检查 Rainmeter、WebView2 Runtime 和 .NET Framework 4.8。缺少时点击“一键补齐缺失组件”，按提示下载、校验并调用官方安装程序；失败可重试，也可选择已有程序或从官网离线安装。使用系统自带 Windows PowerShell 5.1，无需另装 PowerShell 7、Git、Node.js 或开发工具。
 2. 许可页默认接受协议，默认创建一个名为 **PrismGlass** 的桌面图标，完成页默认勾选“启动 PrismGlass”。这些选择可在向导中修改；不创建开机启动项。
-3. 点击“完成”后启动桌面，日后双击桌面的 **PrismGlass** 即可。退出使用托盘菜单或开始菜单的 **退出 PrismGlass**；卸载从 Windows“已安装的应用”进行。静默安装不自动启动美化。
+3. 点击“完成”后启动桌面，新安装会显示“开始使用”，可进入天气城市、歌词和显示器设置；已有用户可从统一设置重新打开引导。日后双击桌面的 **PrismGlass** 即可。退出使用托盘菜单或开始菜单的 **退出 PrismGlass**；卸载从 Windows“已安装的应用”进行。启动失败会显示原因并给出本机错误记录位置。静默安装不自动启动美化，也不自动下载依赖。
 
 这是 **未签名的公开测试版**，面向 Windows 10/11 x64；安装器、依赖下载和其他电脑的实际兼容性尚未全面实测。不要关闭安全软件来绕过拦截。已发现问题、检查范围与反馈入口见 [验证概述](docs/VALIDATION.md)。
 
 安装器只覆盖升级由本安装器登记的同一安装，保留用户设置；旧手工部署目录与同名未归属皮肤会安全拒绝，**不要删掉原配置来强行继续**。旧手工版本暂不自动迁移。伴随屏系统证书与网络配置不会随卸载自动删除，保留配置工具和说明供用户处理；用户数据默认保留。
 
-天气初始仍为示例位置，暂未提供安装向导中的位置选择；需要指定城市时可使用下方开发者脚本的坐标参数。所有网络功能的条件和数据用途见 [隐私说明](docs/PRIVACY.md)。
+在 **设置 → 天气城市** 输入城市并点击搜索，选择结果后自动保存并更新桌面及伴随屏天气，无需输入坐标或运行脚本。未选择时沿用已有坐标，新安装显示示例位置。搜索仅在主动提交时发送城市名；歌词联网和伴随屏权限仍需分别开启。组件要求重启时会提示保存工作后手动重启，不替你重启电脑。所有网络功能的条件和数据用途见 [隐私说明](docs/PRIVACY.md)。
 
 ## 应用中心与统一设置
 
@@ -60,7 +60,7 @@ QQ 音乐 Windows 版可通过系统媒体会话提供歌曲、歌手、专辑�
 
 ## iPad 网页伴随屏
 
-电脑托盘 → **iPad 伴随屏** → **检查并连接**，可迁移到固定名称入口；同网卡换 IP 后重新连接即可。iPad 在 Safari 添加到主屏幕，随后从图标打开，使用窗口内的 **扫码配对** 扫电脑的配对二维码，首次仍由电脑批准。此后同一窗口记住设备，使用期间自动续期；无需每次输入码。Safari 与主屏幕的会话相互独立。伴随屏配置优先用 PowerShell 7，没有时使用系统自带的 Windows PowerShell 5.1。详见[连接说明](docs/COMPANION.md#固定入口与换网)。
+电脑托盘 → **iPad 伴随屏** → **连接步骤**，按引导完成首次配置、iPad 证书信任及扫码配对；新安装不要求已有配置记录。**检查并连接** 会列出需要的系统变更，由你确认后请求管理员权限；同网卡换 IP 后重新连接即可。iPad 在 Safari 添加到主屏幕，随后从图标打开，使用窗口内的 **扫码配对** 扫电脑的配对二维码，首次仍由电脑批准。此后同一窗口记住设备，使用期间自动续期；无需每次输入码。Safari 与主屏幕的会话相互独立。伴随屏配置优先使用系统自带的 Windows PowerShell 5.1。详见[连接说明](docs/COMPANION.md#固定入口与换网)。
 
 统一设置中的 **iPad 伴随屏** 可手动开启 HTTPS 局域网入口，供 iPadOS 15 Safari 使用。新版沿用 Sky/Astro 偏好，以[光学玻璃概念](docs/media/concepts/companion-optical-20261026.png)整理此刻、触控板、工作、应用、小组件和电脑视图；音乐、专注胶囊与底部 Touch Bar 共用场景，最多三个重点区域呈现光学折射，文字与操作保持清晰。最终背景按用户反馈收敛为低对比蓝灰柔光远景；概念图不是运行截图。减少动画或 WebGL 不可用时回退到静态样式。
 
@@ -198,11 +198,11 @@ QQ 音乐 Windows 版可通过系统媒体会话提供歌曲、歌手、专辑�
 ## 依赖
 
 - Windows 10/11 x64，.NET Framework 4.8。
-- [PowerShell 7](https://github.com/PowerShell/PowerShell)、[Rainmeter](https://www.rainmeter.net/) 和 [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
+- Windows 自带 PowerShell 5.1、[Rainmeter](https://www.rainmeter.net/) 和 [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。已有 PowerShell 7 安装仍可复用；开发构建与测试脚本使用 PowerShell 7。
 - 开发构建需要 Node.js，用于 JavaScript 语法检查；编译使用 Windows .NET Framework 自带的 C# 编译器。
 - 可选：官方 Codex CLI（自行安装并登录），用于读取本人额度。读取失败会显示未获取，不会伪造数字；默认每三分钟刷新。
 - 可选：Python 3 与网易云音乐桥接，安装时显式启用。
-- 可选 Dock 歌词：优先读取 Windows SMTC 歌曲信息和有效进度；另适配网易云 Windows **3.1.41.205529** 的本地播放时钟。SMTC 读取器使用系统自带 Windows PowerShell 5.1 的 .NET Framework WinRT 投影（兼容性需要）；伴随屏配置也兼容 5.1，其余构建与桌面脚本仍使用 PowerShell 7。歌词功能本身不依赖 Python。
+- 可选 Dock 歌词：优先读取 Windows SMTC 歌曲信息和有效进度；另适配网易云 Windows **3.1.41.205529** 的本地播放时钟。SMTC 读取器使用系统自带 Windows PowerShell 5.1 的 .NET Framework WinRT 投影（兼容性需要）；安装、卸载、桌面运行和伴随屏配置均兼容 5.1；仅开发构建与测试入口使用 PowerShell 7。歌词功能本身不依赖 Python。
 
 ## 构建与安装
 

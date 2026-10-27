@@ -1,5 +1,16 @@
-param([ValidateSet('Game','Beauty','Recovery','Login')][string]$Mode='Beauty')
+﻿param([ValidateSet('Game','Beauty','Recovery','Login')][string]$Mode='Beauty',[switch]$ShowErrors)
 $ErrorActionPreference='Stop'
+function Write-DesktopModeFailure([string]$Root,[string]$Action,[string]$Reason,[bool]$Notify){
+ $title=if($Action -eq 'Beauty'){'PrismGlass 未能启动'}else{'PrismGlass 未能完成桌面切换'}
+ $message=$title+"。`r`n`r`n"+$Reason+"`r`n`r`n请按提示处理后重试；仍无法使用时，可重新运行安装器修复程序。"
+ try{
+  $log=Join-Path $Root 'LiquidDesktop/startup-error.log'
+  [IO.File]::WriteAllText($log,([datetime]::Now.ToString('o')+"`r`n模式："+$Action+"`r`n"+$Reason),[Text.UTF8Encoding]::new($false))
+  $message+="`r`n`r`n本机错误记录："+$log
+ }catch{$message+="`r`n`r`n错误记录无法保存，请保留此提示。"}
+ if($Notify){try{Add-Type -AssemblyName System.Windows.Forms;[void][Windows.Forms.MessageBox]::Show($message,$title,[Windows.Forms.MessageBoxButtons]::OK,[Windows.Forms.MessageBoxIcon]::Error)}catch{Write-Warning $message}}
+ return $message
+}
 function Test-StartupReadiness($State,[int]$ProcessId,[datetime]$Started,[datetime]$Written,[datetime]$Now=[datetime]::UtcNow){
  return $null -ne $State -and $State.version -eq 1 -and $State.pid -eq $ProcessId -and $State.ready -is [bool] -and $State.ready -and $Written -ge $Started -and ($Now-$Written).TotalSeconds -ge 0 -and ($Now-$Written).TotalSeconds -lt 6
 }
@@ -20,14 +31,15 @@ function Stop-PrismGlassSkins([string]$Executable){
   if($folder.Name -match '^Dock-monitor-[0-9]+$' -and (Test-Path -LiteralPath $file) -and (Get-Content -LiteralPath $file -TotalCount 1) -eq '; PrismGlass generated monitor instance'){& $Executable '!DeactivateConfig' ('PrismGlass\'+$folder.Name)}
  }}
 }
-$startedRenderer=$null;$startedBridge=$null;$beautySkinsActivated=$false;$otherInstallationRunning=$false
+$startedRenderer=$null;$startedBridge=$null;$beautySkinsActivated=$false;$otherInstallationRunning=$false;$modeLockHeld=$false
 $modeLock=[Threading.Mutex]::new($false,'Local\PrismGlassDesktopMode')
-if(!$modeLock.WaitOne(45000)){$modeLock.Dispose();throw 'Another desktop mode change is still running.'}
 try {
+try{$modeLockHeld=$modeLock.WaitOne(45000)}catch [Threading.AbandonedMutexException]{$modeLockHeld=$true}
+if(!$modeLockHeld){throw '另一次桌面切换仍在进行，请稍等片刻后重试。'}
 $statePath=Join-Path $PSScriptRoot 'desktop-mode-state.json'
 $readyPath=Join-Path $PSScriptRoot 'LiquidDesktop\desktop-ready.flag'
 $bridge=Join-Path $PSScriptRoot 'MusicBridge.py'
-$rainmeter=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Raw).Trim()
+$rainmeter=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Encoding UTF8 -Raw).Trim()
 $pythonCommand=Get-Command pythonw.exe -ErrorAction SilentlyContinue
 $python=if($pythonCommand){$pythonCommand.Source}else{$null}
 if(!('DesktopIcons' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'LiquidDesktop\DesktopIcons.cs')}
@@ -70,7 +82,7 @@ public static class DesktopTaskbar {
 $ownedBridge={Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object {$_.CommandLine -and $_.CommandLine.Contains($bridge)}}
 $shellDeadline=(Get-Date).AddSeconds(30)
 while(![DesktopTaskbar]::ShellReady() -and (Get-Date) -lt $shellDeadline){Start-Sleep -Milliseconds 250}
-if(![DesktopTaskbar]::ShellReady()){throw 'Explorer desktop was not ready after 30 seconds.'}
+if(![DesktopTaskbar]::ShellReady()){throw 'Windows 桌面暂时没有响应，请等待资源管理器恢复后重试。'}
 if($Mode -eq 'Login'){
  # Restore only the native shell at sign-in. Never start beauty or stop user apps.
  # A manual beauty launch that already completed wins over a delayed login action.
@@ -112,7 +124,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
 }else{
  $glassPath=Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe'
  $otherGlass=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -ne $glassPath}
- if($otherGlass){$otherInstallationRunning=$true;throw 'Another PrismGlass installation is running. Exit that installation before starting this one.'}
+ if($otherGlass){$otherInstallationRunning=$true;throw '另一处安装的 PrismGlass 正在运行，请从它的托盘菜单退出后重试。'}
  if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath}
  # Keep the ordinary desktop usable until every required component has painted.
  [DesktopTaskbar]::Set(2,$true)
@@ -120,13 +132,14 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  # Let the restore shortcut fully release before starting either desktop app.
  $releaseDeadline=(Get-Date).AddSeconds(15)
  while([DesktopTaskbar]::RestoreKeysHeld() -and (Get-Date) -lt $releaseDeadline){Start-Sleep -Milliseconds 100}
- if([DesktopTaskbar]::RestoreKeysHeld()){throw 'Release the shortcut keys and run Restore Desktop again.'}
+ if([DesktopTaskbar]::RestoreKeysHeld()){throw '请松开 Ctrl、Alt、Shift 和 F12 快捷键后，再次打开 PrismGlass。'}
  $iconsVisible=$false
  if(Test-Path $statePath){
-  $saved=Get-Content $statePath -Raw|ConvertFrom-Json
+  $saved=Get-Content $statePath -Encoding UTF8 -Raw|ConvertFrom-Json
   if($null -ne $saved.DesktopIconsVisible){$iconsVisible=[bool]$saved.DesktopIconsVisible}
  }
  $rainmeterWasRunning=[bool](Get-Process Rainmeter -ErrorAction SilentlyContinue)
+ if(!(Test-Path -LiteralPath $rainmeter -PathType Leaf)){throw '找不到已配置的 Rainmeter 程序，请重新运行 PrismGlass 安装器检查必需组件。'}
  if(!$rainmeterWasRunning){Start-Process $rainmeter -WindowStyle Hidden}
  Start-Sleep -Milliseconds 500
  $catalogPending=Join-Path $PSScriptRoot 'LiquidDesktop/skin-catalog-pending.flag'
@@ -141,13 +154,13 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   $glassProcess=Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $glassPath} | Select-Object -First 1
   $readinessPath=Join-Path $PSScriptRoot 'LiquidDesktop\readiness.json'
   if($glassProcess -and (Test-Path -LiteralPath $readinessPath)){
-   try{$readiness=Get-Content -LiteralPath $readinessPath -Raw | ConvertFrom-Json
+   try{$readiness=Get-Content -LiteralPath $readinessPath -Encoding UTF8 -Raw | ConvertFrom-Json
     if(Test-StartupReadiness $readiness $glassProcess.Id $glassProcess.StartTime.ToUniversalTime() (Get-Item -LiteralPath $readinessPath).LastWriteTimeUtc){$renderReady=$true;break}
    }catch{Write-Verbose ('Readiness pending: '+$_.Exception.Message)}
   }
   Start-Sleep -Milliseconds 250
  }
- if(!$renderReady){throw 'Enabled PrismGlass components did not become ready; ordinary desktop retained.'}
+ if(!$renderReady){throw '桌面组件未能在规定时间内完成启动。请检查 Rainmeter 与 WebView2 是否可用，再重新打开 PrismGlass。'}
  if(Test-Path -LiteralPath $catalogPending){Remove-Item -LiteralPath $catalogPending}
  Set-Content -LiteralPath $readyPath -Value (Get-Date).ToString('o') -Encoding ascii
  # Clear both Explorer's cached FWF_NOICONS and saved folder-view preference.
@@ -162,7 +175,8 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  'BEAUTY: Current desktop layout restored.'
 }
 } catch {
- if($otherInstallationRunning){throw}
+ $failure=$_
+ if($modeLockHeld -and !$otherInstallationRunning){
  if($startedRenderer -and !$startedRenderer.HasExited){
   try{& (Join-Path $PSScriptRoot 'LiquidDesktop\LiquidDesktop.exe') '--quit';if(!$startedRenderer.WaitForExit(3000)){Stop-Process -Id $startedRenderer.Id -ErrorAction SilentlyContinue}}catch{Write-Warning $_.Exception.Message}
  }
@@ -175,5 +189,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   [DesktopTaskbar]::Set(2,$true)
   if([DesktopTaskbar]::ShellReady()){[DesktopIcons]::SetVisible($true)}
  }
- throw
-} finally {if($startedRenderer){$startedRenderer.Dispose()};if($startedBridge){$startedBridge.Dispose()};$modeLock.ReleaseMutex();$modeLock.Dispose()}
+ }
+ [void](Write-DesktopModeFailure $PSScriptRoot $Mode $failure.Exception.Message $ShowErrors.IsPresent)
+ throw $failure
+} finally {if($startedRenderer){$startedRenderer.Dispose()};if($startedBridge){$startedBridge.Dispose()};if($modeLockHeld){$modeLock.ReleaseMutex()};$modeLock.Dispose()}

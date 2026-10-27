@@ -6,6 +6,7 @@ param(
  [ValidateRange(1024,65535)][int]$Port=9443,
  [Parameter(Mandatory=$true)][string]$UserSid,
  [string]$ExistingSetupRecord,
+ [switch]$Initialize,
  [switch]$TrustNetwork,
  [switch]$Apply
 )
@@ -123,7 +124,7 @@ function Write-CompanionNetworkRecord([string]$Path,$Record){
  try{[IO.File]::WriteAllText($temporary,($Record|ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false));[void](Assert-CompanionPath $Path);if([IO.File]::Exists($Path)){[IO.File]::Replace($temporary,$Path,[NullString]::Value)}else{[IO.File]::Move($temporary,$Path)}}finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary -Force}}
 }
 function Invoke-CompanionRepair {
- param([string]$AppRoot,[string]$Address,[int]$InterfaceIndex,[string]$HostName,[int]$Port=9443,[string]$UserSid,[string]$ExistingSetupRecord,[switch]$TrustNetwork,[switch]$Apply)
+ param([string]$AppRoot,[string]$Address,[int]$InterfaceIndex,[string]$HostName,[int]$Port=9443,[string]$UserSid,[string]$ExistingSetupRecord,[switch]$Initialize,[switch]$TrustNetwork,[switch]$Apply)
  if($PSVersionTable.PSVersion -lt [version]'5.1'){throw 'Windows PowerShell 5.1 or newer is required.'}
  $shellName=if($PSVersionTable.PSVersion.Major -ge 7){'pwsh.exe'}else{'powershell.exe'}
  $powerShellPath=[IO.Path]::GetFullPath((Join-Path $PSHOME $shellName))
@@ -135,6 +136,7 @@ function Invoke-CompanionRepair {
  $AppRoot=(Assert-CompanionPath $AppRoot).TrimEnd('\')
  if([IO.Path]::GetFileName($AppRoot) -ne 'LiquidDesktop' -or !(Test-Path -LiteralPath (Join-Path $AppRoot 'LiquidDesktop.exe') -PathType Leaf) -or !(Test-Path -LiteralPath (Join-Path $AppRoot 'CompanionServer.cs') -PathType Leaf)){throw 'AppRoot must be the existing PrismGlass LiquidDesktop installation.'}
  $file=Join-Path $AppRoot 'runtime-data/companion-network.json';$record=Read-CompanionRecord $file;$owner='PrismGlass.Companion.Network.v1';$appid='{2c370c70-7924-4eb8-a3c4-9c57a8c792bd}'
+ if($Initialize -and ($record -or $ExistingSetupRecord)){throw 'First-time setup cannot replace an existing connection or its trusted CA. Use the existing configuration.'}
  $url="https://${HostName}:$Port/";$endpoint="${HostName}:$Port";$sddl="D:(A;;GX;;;$UserSid)";$ruleName="PrismGlass-Companion-$HostName-$Port";$description="PrismGlass Companion fixed name $endpoint; user $UserSid"
  $mdnsRuleName="PrismGlass-Companion-mDNS-$HostName-$Port";$mdnsDescription="PrismGlass Companion mDNS $endpoint; user $UserSid"
  $mdnsProgram=Assert-CompanionPath (Join-Path $AppRoot 'LiquidDesktop.exe')
@@ -150,19 +152,22 @@ function Invoke-CompanionRepair {
  Assert-CompanionAlias $alias
  if($profile -notin @('Private','Public')){throw 'Domain-managed or unknown networks need administrator-managed configuration.'}
  if($profile -eq 'Public' -and !$TrustNetwork){throw 'This network is Public. Confirm that this exact network is trusted before using -TrustNetwork.'}
- $setupRecord=$null
+ $setupRecord=$null;$ca=$null;$caThumb='';$caSubject=''
  if($record){$caThumb=[string]$record.caThumbprint;$caSubject=[string]$record.caSubject;$setupRecord=[string]$record.setupRecord}
+ elseif($Initialize){$caSubject='CN=PrismGlass Companion '+$Address}
  else{
-  if(!$ExistingSetupRecord){throw 'Select the previous PrismGlass setup-record.json to reuse the CA already trusted by the iPad.'}
+  if(!$ExistingSetupRecord){throw 'Choose first-time setup or select the previous setup-record.json to reuse the trusted CA.'}
   $setupRecord=Assert-CompanionPath $ExistingSetupRecord;$legacy=Read-CompanionRecord $setupRecord
   if(!$legacy -or !(Test-CompanionPrivateAddress ([string]$legacy.address)) -or $legacy.caThumbprint -notmatch '\A[0-9A-Fa-f]{40}\z' -or $legacy.serverThumbprint -notmatch '\A[0-9A-Fa-f]{40}\z' -or $legacy.sid -ne $UserSid -or $legacy.url -ne "https://$($legacy.address):$($legacy.port)/"){throw 'The previous setup record does not identify this user and a PrismGlass LAN endpoint.'}
   $operation=[guid]::Empty;if(![guid]::TryParse([string]$legacy.operationId,[ref]$operation)){throw 'The previous setup operation identity is invalid.'}
   $caThumb=[string]$legacy.caThumbprint;$caSubject='CN=PrismGlass Companion '+$legacy.address
  }
- $ca=Get-CompanionCertificate $caThumb
- Assert-CompanionCertificate $ca $caSubject $true
- if($ca.FriendlyName -ne $caSubject.Replace('CN=PrismGlass Companion ','PrismGlass Companion CA ') -or $ca.Subject -ne $ca.Issuer){throw 'The selected CA is not the recorded dedicated PrismGlass CA.'}
- if($ca.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow.AddDays(7)){throw 'The trusted CA expires within seven days. Renewing device trust needs a separate setup.'}
+ if(!$Initialize){
+  $ca=Get-CompanionCertificate $caThumb
+  Assert-CompanionCertificate $ca $caSubject $true
+  if($ca.FriendlyName -ne $caSubject.Replace('CN=PrismGlass Companion ','PrismGlass Companion CA ') -or $ca.Subject -ne $ca.Issuer){throw 'The selected CA is not the recorded dedicated PrismGlass CA.'}
+  if($ca.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow.AddDays(7)){throw 'The trusted CA expires within seven days. Renewing device trust needs a separate setup.'}
+ }
  $sslAll=Invoke-CompanionNetsh @('http','show','sslcert');$aclAll=Invoke-CompanionNetsh @('http','show','urlacl')
  $hasSsl=Test-CompanionEndpointListed $sslAll $endpoint;$hasAcl=Test-CompanionEndpointListed $aclAll $url
  if(($hasSsl -or $hasAcl) -and !$record){throw 'An unrecorded SNI binding or URL reservation already exists; it will not be adopted or replaced.'}
@@ -196,18 +201,23 @@ function Invoke-CompanionRepair {
  $mdnsRuleAction=if(!$mdnsRules.Count){'create'}elseif(($oldMdnsScope.interfaceAlias -join ',') -ne $alias){'move-interface'}else{'reuse'}
  $mdns=[ordered]@{action=$mdnsRuleAction;rulesPresent=$mdnsRules.Count -gt 0;ruleName=$mdnsRuleName;program=$mdnsProgram;profile='Private';interfaceAlias=$alias;localAddress='Any';remoteAddress='LocalSubnet';protocol='UDP';localPort=5353;remotePort='Any';direction='Inbound';note='App-specific fixed-name responder. Existing Windows mDNS rules remain unchanged; verify discovery from the iPad.'}
  $configured=$record -and $hasSsl -and $hasAcl -and $certificateAction -eq 'reuse' -and $ruleAction -eq 'reuse' -and $mdnsRuleAction -eq 'reuse' -and $profile -eq 'Private' -and $record.interfaceId -eq $interfaceId
- $plan=[ordered]@{appRoot=$AppRoot;hostName=$HostName;url=$url;address=$Address;port=$Port;interfaceIndex=$InterfaceIndex;interfaceId=$interfaceId;interfaceAlias=$alias;networkName=[string]$profiles[0].Name;profile=$profile;changeNetworkToPrivate=($profile -eq 'Public');certificateAction=$certificateAction;caThumbprint=$caThumb;sniAction=if($hasSsl){if($certificateAction -eq 'reuse'){'reuse'}else{'renew'}}else{'create'};urlAclAction=if($hasAcl){'reuse'}else{'create'};firewallAction=$ruleAction;firewall=[ordered]@{profile='Private';interfaceAlias=$alias;localAddress='Any';remoteAddress='LocalSubnet';protocol='TCP';localPort=$Port;program='System'};mdns=$mdns;windowsRootTrust='unchanged';oldIpBindings='preserved';pairing='preserved; first use of the fixed name needs pairing in Safari'}
+ $plan=[ordered]@{appRoot=$AppRoot;hostName=$HostName;url=$url;address=$Address;port=$Port;interfaceIndex=$InterfaceIndex;interfaceId=$interfaceId;interfaceAlias=$alias;networkName=[string]$profiles[0].Name;profile=$profile;changeNetworkToPrivate=($profile -eq 'Public');certificateAction=$certificateAction;caAction=if($Initialize){'create'}else{'reuse'};caThumbprint=$caThumb;sniAction=if($hasSsl){if($certificateAction -eq 'reuse'){'reuse'}else{'renew'}}else{'create'};urlAclAction=if($hasAcl){'reuse'}else{'create'};firewallAction=$ruleAction;firewall=[ordered]@{profile='Private';interfaceAlias=$alias;localAddress='Any';remoteAddress='LocalSubnet';protocol='TCP';localPort=$Port;program='System'};mdns=$mdns;windowsRootTrust='unchanged';oldIpBindings='preserved';pairing='preserved; first use of the fixed name needs pairing in Safari'}
  $issues=@()
  if(!$Apply){return [pscustomobject]@{schemaVersion=1;ready=($issues.Count -eq 0);needsApproval=!$configured;configured=[bool]$configured;issues=$issues;plan=$plan}}
  if($issues.Count){throw ($issues -join ' ')}
  Assert-CompanionInstalledScript $AppRoot
  if(!(Test-CompanionAdministrator)){throw 'Apply requires administrator confirmation.'}
- Assert-CompanionNonExportableKey $ca
+ if($ca){Assert-CompanionNonExportableKey $ca}
  $mutex=[Threading.Mutex]::new($false,('Local\PrismGlass.Companion.Setup.'+$HostName+'.'+$Port));$locked=$false
- $newLeaf=$null;$sslAdded=$false;$sslUpdated=$false;$aclAdded=$false;$ruleAdded=$false;$ruleUpdated=$false;$mdnsRuleAdded=$false;$mdnsRuleUpdated=$false;$profileChanged=$false;$rollback=[Collections.Generic.List[string]]::new()
+ $newCa=$null;$newLeaf=$null;$sslAdded=$false;$sslUpdated=$false;$aclAdded=$false;$ruleAdded=$false;$ruleUpdated=$false;$mdnsRuleAdded=$false;$mdnsRuleUpdated=$false;$profileChanged=$false;$rollback=[Collections.Generic.List[string]]::new()
  try{
   $locked=$mutex.WaitOne(0);if(!$locked){throw 'Another companion setup is already running.'}
   if($profile -eq 'Public'){Set-NetConnectionProfile -InterfaceIndex $InterfaceIndex -NetworkCategory Private -ErrorAction Stop;$profileChanged=$true}
+  if($Initialize){
+   Import-Module PKI -ErrorAction Stop
+   $newCa=New-SelfSignedCertificate -Type Custom -Subject $caSubject -FriendlyName ('PrismGlass Companion CA '+$Address) -CertStoreLocation Cert:\LocalMachine\My -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable -KeyUsage CertSign,CRLSign -TextExtension @('2.5.29.19={critical}{text}ca=1&pathlength=0') -NotAfter ([DateTime]::UtcNow.AddYears(3))
+   Assert-CompanionCertificate $newCa $caSubject $true;Assert-CompanionNonExportableKey $newCa;$ca=$newCa
+  }
   if($certificateAction -ne 'reuse'){
    Import-Module PKI -ErrorAction Stop
    $expiry=[DateTime]::UtcNow.AddDays(365);if($expiry -gt $ca.NotAfter.ToUniversalTime()){$expiry=$ca.NotAfter.ToUniversalTime()}
@@ -249,6 +259,7 @@ function Invoke-CompanionRepair {
   $bindingRestored=$true
   if($sslAdded -or $sslUpdated){try{Assert-CompanionSsl (Invoke-CompanionNetsh @('http','show','sslcert',"hostnameport=$endpoint")) $endpoint $leaf.Thumbprint;if($sslAdded){[void](Invoke-CompanionNetsh @('http','delete','sslcert',"hostnameport=$endpoint"))}else{[void](Invoke-CompanionNetsh @('http','update','sslcert',"hostnameport=$endpoint","certhash=$($record.serverThumbprint)","appid=$appid",'certstorename=MY'))}}catch{$bindingRestored=$false;$rollback.Add('SNI binding: '+$_.Exception.Message)}}
   if($newLeaf -and $bindingRestored){try{Remove-Item -LiteralPath ("Cert:\LocalMachine\My\"+$newLeaf.Thumbprint) -DeleteKey -ErrorAction Stop}catch{$rollback.Add('Created leaf certificate: '+$_.Exception.Message)}}
+  if($newCa -and $bindingRestored){try{Remove-Item -LiteralPath ("Cert:\LocalMachine\My\"+$newCa.Thumbprint) -DeleteKey -ErrorAction Stop}catch{$rollback.Add('Created CA certificate: '+$_.Exception.Message)}}
   if($profileChanged){try{$p=@(Get-NetConnectionProfile -InterfaceIndex $InterfaceIndex -ErrorAction Stop);if($p.Count -ne 1 -or $p[0].Name -ne $profiles[0].Name -or [string]$p[0].NetworkCategory -ne 'Private'){throw 'Network identity changed'};Set-NetConnectionProfile -InterfaceIndex $InterfaceIndex -NetworkCategory Public -ErrorAction Stop}catch{$rollback.Add('Network category: '+$_.Exception.Message)}}
   if($rollback.Count){throw ($failure.Exception.Message+' Rollback needs review: '+($rollback -join '; '))}
   throw $failure

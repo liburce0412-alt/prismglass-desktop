@@ -1,4 +1,4 @@
-# Invoked only by the user's widget click; does not read clipboard contents.
+﻿# Invoked only by the user's widget click; does not read clipboard contents.
 $ErrorActionPreference='Stop'
 Add-Type @'
 using System;

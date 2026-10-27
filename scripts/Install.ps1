@@ -1,4 +1,4 @@
-param(
+﻿param(
  [string]$Destination=(Join-Path $env:LOCALAPPDATA 'PrismGlass'),
  [string]$RainmeterPath=(Join-Path $env:ProgramFiles 'Rainmeter/Rainmeter.exe'),
  [string]$RainmeterIni,
@@ -10,7 +10,8 @@ $ErrorActionPreference='Stop'
 $bundle=$PSScriptRoot
 if(!(Test-Path -LiteralPath "$bundle/LiquidDesktop/LiquidDesktop.exe")){throw 'Run this script from dist/PrismGlass after Build.ps1.'}
 if(!(Test-Path -LiteralPath $RainmeterPath -PathType Leaf)){throw 'Install Rainmeter first, or provide -RainmeterPath.'}
-$pwsh=(Get-Command pwsh.exe -ErrorAction Stop).Source
+$pwsh=Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell/v1.0/powershell.exe'
+if(!(Test-Path -LiteralPath $pwsh -PathType Leaf)){throw '找不到 Windows PowerShell 5.1，请修复 Windows 必需组件后重试。'}
 if($Latitude -lt -90 -or $Latitude -gt 90 -or $Longitude -lt -180 -or $Longitude -gt 180){throw 'Invalid coordinates'}
 $Destination=[IO.Path]::GetFullPath($Destination)
 if(Test-Path -LiteralPath $Destination){throw 'Destination exists. Choose a fresh directory; existing user data is not overwritten.'}
@@ -38,6 +39,6 @@ if($PrepareOnly){Write-Output "Prepared $Destination; no shell settings, shortcu
 $ws=New-Object -ComObject WScript.Shell
 foreach($item in @(@('开启 PrismGlass','Beauty'),@('退出 PrismGlass','Game'))){
  $lnk=$ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) ($item[0]+'.lnk')))
- $lnk.TargetPath=$pwsh;$lnk.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$Destination+'\DesktopMode.ps1" -Mode '+$item[1];$lnk.WindowStyle=7;$lnk.IconLocation=Join-Path $Destination 'LiquidDesktop/LiquidDesktop.exe';$lnk.Save()
+ $lnk.TargetPath=$pwsh;$lnk.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$Destination+'\DesktopMode.ps1" -Mode '+$item[1]+' -ShowErrors';$lnk.WindowStyle=7;$lnk.IconLocation=Join-Path $Destination 'LiquidDesktop/LiquidDesktop.exe';$lnk.Save()
 }
 Write-Output 'Installed. Start and exit PrismGlass manually with the desktop shortcuts. No login startup item or scheduled task was created.'

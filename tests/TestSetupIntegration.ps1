@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $source=Join-Path $repo 'scripts/SetupIntegration.ps1'
 $tokens=$null;$errors=$null
@@ -32,7 +32,7 @@ try{
  [IO.File]::WriteAllText((Join-Path $install 'private.txt'),'keep')
  Reject {Assert-SetupOwnership $install $skin $true} 'Unmarked existing installation is not overwritten'
  Check ((Get-Content -LiteralPath (Join-Path $install 'private.txt') -Raw) -eq 'keep') 'Legacy user file remains intact'
- $pwsh=Join-Path $fixture 'pwsh.exe';[IO.File]::WriteAllText($pwsh,'inert fixture')
+ $pwsh=Join-Path $fixture 'powershell.exe';[IO.File]::WriteAllText($pwsh,'inert Windows PowerShell fixture')
  $record=[ordered]@{product='PrismGlass.Desktop';version=1;root=$install;skin=$skin;rainmeter=$rainmeter;powershell=$pwsh;latitude=31.2;longitude=121.4}
  Write-SetupRecord (Join-Path $install 'prismglass-install.json') $record
  $templates=Join-Path $install 'rainmeter/PrismGlass/Dock'
@@ -41,6 +41,7 @@ try{
  New-Item -ItemType Directory -Path (Join-Path $install 'LiquidDesktop') -Force | Out-Null
  [IO.File]::WriteAllText((Join-Path $install 'LiquidDesktop/LiquidDesktop.exe'),'inert fixture')
  & $source -Mode Configure -Root $install -RainmeterPath $rainmeter -PowerShellPath $pwsh -RainmeterIni $settings
+ Check (([IO.File]::ReadAllText((Join-Path $install 'prismglass-install.json')) | ConvertFrom-Json).powershell -eq $pwsh) 'Installer configuration persists the system PowerShell 5.1 executable'
  $pending=Join-Path $install 'LiquidDesktop/skin-catalog-pending.flag'
  Check (Test-Path -LiteralPath $pending) 'First skin installation records a deferred catalog refresh without calling Rainmeter'
  & {
@@ -113,8 +114,9 @@ try{
  # WScript creates only an ASCII shell; Shell writes Unicode arguments before the filename is moved.
  $temporaryShortcut=Join-Path $fixture 'shortcut.lnk'
  $unicodeShell=New-Object -ComObject Shell.Application
+ $legacyShell=Join-Path $fixture 'pwsh.exe';[IO.File]::WriteAllText($legacyShell,'inert legacy PowerShell 7 fixture')
  foreach($entry in @(@($oldShortcut,$install,'Beauty'),@($otherShortcut,$foreign,'Game'))){
-  $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Save()
+  $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$legacyShell;$link.Save()
   $expected='-File "'+(Join-Path $entry[1] 'DesktopMode.ps1')+'" -Mode '+$entry[2]
   $unicodeLink=$unicodeShell.Namespace($fixture).ParseName('shortcut.lnk').GetLink();$unicodeLink.Arguments=$expected;$unicodeLink.Save()
   Move-Item -LiteralPath $temporaryShortcut -Destination $entry[0]
@@ -126,15 +128,15 @@ try{
  Check (Test-Path -LiteralPath $otherShortcut) 'Upgrade preserves a same-name shortcut targeting another installation'
  $unownedSkin=Join-Path $fixture 'UnownedSkin';New-Item -ItemType Directory -Path $unownedSkin | Out-Null
  Reject {Remove-SetupSkin $install $unownedSkin} 'Existing skin without an owner is still protected on uninstall retry'
- $iss=Get-Content -LiteralPath (Join-Path $repo 'packaging/PrismGlass.iss') -Raw
+ $iss=Get-Content -LiteralPath (Join-Path $repo 'packaging/PrismGlass.iss') -Encoding UTF8 -Raw
  Check ($iss.Contains('{group}\开启 PrismGlass') -and $iss.Contains('{group}\退出 PrismGlass') -and $iss.Contains('{group}\卸载 PrismGlass')) 'Start menu retains launch, exit and uninstall entries'
  $desktopEntries=@([regex]::Matches($iss,'(?m)^Name: "\{autodesktop\}\\[^\r\n]*') | ForEach-Object {$_.Value})
  Check ($desktopEntries.Count -eq 1 -and $desktopEntries[0].Contains('Name: "{autodesktop}\PrismGlass";') -and $desktopEntries[0].Contains('-Mode Beauty')) 'Desktop has one PrismGlass shortcut that launches Beauty mode'
  $desktopTask=[regex]::Match($iss,'(?m)^Name: desktopicon;[^\r\n]*').Value
  Check ($desktopTask -ne '' -and $desktopTask -notmatch '\bunchecked\b') 'Fresh installations select desktop shortcuts by default'
- Check ($iss.Contains("ExpandConstant('{param:RAINMETER|{pf64}\Rainmeter\Rainmeter.exe}')") -and $iss.Contains("ExpandConstant('{param:POWERSHELL|}')")) 'Command-line dependency paths populate the same validated wizard fields'
+ Check ($iss.Contains("ExpandConstant('{param:RAINMETER|}')") -and $iss.Contains("ExpandConstant('{param:POWERSHELL|}')")) 'Command-line dependency paths populate the same validated wizard fields'
  Check ($iss -notmatch '(?<![A-Za-z])MsgBox\(') 'Silent installation and uninstall have no unsuppressible custom message boxes'
- Check ([regex]::Matches($iss,'SuppressibleMsgBox\([^;\r\n]+, mbError, MB_OK, IDOK\); Result := False;').Count -eq 4) 'Suppressing dependency errors still rejects all four missing dependencies'
+ Check ([regex]::Matches($iss,'SuppressibleMsgBox\([^;\r\n]+, mbError, MB_OK, IDOK\); Result := False;').Count -eq 5) 'Suppressing errors still rejects missing dependencies and pending component restart'
  Check ($iss.Contains('MessagesFile: "ChineseSimplified.isl"') -and (Test-Path -LiteralPath (Join-Path $repo 'packaging/ChineseSimplified.isl'))) 'Installer and uninstaller use the bundled Simplified Chinese messages'
  Check ($iss.Contains('LicenseFile={#BundleRoot}\LICENSE') -and $iss.Contains('WizardForm.LicenseAcceptedRadio.Checked := True;')) 'Readable license page remains present and is accepted by default'
  $launchEntry=[regex]::Match($iss,'(?m)^Filename: [^\r\n]*postinstall[^\r\n]*').Value

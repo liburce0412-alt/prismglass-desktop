@@ -1,8 +1,8 @@
-param([ValidateSet('Apply','Restore','Validate')][string]$Mode='Apply',[ValidateRange(75,200)][int]$Scale,[ValidateSet('rounded-dark','rounded-light','macos','windows')][string]$Style)
+﻿param([ValidateSet('Apply','Restore','Validate')][string]$Mode='Apply',[ValidateRange(75,200)][int]$Scale,[ValidateSet('rounded-dark','rounded-light','macos','windows')][string]$Style)
 $ErrorActionPreference='Stop'
 $marker=Join-Path $PSScriptRoot 'cursor-theme.active'
 $cursorRoot=Join-Path $PSScriptRoot 'Cursors'
-if(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'cursors-path.txt')){$cursorRoot=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'cursors-path.txt') -Raw).Trim()}
+if(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'cursors-path.txt')){$cursorRoot=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'cursors-path.txt') -Encoding UTF8 -Raw).Trim()}
 if(!('PrismCursorNative' -as [type])){
  Add-Type @"
 using System;
@@ -26,7 +26,7 @@ if($Mode -eq 'Restore'){Restore-Cursors;return}
 if(!$PSBoundParameters.ContainsKey('Style')){
  $Style='rounded-dark'
  $optionsPath=Join-Path $PSScriptRoot 'cursor-options.json'
- if(Test-Path -LiteralPath $optionsPath){try{$savedOptions=Get-Content -LiteralPath $optionsPath -Raw | ConvertFrom-Json;if($savedOptions.style -in @('rounded-dark','rounded-light','macos','windows')){$Style=$savedOptions.style}}catch{}}
+ if(Test-Path -LiteralPath $optionsPath){try{$savedOptions=Get-Content -LiteralPath $optionsPath -Encoding UTF8 -Raw | ConvertFrom-Json;if($savedOptions.style -in @('rounded-dark','rounded-light','macos','windows')){$Style=$savedOptions.style}}catch{}}
 }
 if($Style -eq 'windows'){
  if($Mode -eq 'Apply'){Restore-Cursors;'Using the saved Windows pointer theme and size.'}else{'Validated original Windows pointer mode.'}
@@ -44,7 +44,7 @@ $map=[ordered]@{
 $scalePath=Join-Path $PSScriptRoot 'cursor-scale.txt'
 if(!$PSBoundParameters.ContainsKey('Scale')){
  $Scale=100
- if(Test-Path -LiteralPath $scalePath){$saved=0;if([int]::TryParse((Get-Content -LiteralPath $scalePath -Raw).Trim(),[ref]$saved) -and $saved -ge 75 -and $saved -le 200){$Scale=$saved}}
+ if(Test-Path -LiteralPath $scalePath){$saved=0;if([int]::TryParse((Get-Content -LiteralPath $scalePath -Encoding UTF8 -Raw).Trim(),[ref]$saved) -and $saved -ge 75 -and $saved -le 200){$Scale=$saved}}
 }
 $width=[Math]::Max(16,[int][Math]::Round([PrismCursorNative]::GetSystemMetrics(13)*$Scale/100.0))
 $height=[Math]::Max(16,[int][Math]::Round([PrismCursorNative]::GetSystemMetrics(14)*$Scale/100.0))

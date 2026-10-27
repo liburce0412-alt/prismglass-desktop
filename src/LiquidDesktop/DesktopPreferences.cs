@@ -12,7 +12,7 @@ internal sealed class MonitorPreferences {
 internal sealed class DesktopPreferenceState {
  public int version=1;public long revision=1;public string theme="Sky",hotkey="Ctrl+Alt+Space";
  public int glassOpacity=100,textScale=100,gridColumns=6,dockIconSize=48;
- public bool manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true;
+ public bool manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true,welcomeShown;
  public List<MonitorPreferences> monitors=new List<MonitorPreferences>();
 }
 
@@ -35,10 +35,11 @@ internal sealed class DesktopPreferences {
  static readonly string[] LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  public DesktopPreferenceState Current {get;private set;}
  public long Revision {get;private set;}
+ public bool IsFirstRun {get;private set;}
  public event Action Changed;
  // Register a new binding before persistence; returning an action lets a failed save restore the old one.
  public Func<string,Action> PrepareHotkey;
- public DesktopPreferences(string directory){root=directory;file=Path.Combine(root,"desktop-settings.json");Current=new DesktopPreferenceState();Reload();}
+ public DesktopPreferences(string directory){root=directory;file=Path.Combine(root,"desktop-settings.json");IsFirstRun=!File.Exists(file)&&!File.Exists(Path.Combine(root,"app-library.json"))&&!File.Exists(Path.Combine(root,"shelf-state.json"))&&!File.Exists(Path.Combine(root,"lyrics-settings.json"));Current=new DesktopPreferenceState();Reload();}
  static int Number(object value,int min,int max){int result;if(value is bool||!Int32.TryParse(Convert.ToString(value,System.Globalization.CultureInfo.InvariantCulture),out result)||result<min||result>max)throw new ArgumentException("数值必须介于 "+min+" 与 "+max+" 之间。");return result;}
  static bool Flag(object value){if(!(value is bool))throw new ArgumentException("开关值无效。");return (bool)value;}
  static List<string> Cards(object value,string[] allowed){var values=value as IEnumerable;if(values==null||value is string)throw new ArgumentException("组件列表无效。");var result=new List<string>();foreach(var raw in values){string name=raw as string;if(name==null||Array.IndexOf(allowed,name)<0)throw new ArgumentException("未知组件。");if(!result.Contains(name))result.Add(name);}return result;}
@@ -70,6 +71,7 @@ internal sealed class DesktopPreferences {
     case "glassOpacity":next.glassOpacity=Number(pair.Value,60,100);break;case "textScale":next.textScale=Number(pair.Value,90,130);break;case "gridColumns":next.gridColumns=Number(pair.Value,4,10);break;case "dockIconSize":next.dockIconSize=Number(pair.Value,32,72);break;
     case "manualPaused":next.manualPaused=Flag(pair.Value);break;case "reducedMotion":next.reducedMotion=Flag(pair.Value);break;case "pauseOnBattery":next.pauseOnBattery=Flag(pair.Value);break;case "pauseOnPowerSaver":next.pauseOnPowerSaver=Flag(pair.Value);break;case "pauseOnRemote":next.pauseOnRemote=Flag(pair.Value);break;case "showLabels":next.showLabels=Flag(pair.Value);break;case "dockAutoHide":next.dockAutoHide=Flag(pair.Value);break;
     case "monitors":next.monitors=json.Deserialize<List<MonitorPreferences>>(json.Serialize(pair.Value));break;
+    case "welcomeShown":next.welcomeShown=Flag(pair.Value);break;
     case "hiddenCards":case "hiddenLeftCards":case "cardOrder":case "leftCardOrder":bool right=pair.Key=="hiddenCards"||pair.Key=="cardOrder";string path=Path.Combine(root,right?"shelf-state.json":"sidebar-visibility.json");string staged;var map=DesktopSettingsFiles.Map(writes.TryGetValue(path,out staged)?staged:DesktopSettingsFiles.Read(path));map[pair.Key]=pair.Key.EndsWith("Order",StringComparison.Ordinal)?Order(pair.Value,right?RightCards:LeftCards):Cards(pair.Value,right?RightCards:LeftCards);if(pair.Key=="hiddenCards"&&((List<string>)map[pair.Key]).Count==RightCards.Length)throw new ArgumentException("右侧至少保留一个入口。");writes[path]=json.Serialize(map);break;
     default:throw new ArgumentException("未知设置项："+pair.Key);
    }}Validate(next);
