@@ -203,7 +203,7 @@ internal sealed class LiquidDesktop : Form {
    DockBackend.ObserveForeground();var dockAreas=new Dictionary<string,Rectangle>();foreach(var host in Hosts())if(host.dockWindow!=IntPtr.Zero)dockAreas[host.instance]=host.dockRectangle;draggingDock=backend.TickDrag(dockAreas);
    }
    if(painted)DockVisibility(cursor);
-   if(painted&&primaryHost){bool near=WorkspaceOpen||draggingDock||DockBackend.Interaction(root),anyVisible=false;foreach(var host in Hosts()){near|=Rectangle.Inflate(host.dockRectangle,24,32).Contains(new Point(p.X,p.Y))||(host.preview!=null&&!host.preview.IsDisposed);anyVisible|=host.dockShown&&host.dockWindow!=IntPtr.Zero&&!host.screenCovered;}lyrics.Tick(now,anyVisible,near,RuntimePolicy.Reasons(preferences.Current,runtime==null?new RuntimeSignals():runtime.Signals,false,false,systemAnimations).Length>0);}
+   if(painted&&primaryHost){bool near=WorkspaceOpen||draggingDock||DockBackend.Interaction(root),anyVisible=false,musicOpen=false;foreach(var host in Hosts()){near|=Rectangle.Inflate(host.dockRectangle,24,32).Contains(new Point(p.X,p.Y))||(host.preview!=null&&!host.preview.IsDisposed);anyVisible|=host.dockShown&&host.dockWindow!=IntPtr.Zero&&!host.screenCovered;musicOpen|=host.sideDock!=null&&!host.sideDock.IsDisposed&&host.sideDock.MusicOpen;}lyrics.DesktopMediaActive=musicOpen;lyrics.Tick(now,anyVisible,near,RuntimePolicy.Reasons(preferences.Current,runtime==null?new RuntimeSignals():runtime.Signals,false,false,systemAnimations).Length>0);}
    if(painted&&ticks%5==0)PreviewTick(cursor);
    bool down=(GetAsyncKeyState(1)&0x8000)!=0;
    if(cursor!=lastPointer||down!=lastDown){lastPointer=cursor;lastDown=down;Send(new {type="pointer",x=cursor.X,y=cursor.Y,down=down});}

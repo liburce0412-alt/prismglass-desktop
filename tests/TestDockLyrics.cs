@@ -30,6 +30,14 @@ internal static class TestDockLyrics {
   var s=Session("one",10);Check(Math.Abs(s.Position(now.AddSeconds(2))-12)<.001,"playing timeline interpolates from sample");
   s.status="paused";Check(s.Position(now.AddSeconds(2))==10,"paused timeline stays still");
   Check(!s.Fresh(now.AddSeconds(5)),"stale media snapshots expire");
+  var qq=Session("QQ fixture");qq.source="QQMusic.exe";qq.smtc=true;
+  var request=qq.ControlRequest(root,0xB3,now);
+  Check(request!=null&&request.CreateNoWindow&&!request.UseShellExecute&&request.Arguments.Contains("-Control toggle -Source64 UVFNdXNpYy5leGU=")&&request.Arguments.Contains("-RequestedAt "),"QQ controls target the sampled player identity through a hidden helper");
+  Check(qq.ControlRequest(root,0xB1,now).Arguments.Contains("-Control previous")&&qq.ControlRequest(root,0xB0,now).Arguments.Contains("-Control next"),"media transport actions keep their exact mapping");
+  Check(qq.ControlRequest(root,0xB3,now.AddSeconds(5))==null,"expired player snapshots cannot generate targeted controls");
+  qq.smtc=false;Check(qq.ControlRequest(root,0xB3,now)==null,"legacy metadata retains the existing media-key fallback");qq.smtc=true;
+  qq.source="player\" -Control next";request=qq.ControlRequest(root,0xB3,now);Check(!request.Arguments.Contains(qq.source)&&request.Arguments.Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(qq.source))),"player identifiers cannot inject helper arguments");
+  bool rejectedControl=false;try{qq.ControlRequest(root,0x41,now);}catch(ArgumentException){rejectedControl=true;}Check(rejectedControl,"unsupported transport keys are rejected");
   Check(NetEaseSession.ValidClock(32,120.02,120),"NetEase clock matches exact queue duration");
   Check(!NetEaseSession.ValidClock(32,240,120),"mismatched NetEase clock is rejected");
   Check(!NetEaseSession.ValidClock(Double.NaN,120,120)&&!NetEaseSession.ValidClock(Double.PositiveInfinity,120,120),"invalid native numbers never become lyrics");
@@ -121,6 +129,17 @@ internal static class TestDockLyrics {
    Step(service,s);service.CompanionActive=false;Step(service,s);
    companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
    Check(!(bool)companion["available"]&&!Showing()&&http.calls==0,"closing companion restores the disabled media source without network calls");
+  }
+  http=new FakeHttp();
+  using(var service=new DockLyrics(root,http,false)){
+   service.DesktopMediaActive=true;s=Session("Desktop music panel");Step(service,s);
+   var mediaField=typeof(DockLyrics).GetField("media",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);
+   var observed=mediaField.GetValue(service) as MediaSnapshot;
+   Check(observed!=null&&observed.title=="Desktop music panel"&&!Showing()&&http.calls==0,"open desktop music panel reads metadata without enabling lyrics or networking");
+   var companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
+   Check(!(bool)companion["available"]&&!LyricsSettings.Load(root).enabled,"desktop music panel does not activate companion media access or change preferences");
+   service.DesktopMediaActive=false;Step(service,s);
+   Check(mediaField.GetValue(service)==null&&http.calls==0,"closing desktop music panel releases its media demand");
   }
   settings.enabled=true;settings.online=false;settings.offsetMs=0;settings.Save(root);
   using(var service=new DockLyrics(root,new FakeHttp(),false)){s=Session("B");Step(service,s);Check(Showing(),"bounded disk cache survives restart offline");}

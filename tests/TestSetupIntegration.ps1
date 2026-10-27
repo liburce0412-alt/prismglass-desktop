@@ -45,19 +45,26 @@ try{
  Check (Test-Path -LiteralPath $pending) 'First skin installation records a deferred catalog refresh without calling Rainmeter'
  & {
   $script:catalogCalls=[Collections.Generic.List[string]]::new()
-  function Invoke-FixtureRainmeter {param($Command) $script:catalogCalls.Add($Command);$global:LASTEXITCODE=0}
+  function Start-Process {
+   param($FilePath,$ArgumentList,$WindowStyle,[switch]$Wait,[switch]$PassThru)
+   if(!$Wait -or !$PassThru -or $WindowStyle -ne 'Hidden'){throw 'GUI commands must wait for their own exit code without opening a console'}
+   $script:catalogCalls.Add($ArgumentList)
+   $process=[pscustomobject]@{ExitCode=$(if($FilePath -eq 'rejected.exe'){1}else{0})}
+   $process | Add-Member ScriptMethod Dispose {} -PassThru
+  }
   function Start-Sleep {param($Milliseconds) $script:catalogCalls.Add('wait:'+ $Milliseconds)}
-  Update-PrismGlassSkinCatalog 'Invoke-FixtureRainmeter' $pending $false
+  Update-PrismGlassSkinCatalog 'fixture.exe' $pending $false
   Check ($script:catalogCalls.Count -eq 0) 'New Rainmeter process scans on startup without a redundant refresh'
-  Update-PrismGlassSkinCatalog 'Invoke-FixtureRainmeter' $pending $true
+  $global:LASTEXITCODE=$null
+  Update-PrismGlassSkinCatalog 'fixture.exe' $pending $true
   Check (($script:catalogCalls -join '|') -eq '!RefreshApp|wait:1000') 'Existing Rainmeter refreshes then waits before subsequent activation'
   Check (Test-Path -LiteralPath $pending) 'Refresh marker stays until the whole desktop is ready'
-  function Invoke-RejectedRainmeter {param($Command) $global:LASTEXITCODE=1}
-  Reject {Update-PrismGlassSkinCatalog 'Invoke-RejectedRainmeter' $pending $true} 'Failed catalog refresh blocks activation'
+  $global:LASTEXITCODE=0
+  Reject {Update-PrismGlassSkinCatalog 'rejected.exe' $pending $true} 'Failed catalog refresh blocks activation even with a stale successful console exit code'
   Check (Test-Path -LiteralPath $pending) 'Failed refresh retains its marker for retry'
   $global:LASTEXITCODE=0
   $script:catalogCalls.Clear();Remove-Item -LiteralPath $pending
-  Update-PrismGlassSkinCatalog 'Invoke-FixtureRainmeter' $pending $true
+  Update-PrismGlassSkinCatalog 'fixture.exe' $pending $true
   Check ($script:catalogCalls.Count -eq 0) 'Ordinary launches do not repeatedly refresh all skins'
  }
  & $source -Mode Configure -Root $install -RainmeterPath $rainmeter -PowerShellPath $pwsh -RainmeterIni $settings
@@ -99,10 +106,30 @@ try{
  $absentSkin=Join-Path $fixture 'RemovedSkin'
  Remove-SetupSkin $install $absentSkin
  Check (!(Test-Path -LiteralPath $absentSkin)) 'Uninstall retry is idempotent when the skin directory is already absent'
+ $desktop=Join-Path $fixture '桌面';New-Item -ItemType Directory -Path $desktop | Out-Null
+ $shell=New-Object -ComObject WScript.Shell
+ $oldShortcut=Join-Path $desktop '开启 PrismGlass.lnk'
+ $otherShortcut=Join-Path $desktop '退出 PrismGlass.lnk'
+ $link=$shell.CreateShortcut($oldShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $install 'DesktopMode.ps1')+'" -Mode Beauty';$link.Save()
+ $link=$shell.CreateShortcut($otherShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $foreign 'DesktopMode.ps1')+'" -Mode Game';$link.Save()
+ Remove-SetupLegacyDesktopShortcuts $install $desktop
+ Check (!(Test-Path -LiteralPath $oldShortcut)) 'Upgrade removes the old desktop entry owned by this installation'
+ Check (Test-Path -LiteralPath $otherShortcut) 'Upgrade preserves a same-name shortcut targeting another installation'
  $unownedSkin=Join-Path $fixture 'UnownedSkin';New-Item -ItemType Directory -Path $unownedSkin | Out-Null
  Reject {Remove-SetupSkin $install $unownedSkin} 'Existing skin without an owner is still protected on uninstall retry'
  $iss=Get-Content -LiteralPath (Join-Path $repo 'packaging/PrismGlass.iss') -Raw
- Check ($iss.Contains('{group}\开启 PrismGlass') -and $iss.Contains('{group}\退出 PrismGlass') -and $iss.Contains('{autodesktop}\开启 PrismGlass') -and $iss.Contains('{autodesktop}\退出 PrismGlass')) 'Start menu and desktop shortcut names match the Chinese product instructions'
+ Check ($iss.Contains('{group}\开启 PrismGlass') -and $iss.Contains('{group}\退出 PrismGlass') -and $iss.Contains('{group}\卸载 PrismGlass')) 'Start menu retains launch, exit and uninstall entries'
+ $desktopEntries=@([regex]::Matches($iss,'(?m)^Name: "\{autodesktop\}\\[^\r\n]*') | ForEach-Object {$_.Value})
+ Check ($desktopEntries.Count -eq 1 -and $desktopEntries[0].Contains('Name: "{autodesktop}\PrismGlass";') -and $desktopEntries[0].Contains('-Mode Beauty')) 'Desktop has one PrismGlass shortcut that launches Beauty mode'
+ $desktopTask=[regex]::Match($iss,'(?m)^Name: desktopicon;[^\r\n]*').Value
+ Check ($desktopTask -ne '' -and $desktopTask -notmatch '\bunchecked\b') 'Fresh installations select desktop shortcuts by default'
+ Check ($iss.Contains("ExpandConstant('{param:RAINMETER|{pf64}\Rainmeter\Rainmeter.exe}')") -and $iss.Contains("ExpandConstant('{param:POWERSHELL|}')")) 'Command-line dependency paths populate the same validated wizard fields'
+ Check ($iss -notmatch '(?<![A-Za-z])MsgBox\(') 'Silent installation and uninstall have no unsuppressible custom message boxes'
+ Check ([regex]::Matches($iss,'SuppressibleMsgBox\([^;\r\n]+, mbError, MB_OK, IDOK\); Result := False;').Count -eq 4) 'Suppressing dependency errors still rejects all four missing dependencies'
+ Check ($iss.Contains('MessagesFile: "ChineseSimplified.isl"') -and (Test-Path -LiteralPath (Join-Path $repo 'packaging/ChineseSimplified.isl'))) 'Installer and uninstaller use the bundled Simplified Chinese messages'
+ Check ($iss.Contains('LicenseFile={#BundleRoot}\LICENSE') -and $iss.Contains('WizardForm.LicenseAcceptedRadio.Checked := True;')) 'Readable license page remains present and is accepted by default'
+ $launchEntry=[regex]::Match($iss,'(?m)^Filename: [^\r\n]*postinstall[^\r\n]*').Value
+ Check ($launchEntry -match '-Mode Beauty' -and $launchEntry -match '\bskipifsilent\b' -and $launchEntry -match '\brunhidden\b' -and $launchEntry -notmatch '\bunchecked\b') 'Default finish action starts the desktop with a hidden shell and is skipped by silent installs'
 }finally{
  $absolute=[IO.Path]::GetFullPath($fixture);$parent=[IO.Path]::GetFullPath((Join-Path $repo 'artifacts/tests'))+[IO.Path]::DirectorySeparatorChar
  if(!$absolute.StartsWith($parent,[StringComparison]::OrdinalIgnoreCase)){throw 'Test fixture escaped its output directory'}

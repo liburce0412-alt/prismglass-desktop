@@ -36,6 +36,7 @@ try{
  $reader=Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$Helper+'" -OwnerPid '+$PID+' -DataRoot "'+$DataRoot+'"') -WindowStyle Hidden -PassThru
  $first=Read-TestSession 'playing'
  Check ($first.timeline -and $first.position -ge 10 -and $first.position -lt 18 -and $first.duration -eq 120) 'real SMTC title and time axis reach the helper'
+ Check ($first.smtc -and ![string]::IsNullOrWhiteSpace($first.source)) 'real media snapshots retain the session identity for targeted controls'
  $controls.PlaybackStatus='Paused'
  $paused=Read-TestSession 'paused'
  Start-Sleep -Milliseconds 1600

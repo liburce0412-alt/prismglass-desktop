@@ -5,8 +5,8 @@ function Test-StartupReadiness($State,[int]$ProcessId,[datetime]$Started,[dateti
 }
 function Update-PrismGlassSkinCatalog([string]$Executable,[string]$PendingFile,[bool]$WasRunning){
  if(!$WasRunning -or !(Test-Path -LiteralPath $PendingFile)){return}
- & $Executable '!RefreshApp'
- if($LASTEXITCODE -ne 0){throw 'Rainmeter could not refresh its skin catalog. Retry after closing its settings window.'}
+ $refresh=Start-Process -FilePath $Executable -ArgumentList '!RefreshApp' -WindowStyle Hidden -Wait -PassThru
+ try{if($refresh.ExitCode -ne 0){throw 'Rainmeter 未能刷新皮肤列表。请关闭 Rainmeter 设置窗口后重试。'}}finally{$refresh.Dispose()}
  # RefreshApp registers new directories asynchronously; do not combine it with activation.
  Start-Sleep -Milliseconds 1000
 }

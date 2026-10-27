@@ -2,8 +2,8 @@ using System;using System.IO;using System.Linq;using System.Collections.Generic;
 internal static class RuntimePaths{public static string Rainmeter{get{throw new Exception("Fixture must never launch Rainmeter");}}}
 internal sealed class LyricsSettings{public bool enabled,online,holdGaps;public int offsetMs;public LyricsAppearance appearance;public static LyricsSettings Load(string root){return new LyricsSettings();}public void Save(string root){throw new Exception("Read-only fixture");}}
 internal sealed class LyricsAppearance{public LyricsAppearance Normalize(){return this;}}
-internal sealed class MediaSnapshot{public string title,artist,status;public static MediaSnapshot Read(string root,DateTime now){return null;}}
-internal static class LyricBackgroundPalette{public static object Read(string root,MediaSnapshot song){return null;}}
+internal sealed class MediaSnapshot{public string title,artist,status;public static MediaSnapshot current;public static MediaSnapshot Read(string root,DateTime now){return current;}}
+internal static class LyricBackgroundPalette{public static string path="";public static string CoverPath(string root,MediaSnapshot song){return path;}public static object Read(string root,MediaSnapshot song){return null;}}
 internal static class TestWidgetSources{
  static readonly JavaScriptSerializer json=new JavaScriptSerializer();static int checks;static string root,ini,skins;static List<string> commands=new List<string>();
  static void Check(bool ok,string name){if(!ok)throw new Exception(name);checks++;Console.WriteLine("PASS "+name);}
@@ -40,6 +40,11 @@ internal static class TestWidgetSources{
   Write("Weather","{\"ready\":false,\"updatedAt\":"+weatherAt+"}");Check(!(bool)Child(Child(Map(backend.Read()),"sourceStatus"),"weather")["available"],"failed forecast refresh remains unavailable despite a fresh heartbeat");
   commands.Clear();backend.Action("volume-set:55");Check(commands.Count==1&&commands[0]=="!CommandMeasure Volume \"SetVolume 55\" \"PrismGlass\\Music\"","absolute volume builds only the fixed existing Music measure command");
   foreach(string invalid in new[]{"volume-set:","volume-set:-1","volume-set:101","volume-set:5.5","volume-set:50\" !Quit","volume-set: 5"}){bool rejected=false;try{backend.Action(invalid);}catch(ArgumentException){rejected=true;}Check(rejected&&commands.Count==1,"absolute volume rejects malformed or unsafe command suffix "+invalid);}
+  MediaSnapshot.current=new MediaSnapshot{title="QQ music fixture",artist="QQ artist",status="playing"};
+  LyricBackgroundPalette.path=Path.Combine(fixture,"session-cover-0123456789abcdef.bin");File.WriteAllBytes(LyricBackgroundPalette.path,new byte[]{1});
+  var music=Child(Map(backend.Read()),"music");Check((string)music["title"]=="QQ music fixture"&&(bool)music["playing"]&&((string)music["cover"]).StartsWith("https://prism-media.local/session-cover-0123456789abcdef.bin?v="),"QQ and other SMTC sessions supply the desktop card cover without the NetEase bridge");
+  LyricBackgroundPalette.path="";music=Child(Map(backend.Read()),"music");Check((string)music["cover"]=="","missing session artwork does not retain another player's cover");
+  MediaSnapshot.current=null;
   Console.WriteLine("Completed "+checks+" widget source checks.");
  }
 }

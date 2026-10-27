@@ -54,6 +54,16 @@ function Write-SetupRecord([string]$Path,$Value) {
  $temp=$Path+'.new'
  try{[IO.File]::WriteAllText($temp,($Value | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false));Move-Item -LiteralPath $temp -Destination $Path -Force}finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp}}
 }
+function Remove-SetupLegacyDesktopShortcuts([string]$InstallRoot,[string]$DesktopRoot) {
+ $command='-File "'+(Join-Path $InstallRoot 'DesktopMode.ps1')+'"'
+ foreach($name in @('开启 PrismGlass.lnk','退出 PrismGlass.lnk')){
+  $path=Join-Path $DesktopRoot $name
+  if(!(Test-Path -LiteralPath $path -PathType Leaf)){continue}
+  $shell=New-Object -ComObject WScript.Shell
+  $shortcut=$shell.CreateShortcut($path)
+  if([IO.Path]::GetFileName($shortcut.TargetPath) -eq 'pwsh.exe' -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
+ }
+}
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {
  $source=Join-Path $InstallRoot 'rainmeter/PrismGlass'
  if(!(Test-Path -LiteralPath (Join-Path $source 'Dock/Main.ini'))){throw 'The installation package is missing its Dock skin.'}
@@ -143,6 +153,7 @@ if(!(Test-Path -LiteralPath (Join-Path $skin 'Dock/Main.ini'))){[IO.File]::Write
 Install-SetupSkin $Root $skin $PowerShellPath $Latitude $Longitude
 [IO.File]::WriteAllText((Join-Path $app 'rainmeter-path.txt'),$RainmeterPath)
 [IO.File]::WriteAllText((Join-Path $app 'skin-path.txt'),$skin)
+Remove-SetupLegacyDesktopShortcuts $Root ([Environment]::GetFolderPath('Desktop'))
 if(!(Test-Path -LiteralPath (Join-Path $app 'pins.json'))){
  @(@{id='explorer';name='文件';path=(Join-Path $env:WINDIR 'explorer.exe');arguments='';icon=''},@{id='notepad';name='记事本';path=(Join-Path $env:WINDIR 'System32/notepad.exe');arguments='';icon=''}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $app 'pins.json') -Encoding utf8
 }

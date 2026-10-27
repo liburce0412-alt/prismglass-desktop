@@ -92,12 +92,20 @@ internal sealed class LyricsStyleStore {
 internal sealed class MediaSnapshot {
  public string source="",title="",artist="",album="",status="",cover="";
  public double sampledAt=0,position=0,duration=0,rate=1;
- public bool timeline=false;
+ public bool timeline=false,smtc=false;
  public static double Unix(DateTime now){return (now-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;}
  public bool Fresh(DateTime now){double age=Unix(now)-sampledAt;return age>=-1&&age<4;}
  public string Key {get{return source+"\n"+title+"\n"+artist+"\n"+album+"\n"+Math.Round(duration).ToString(CultureInfo.InvariantCulture);}}
  public double Position(DateTime now){
   return Math.Max(0,Math.Min(duration,position+(status=="playing"?Math.Max(0,Unix(now)-sampledAt)*rate:0)));
+ }
+ internal System.Diagnostics.ProcessStartInfo ControlRequest(string root,byte code,DateTime now){
+  if(!smtc||!Fresh(now))return null;
+  string action=code==0xB1?"previous":code==0xB0?"next":code==0xB3?"toggle":"";
+  if(action.Length==0||String.IsNullOrEmpty(source)||source.Length>1024)throw new ArgumentException("Invalid media control request.");
+  string encoded=Convert.ToBase64String(Encoding.UTF8.GetBytes(source));
+  string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","WindowsPowerShell","v1.0","powershell.exe");
+  return new System.Diagnostics.ProcessStartInfo(shell,"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+Path.Combine(root,"MediaSession.ps1")+"\" -Control "+action+" -Source64 "+encoded+" -RequestedAt "+Unix(now).ToString("R",CultureInfo.InvariantCulture)){UseShellExecute=false,CreateNoWindow=true,WindowStyle=System.Diagnostics.ProcessWindowStyle.Hidden};
  }
  public static MediaSnapshot Read(string root,DateTime now){
   var system=ReadFile(root,"session.json",now);
@@ -142,6 +150,65 @@ internal static class LyricsTimeline {
  // Rainmeter expands #variables# and [measures] in meter options. Render these literally.
  public static string DisplayText(string text){return (text??"").Replace("#","＃").Replace("[","［").Replace("]","］").Replace("\r"," ").Replace("\n"," ");}
 }
+internal sealed class QQMusicLyricResult {public string lrc="",status="未确认 QQ 音乐唯一准确版本",mid="";}
+internal static class QQMusicLyrics {
+ const string SearchModule="music.search.SearchCgiService",Endpoint="https://u.y.qq.com/cgi-bin/musicu.fcg";
+ public static bool IsSource(string source){return String.Equals(source,"QQMusic.exe",StringComparison.OrdinalIgnoreCase);}
+ public static string CacheKey(MediaSnapshot song){return (IsSource(song.source)?"qq-exact-v1\n":"")+song.Key;}
+ static Dictionary<string,object> Map(object value){return value as Dictionary<string,object>;}
+ static object Value(Dictionary<string,object> data,string key){object value;return data!=null&&data.TryGetValue(key,out value)?value:null;}
+ static string Text(Dictionary<string,object> data,string key){return Value(data,key) as string??"";}
+ static Dictionary<string,object> Child(Dictionary<string,object> data,string key){return Map(Value(data,key));}
+ static Dictionary<string,object> Parse(string body){if(String.IsNullOrEmpty(body)||body.Length>1048576)throw new InvalidDataException("Invalid QQ response size.");return new JavaScriptSerializer{MaxJsonLength=1048576,RecursionLimit=64}.DeserializeObject(body) as Dictionary<string,object>;}
+ static bool Zero(Dictionary<string,object> data,string key){var value=Value(data,key);return value is int&&(int)value==0;}
+ static string Normalize(string value){return Regex.Replace(System.Net.WebUtility.HtmlDecode(value??"").Normalize(NormalizationForm.FormKC).Trim(),@"\s+"," ").ToUpperInvariant();}
+ static bool Equal(string left,string right){return !String.IsNullOrWhiteSpace(left)&&!String.IsNullOrWhiteSpace(right)&&Normalize(left)==Normalize(right);}
+ static bool ValidMid(string mid){return Regex.IsMatch(mid??"",@"\A[A-Za-z0-9]{14}\z");}
+ static IEnumerable<Dictionary<string,object>> Items(object value){var list=value as object[];if(list!=null)foreach(var item in list){var entry=Map(item);if(entry!=null)yield return entry;}}
+ static IEnumerable<Dictionary<string,object>> Candidates(Dictionary<string,object> data,int depth){if(depth>4)yield break;yield return data;foreach(var grouped in Items(Value(data,"grp")))foreach(var nested in Candidates(grouped,depth+1))yield return nested;}
+ static bool SameVersion(Dictionary<string,object> candidate,MediaSnapshot song){
+  if(song==null||String.IsNullOrWhiteSpace(song.artist)||String.IsNullOrWhiteSpace(song.album)||song.duration<=0||Double.IsNaN(song.duration)||Double.IsInfinity(song.duration))return false;
+  string title=Text(candidate,"title");if(title.Length==0)title=Text(candidate,"name");
+  double duration;var raw=Value(candidate,"interval");if(raw==null||!Double.TryParse(Convert.ToString(raw,CultureInfo.InvariantCulture),NumberStyles.Float,CultureInfo.InvariantCulture,out duration)||duration<=0||Double.IsNaN(duration)||Double.IsInfinity(duration)||Math.Abs(duration-song.duration)>1)return false;
+  var album=Child(candidate,"album");return Equal(title,song.title)&&(Equal(Text(album,"name"),song.album)||Equal(Text(album,"title"),song.album));
+ }
+ static bool SameArtists(Dictionary<string,object> candidate,string artist){
+  var singers=Items(Value(candidate,"singer")).ToArray();if(singers.Length==0||singers.Length>8)return false;
+  var variants=new List<string[]>{new string[0]};
+  foreach(var singer in singers){var names=new[]{Text(singer,"name"),Text(singer,"title")}.Where(s=>!String.IsNullOrWhiteSpace(s)).Distinct().ToArray();if(names.Length==0)return false;variants=variants.SelectMany(parts=>names.Select(name=>parts.Concat(new[]{name}).ToArray())).ToList();}
+  foreach(var parts in variants)foreach(var separator in new[]{" / ","/","、",", "," & ","; ","；"})if(Equal(String.Join(separator,parts),artist))return true;
+  return false;
+ }
+ static List<Dictionary<string,object>> SearchCandidates(string body,MediaSnapshot song){
+  var reply=Parse(body);var result=Child(reply,SearchModule);if(!Zero(reply,"code")||!Zero(result,"code"))throw new InvalidDataException("QQ search unavailable.");
+  var section=Child(Child(Child(result,"data"),"body"),"song");var matches=new List<Dictionary<string,object>>();
+  foreach(var item in Items(Value(section,"list")))foreach(var candidate in Candidates(item,0))if(ValidMid(Text(candidate,"mid"))&&SameVersion(candidate,song))matches.Add(candidate);
+  return matches;
+ }
+ public static bool MatchesDetail(string detailJson,string mid,MediaSnapshot song){var reply=Parse(detailJson);var result=Child(reply,"detail");var track=Child(Child(result,"data"),"track_info");return ValidMid(mid)&&Zero(reply,"code")&&Zero(result,"code")&&Text(track,"mid")==mid&&SameVersion(track,song)&&SameArtists(track,song.artist);}
+ public static string DecodeLyric(string lyricJson,double duration){
+  var reply=Parse(lyricJson);if(!Zero(reply,"code")||!Zero(reply,"retcode"))return "";
+  string lrc=System.Net.WebUtility.HtmlDecode(Text(reply,"lyric"));if(lrc.Length>512000||duration<=0||Double.IsNaN(duration)||Double.IsInfinity(duration))return "";
+  var lines=LyricsTimeline.Parse(lrc);return lines.Any(line=>line.text.Length>0)&&lines.All(line=>line.time<=duration+1)?lrc:"";
+ }
+ static async Task<string> Request(HttpClient http,HttpMethod method,string uri,object payload,CancellationToken token){
+  using(var request=new HttpRequestMessage(method,uri)){request.Headers.Referrer=new Uri("https://y.qq.com/");if(payload!=null)request.Content=new StringContent(new JavaScriptSerializer().Serialize(payload),Encoding.UTF8,"application/json");
+   using(var response=await http.SendAsync(request,token).ConfigureAwait(false)){response.EnsureSuccessStatusCode();if(response.Content.Headers.ContentLength>1048576)throw new InvalidDataException("QQ response exceeds limit.");string body=await response.Content.ReadAsStringAsync().ConfigureAwait(false);token.ThrowIfCancellationRequested();if(body.Length>1048576)throw new InvalidDataException("QQ response exceeds limit.");return body;}
+  }
+ }
+ public static async Task<QQMusicLyricResult> FetchAsync(HttpClient http,MediaSnapshot song,CancellationToken token){
+  if(!IsSource(song.source)||String.IsNullOrWhiteSpace(song.title)||String.IsNullOrWhiteSpace(song.artist)||String.IsNullOrWhiteSpace(song.album)||song.duration<=0)return new QQMusicLyricResult();
+  var search=new Dictionary<string,object>{{SearchModule,new{module=SearchModule,method="DoSearchForQQMusicDesktop",param=new{search_type=0,query=song.title+" "+song.artist,page_num=1,num_per_page=50}}}};
+  string body=await Request(http,HttpMethod.Post,Endpoint,search,token).ConfigureAwait(false);
+  // Search may omit official singer aliases. Only full song details can confirm the final version.
+  var mids=SearchCandidates(body,song).Select(c=>Text(c,"mid")).Distinct(StringComparer.Ordinal).ToArray();if(mids.Length==0||mids.Length>5)return new QQMusicLyricResult();
+  var confirmed=new List<string>();
+  foreach(string mid in mids){var detail=new{detail=new{module="music.pf_song_detail_svr",method="get_song_detail_yqq",param=new{song_mid=mid,song_type=0,song_id=""}}};string info=await Request(http,HttpMethod.Post,Endpoint,detail,token).ConfigureAwait(false);var reply=Parse(info);var result=Child(reply,"detail");var track=Child(Child(result,"data"),"track_info");if(!Zero(reply,"code")||!Zero(result,"code")||Text(track,"mid")!=mid)throw new InvalidDataException("QQ song details unavailable.");if(MatchesDetail(info,mid,song))confirmed.Add(mid);}
+  if(confirmed.Count!=1)return new QQMusicLyricResult();string selected=confirmed[0];
+  string lyrics=await Request(http,HttpMethod.Get,"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid="+selected+"&g_tk=5381&format=json&inCharset=utf8&outCharset=utf-8&nobase64=1",null,token).ConfigureAwait(false);
+  string lrc=DecodeLyric(lyrics,song.duration);return new QQMusicLyricResult{mid=selected,lrc=lrc,status=lrc.Length>0?"QQ 音乐原曲歌词":"QQ 音乐此版本暂未提供同步歌词"};
+ }
+}
 internal sealed class DockLyrics : IDisposable {
  public event Action<object> VisualChanged;
  readonly string root,data;
@@ -157,6 +224,7 @@ internal sealed class DockLyrics : IDisposable {
  DateTime sample=DateTime.MinValue,published=DateTime.MinValue,retry=DateTime.MinValue,helperRetry=DateTime.MinValue,approached=DateTime.MinValue;
  int attempts;bool disposed,lastMotionPaused;MediaSnapshot media;LyricsSettings settings;
  public bool CompanionActive {get;set;}
+ public bool DesktopMediaActive {get;set;}
  LyricPaletteState palette;DateTime paletteRead=DateTime.MinValue;string paletteTrack="";
  public DockLyrics(string directory,HttpMessageHandler transport=null,bool readSystemMedia=true){
   this.readSystemMedia=readSystemMedia;
@@ -176,7 +244,7 @@ internal sealed class DockLyrics : IDisposable {
   try{File.Delete(Path.Combine(data,"session.json"));helper=Process.Start(new ProcessStartInfo(shell,"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+Path.Combine(root,"MediaSession.ps1")+"\" -OwnerPid "+Process.GetCurrentProcess().Id+" -DataRoot \""+data+"\""){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
   catch{Status("媒体会话读取暂不可用");}
  }
- void StopHelper(){if(helper==null)return;try{if(!helper.HasExited)helper.Kill();}catch{}helper.Dispose();helper=null;}
+ void StopHelper(){helperRetry=DateTime.MinValue;if(helper==null)return;try{if(!helper.HasExited)helper.Kill();}catch{}helper.Dispose();helper=null;}
  void CancelLookup(){if(cancellation!=null){cancellation.Cancel();cancellation.Dispose();cancellation=null;}if(lookup!=null)lookup.ContinueWith(t=>{var ignored=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);lookup=null;}
  void Status(string value){if(value==state)return;state=value;try{File.WriteAllText(Path.Combine(root,"lyrics-status.txt"),value);}catch(IOException){}}
  public void Tick(DateTime now,bool dockVisible,bool pointerNear,bool motionPaused){
@@ -187,10 +255,10 @@ internal sealed class DockLyrics : IDisposable {
    sample=now;var next=LyricsSettings.Load(root,settings);
    if(settings!=null&&settings.online!=next.online){CancelLookup();attempts=0;retry=DateTime.MinValue;}
    settings=next;
-   if(netease!=null)netease.Enable(settings.enabled||CompanionActive);
+   if(netease!=null)netease.Enable(settings.enabled||CompanionActive||DesktopMediaActive);
    if(!settings.enabled){
     CancelLookup();track="";lines.Clear();Status("Dock 歌词已关闭");
-    if(CompanionActive){StartHelper(now);var observed=MediaSnapshot.Read(root,now);media=observed??(media!=null&&media.Fresh(now)?media:null);}
+    if(CompanionActive||DesktopMediaActive){StartHelper(now);var observed=MediaSnapshot.Read(root,now);media=observed??(media!=null&&media.Fresh(now)?media:null);}
     else{StopHelper();media=null;}
    }
    else {
@@ -198,7 +266,7 @@ internal sealed class DockLyrics : IDisposable {
     // A file replacement or missed sample is not a track change. Keep the last
     // valid sample only until its original heartbeat expires; never extend it.
     media=observed??(media!=null&&media.Fresh(now)?media:null);
-    string key=media==null?"":media.Key;
+    string key=media==null?"":QQMusicLyrics.CacheKey(media);
     if(key!=track){CancelLookup();track=key;lines.Clear();attempts=0;retry=DateTime.MinValue;string saved;if(cache.TryGetValue(key,out saved))lines=LyricsTimeline.Parse(saved);}
     if(lookup!=null&&lookup.IsCompleted){
      if(lookup.Status==TaskStatus.RanToCompletion&&requestTrack==track){
@@ -214,7 +282,7 @@ internal sealed class DockLyrics : IDisposable {
     if(media==null)Status("等待播放器提供歌曲信息");
     else if(!media.timeline)Status("播放器未提供可用进度");
     else if(media.status!="playing")Status("暂停时显示应用图标");
-    else if(lines.Count>0)Status("歌词显示中 · 鼠标靠近恢复应用");
+    else if(lines.Count>0)Status((QQMusicLyrics.IsSource(media.source)?"QQ 音乐原曲歌词显示中":"歌词显示中")+" · 鼠标靠近恢复应用");
     else if(!settings.online)Status("开启在线匹配，或使用已缓存歌词");
     else if(lookup==null&&now>=retry&&attempts<3){
      attempts++;requestTrack=track;requestState="未找到同步歌词";cancellation=new CancellationTokenSource();
@@ -272,6 +340,7 @@ internal sealed class DockLyrics : IDisposable {
  static string Text(Dictionary<string,object> d,string key){object v;return d!=null&&d.TryGetValue(key,out v)&&v!=null?Convert.ToString(v,CultureInfo.InvariantCulture):"";}
  async Task<LookupResult> Fetch(MediaSnapshot song,CancellationToken token){
   try{
+   if(QQMusicLyrics.IsSource(song.source)){var qq=await QQMusicLyrics.FetchAsync(http,song,token).ConfigureAwait(false);return new LookupResult{lrc=qq.lrc,status=qq.status};}
    // Exact local queue match avoids guessing a song ID or accessing account credentials.
    string id=await Task.Run(()=>NetEaseId(song),token).ConfigureAwait(false);
    if(id.Length>0){

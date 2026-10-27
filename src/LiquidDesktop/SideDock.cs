@@ -23,6 +23,7 @@ internal sealed class SideDock : Form {
  DateTime visibilityRead=DateTime.MinValue,visibilityStamp=DateTime.MinValue;string visibilityState="";
  DateTime widgetRead=DateTime.MinValue,dataRead=DateTime.MinValue,heartbeat=DateTime.MinValue;string lastWidgets="";bool automaticPause;
  public bool IsReady {get{return painted&&!closed;}}
+ public bool MusicOpen {get{return musicOpen&&Visible&&!closed;}}bool musicOpen;
  public Rectangle OcclusionBounds {get{return new Rectangle(Left+(int)(4*scale),Top+(int)(4*scale),(int)(88*scale),(int)(railHeight*scale));}}
  Rectangle screen;bool opened;string pendingMode;bool motionPaused;float networkShape,bridgeY=40,panelTop=4;object pendingPreferences;
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
@@ -104,6 +105,7 @@ internal sealed class SideDock : Form {
   try{
    if(text=="ready"){ready=true;layout="";lastWidgets="";widgetRead=DateTime.MinValue;theme=ReadTheme();PublishLayout();PublishVisibility(true);if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);Tick();if(pendingMode!=null){Send(new{type="open",mode=pendingMode});pendingMode=null;}}
    else if(text=="painted")painted=true;
+   else if(text.StartsWith("panel:"))musicOpen=text=="panel:music";
    else if(text.StartsWith("shape:")){var shape=json.Deserialize<float[]>(text.Substring(6));if(shape.Length<2)return;panelWidth=Math.Max(0,Math.Min(736,shape[0]));panelHeight=Math.Max(0,Math.Min(660,shape[1]));networkShape=shape.Length>2?Math.Max(0,Math.Min(1,shape[2])):0;bridgeY=shape.Length>3?Math.Max(12,Math.Min(620,shape[3])):40;panelTop=shape.Length>4?Math.Max(4,Math.Min(668-panelHeight,shape[4])):4;railHeight=shape.Length>5?Math.Max(0,Math.Min(668,shape[5])):668;bool wasOpened=opened;opened=panelWidth>1;if(opened&&!wasOpened){widgetRead=DateTime.MinValue;lastWidgets="";Tick();}ApplyRegion();}
    else if(text.StartsWith("status:")){File.WriteAllText(Diagnostic("side-render-state.json"),text.Substring(7));}
    else if(text.StartsWith("error:")){File.WriteAllText(Diagnostic("side-error.txt"),text.Substring(6));}

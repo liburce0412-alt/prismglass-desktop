@@ -20,7 +20,7 @@ internal sealed class DesktopPreferences {public long Revision=7;public string e
 internal sealed class WidgetBackend {public readonly List<string> actions=new List<string>();public int ensures;public object EnsureCompanionSources(){ensures++;return new{};}public void Action(string value){actions.Add(value);}}
 internal sealed class SharedDesktopData {public object widgets;public readonly WidgetBackend Widgets=new WidgetBackend();public object ReadWidgets(){return widgets;}public void Invalidate(){}}
 internal sealed class DockLyrics {public bool CompanionActive;public object snapshot=new{available=false};public object CompanionSnapshot(DateTime now){return snapshot;}}
-internal static class TopIsland {public static int calls;public static void Media(byte value){calls++;}}
+internal static class TopIsland {public static int calls;public static void Media(byte value,string root){calls++;}}
 internal static class DockBackend {public static int calls;public static string path,arguments,name;public static void OpenApplication(string target,string args,string title){calls++;path=target;arguments=args;name=title;}}
 
 internal static class TestCompanionBridge {

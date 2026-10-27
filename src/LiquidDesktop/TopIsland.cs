@@ -81,9 +81,13 @@ internal sealed class TopIsland : Form {
   case "tray":OpenTray();break;
   case "disk":Launch("explorer.exe","C:\\");break;
   case "calendar":File.WriteAllText(Path.Combine(root,"panel.request"),"calendar");break;
-  case "media-prev":Media(0xB1);break;case "media-toggle":Media(0xB3);break;case "media-next":Media(0xB0);break;
+  case "media-prev":Media(0xB1,root);break;case "media-toggle":Media(0xB3,root);break;case "media-next":Media(0xB0,root);break;
   case "focus-toggle":case "focus-reset":case "focus-25":case "focus-5":widgets.Action(id);if(shared!=null)shared.Invalidate();break;
   default:throw new ArgumentException("Unknown island action");
  }}
- internal static void Media(byte code){keybd_event(code,0,0,UIntPtr.Zero);keybd_event(code,0,2,UIntPtr.Zero);}
+ internal static void Media(byte code,string directory){
+  var now=DateTime.UtcNow;var session=MediaSnapshot.Read(directory,now);var request=session==null?null:session.ControlRequest(directory,code,now);
+  if(request!=null){using(var process=Process.Start(request)){};return;}
+  keybd_event(code,0,0,UIntPtr.Zero);keybd_event(code,0,2,UIntPtr.Zero);
+ }
 }

@@ -1,8 +1,7 @@
 # Windows PowerShell 5.1 only: WinRT projection is built into .NET Framework.
-param([Parameter(Mandatory=$true)][int]$OwnerPid,[Parameter(Mandatory=$true)][string]$DataRoot,[int]$MaxSamples=0)
+param([int]$OwnerPid,[string]$DataRoot,[int]$MaxSamples=0,[ValidateSet('','toggle','previous','next')][string]$Control='',[string]$Source64='',[double]$RequestedAt=0)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
-Add-Type -Path (Join-Path $PSScriptRoot 'MediaCoverReader.cs')
 $null=[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime]
 $null=[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties,Windows.Media.Control,ContentType=WindowsRuntime]
 $null=[Windows.Storage.Streams.IRandomAccessStreamWithContentType,Windows.Storage.Streams,ContentType=WindowsRuntime]
@@ -12,6 +11,24 @@ function Await-WinRT($Operation,[Type]$ResultType){
  if(!$task.Wait(2500)){throw 'Media request timed out'}
  $task.Result
 }
+if($Control){
+ $age=([datetime]::UtcNow-[datetime]'1970-01-01').TotalSeconds-$RequestedAt
+ if($Source64.Length -gt 4096 -or $age -lt -1 -or $age -gt 5){throw 'Media control request expired. Please retry.'}
+ $source=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Source64))
+ $manager=Await-WinRT ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+ $targets=@($manager.GetSessions() | Where-Object {$_.SourceAppUserModelId -ceq $source})
+ if($targets.Count -ne 1){throw 'The requested player session changed. Please retry.'}
+ $target=$targets[0];$capabilities=$target.GetPlaybackInfo().Controls
+ $operation=switch($Control){
+  'toggle' {if(!$capabilities.IsPlayPauseToggleEnabled){throw 'Player does not support play/pause.'};$target.TryTogglePlayPauseAsync()}
+  'previous' {if(!$capabilities.IsPreviousEnabled){throw 'Player does not support previous track.'};$target.TrySkipPreviousAsync()}
+  'next' {if(!$capabilities.IsNextEnabled){throw 'Player does not support next track.'};$target.TrySkipNextAsync()}
+ }
+ if(!(Await-WinRT $operation ([bool]))){throw 'Player did not accept the control request.'}
+ return
+}
+if($OwnerPid -le 0 -or [string]::IsNullOrWhiteSpace($DataRoot)){throw 'Media sampling requires an owner process and data directory.'}
+Add-Type -Path (Join-Path $PSScriptRoot 'MediaCoverReader.cs')
 function Save-MediaCover($Thumbnail){
  if($null -eq $Thumbnail){return ''}
  $random=$null;$target=$null;$pending=$null
@@ -73,7 +90,7 @@ try {
      $anchorAt=$now;$previousStatus=$status;$previousRate=$rate
     }
     $elapsed=if($status -eq 'playing'){($now-$anchorAt).TotalSeconds*$rate}else{0}
-    $snapshot=@{source=$source;title=$properties.Title;artist=$properties.Artist;album=$properties.AlbumTitle;status=$status;cover=$coverName;timeline=($duration -gt 0 -and $updated.Year -gt 2000);position=[Math]::Max(0,[Math]::Min($duration,$anchor+$elapsed));duration=$duration;rate=$rate;sampledAt=($now-$epoch).TotalSeconds}
+    $snapshot=@{source=$source;title=$properties.Title;artist=$properties.Artist;album=$properties.AlbumTitle;status=$status;cover=$coverName;smtc=$true;timeline=($duration -gt 0 -and $updated.Year -gt 2000);position=[Math]::Max(0,[Math]::Min($duration,$anchor+$elapsed));duration=$duration;rate=$rate;sampledAt=($now-$epoch).TotalSeconds}
     $lastSession=$source
    }else{$lastSession=$null;$properties=$null;$previousTimeline=''}
   }catch{$snapshot.status='unavailable';$lastSession=$null;$properties=$null}

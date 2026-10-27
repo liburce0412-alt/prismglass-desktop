@@ -2,7 +2,7 @@
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.9.0-beta.1"
+  #define AppVersion "0.9.0-beta.2"
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"
@@ -13,9 +13,9 @@
 
 [Setup]
 AppId=PrismGlass.Desktop
-AppName=PrismGlass Desktop
+AppName=PrismGlass 桌面
 AppVersion={#AppVersion}
-AppPublisher=PrismGlass contributors
+AppPublisher=PrismGlass 项目贡献者
 AppPublisherURL=https://github.com/liburce0412-alt/prismglass-desktop
 AppSupportURL=https://github.com/liburce0412-alt/prismglass-desktop/issues
 DefaultDirName={localappdata}\PrismGlass
@@ -37,19 +37,24 @@ RestartApplications=no
 LicenseFile={#BundleRoot}\LICENSE
 ChangesEnvironment=no
 
+[Languages]
+Name: chinesesimp; MessagesFile: "ChineseSimplified.isl"
+
 [Files]
 Source: "{#BundleRoot}\SetupIntegration.ps1"; Flags: dontcopy
 #include FileList
 
 [Tasks]
-Name: desktopicon; Description: "Create desktop shortcuts"; Flags: unchecked
+Name: desktopicon; Description: "创建桌面快捷方式"
 
 [Icons]
 Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
 Name: "{group}\退出 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Game"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
 Name: "{group}\卸载 PrismGlass"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
-Name: "{autodesktop}\退出 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Game"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
+Name: "{autodesktop}\PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
+
+[Run]
+Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty"; Description: "启动 PrismGlass"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent runhidden
 
 [Code]
 var
@@ -92,19 +97,21 @@ begin
     URL := 'https://developer.microsoft.com/microsoft-edge/webview2/';
   end;
   if not ShellExec('open', URL, '', '', SW_SHOWNORMAL, ewNoWait, Code) then
-    MsgBox('Could not open the official download page. Check your network and open: ' + URL, mbError, MB_OK);
+    SuppressibleMsgBox('无法打开官方下载页面。请检查网络，或手动打开：' + URL, mbError, MB_OK, IDOK);
 end;
 
 procedure InitializeWizard;
 var Button: TNewButton; I: Integer;
 begin
-  Dependencies := CreateInputFilePage(wpSelectDir, 'Required desktop components',
-    'PrismGlass uses Rainmeter, PowerShell 7, WebView2 and .NET Framework 4.8.',
-    'If a component is missing, use its official download button below, install it, then return here. No account or development tools are required. This installer does not change login startup or enable the iPad network service.');
-  Dependencies.Add('Rainmeter.exe:', 'Rainmeter executable|Rainmeter.exe', '.exe');
-  Dependencies.Add('PowerShell 7 pwsh.exe:', 'PowerShell executable|pwsh.exe', '.exe');
-  Dependencies.Values[0] := ExpandConstant('{pf64}\Rainmeter\Rainmeter.exe');
-  Dependencies.Values[1] := FileSearch('pwsh.exe', GetEnv('PATH'));
+  WizardForm.LicenseAcceptedRadio.Checked := True;
+  Dependencies := CreateInputFilePage(wpSelectDir, '检查必需组件',
+    'PrismGlass 需要 Rainmeter、PowerShell 7、WebView2 和 .NET Framework 4.8。',
+    '缺少组件时，请点击下方官方按钮下载安装，再返回此页继续。无需账号或开发工具。安装器不会设置开机启动或开启 iPad 网络服务。');
+  Dependencies.Add('Rainmeter 程序位置：', 'Rainmeter 程序|Rainmeter.exe', '.exe');
+  Dependencies.Add('PowerShell 7 程序位置：', 'PowerShell 程序|pwsh.exe', '.exe');
+  Dependencies.Values[0] := ExpandConstant('{param:RAINMETER|{pf64}\Rainmeter\Rainmeter.exe}');
+  Dependencies.Values[1] := ExpandConstant('{param:POWERSHELL|}');
+  if Dependencies.Values[1] = '' then Dependencies.Values[1] := FileSearch('pwsh.exe', GetEnv('PATH'));
   if Dependencies.Values[1] = '' then Dependencies.Values[1] := ExpandConstant('{pf64}\PowerShell\7\pwsh.exe');
   for I := 0 to 3 do begin
     Button := TNewButton.Create(WizardForm);
@@ -118,7 +125,7 @@ begin
   WebViewStatus.Parent := Dependencies.Surface;
   WebViewStatus.SetBounds(0, ScaleY(203), Dependencies.SurfaceWidth, ScaleY(42));
   WebViewStatus.WordWrap := True;
-  WebViewStatus.Caption := 'Click Next to check all components again. Downloads and installation are managed by the official component installers.';
+  WebViewStatus.Caption := '点击“下一步”会重新检查组件。组件下载与安装由其官方安装程序完成。';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -127,13 +134,13 @@ begin
   if CurPageID = Dependencies.ID then begin
     RainmeterPath := Dependencies.Values[0]; PowerShellPath := Dependencies.Values[1];
     if (not FileExists(RainmeterPath)) or (CompareText(ExtractFileName(RainmeterPath), 'Rainmeter.exe') <> 0) then begin
-      MsgBox('Install Rainmeter and select its Rainmeter.exe before continuing.', mbError, MB_OK); Result := False;
+      SuppressibleMsgBox('请安装 Rainmeter 并选择其 Rainmeter.exe，然后继续。', mbError, MB_OK, IDOK); Result := False;
     end else if (not FileExists(PowerShellPath)) or (CompareText(ExtractFileName(PowerShellPath), 'pwsh.exe') <> 0) then begin
-      MsgBox('Install PowerShell 7 and select pwsh.exe before continuing.', mbError, MB_OK); Result := False;
+      SuppressibleMsgBox('请安装 PowerShell 7 并选择其 pwsh.exe，然后继续。', mbError, MB_OK, IDOK); Result := False;
     end else if not HasFramework then begin
-      MsgBox('Install Microsoft .NET Framework 4.8, then click Next again.', mbError, MB_OK); Result := False;
+      SuppressibleMsgBox('请安装 Microsoft .NET Framework 4.8，然后重新点击“下一步”。', mbError, MB_OK, IDOK); Result := False;
     end else if not HasWebView then begin
-      MsgBox('Install Microsoft WebView2 Evergreen Runtime, then click Next again.', mbError, MB_OK); Result := False;
+      SuppressibleMsgBox('请安装 Microsoft WebView2 常青版运行时，然后重新点击“下一步”。', mbError, MB_OK, IDOK); Result := False;
     end;
   end;
 end;
@@ -151,14 +158,14 @@ begin
   Result := '';
   ExtractTemporaryFile('SetupIntegration.ps1');
   if not RunIntegration(ExpandConstant('{tmp}\SetupIntegration.ps1'), 'Preflight', ExpandConstant('{app}')) then
-    Result := 'Installation preflight failed. Exit PrismGlass first. This installer only upgrades installations created by this installer; existing manual installations or a PrismGlass skin owned by another folder are preserved. Check the selected component paths and folder, then retry.';
+    Result := '安装前检查未通过。请先退出 PrismGlass，再检查组件路径和安装目录。此安装器只能升级由它创建的安装；已有手工安装或归属其他目录的 PrismGlass 皮肤会保留，不会被覆盖。';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
     if not RunIntegration(ExpandConstant('{app}\SetupIntegration.ps1'), 'Configure', ExpandConstant('{app}')) then
-      RaiseException('Desktop integration could not finish. PrismGlass was not started. Retry this installer to repair; your user data has not been removed.');
+      RaiseException('桌面集成未完成，PrismGlass 尚未启动。请重新运行安装器修复；您的个人数据未被删除。');
     SetIniString('Runtime', 'PowerShell', PowerShellPath, ExpandConstant('{app}\installer-runtime.ini'));
   end;
 end;
@@ -168,14 +175,14 @@ begin
   PowerShellPath := GetIniString('Runtime', 'PowerShell', '', ExpandConstant('{app}\installer-runtime.ini'));
   if not FileExists(PowerShellPath) then PowerShellPath := FileSearch('pwsh.exe', GetEnv('PATH'));
   Result := FileExists(PowerShellPath);
-  if not Result then MsgBox('PowerShell 7 is required to safely stop PrismGlass and remove its Rainmeter skin. Reinstall PowerShell 7 and retry. No files have been removed.', mbError, MB_OK);
+  if not Result then SuppressibleMsgBox('安全退出 PrismGlass 并移除其 Rainmeter 皮肤需要 PowerShell 7。请重新安装 PowerShell 7 后重试。尚未删除任何文件。', mbError, MB_OK, IDOK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then begin
     if not RunIntegration(ExpandConstant('{app}\SetupIntegration.ps1'), 'Uninstall', ExpandConstant('{app}')) then
-      RaiseException('PrismGlass could not be safely stopped or its skin ownership did not match. Uninstall was stopped to retain files.');
-    MsgBox('Personal settings and companion setup records will be retained. Shared Rainmeter, PowerShell and WebView2 are not removed. If you configured the optional iPad network service, its certificate and network records are retained with ConfigureCompanion.ps1, RepairCompanion.ps1 and COMPANION.md for explicit follow-up; no network rules are changed by uninstall.', mbInformation, MB_OK);
+      RaiseException('无法安全退出 PrismGlass，或皮肤归属信息不匹配。已停止卸载并保留文件。');
+    SuppressibleMsgBox('个人设置和伴随屏配置记录将保留。共享的 Rainmeter、PowerShell 和 WebView2 不会卸载。如果您配置过 iPad 网络服务，其证书和网络记录也会保留；可使用留下的 ConfigureCompanion.ps1、RepairCompanion.ps1 和 COMPANION.md 继续管理。卸载不会更改网络规则。', mbInformation, MB_OK, IDOK);
   end;
 end;

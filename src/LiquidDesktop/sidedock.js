@@ -55,6 +55,7 @@ function applyVisibility(values,order=[]){
 window.addEventListener('prism-content-change',()=>requestAnimationFrame(fitContent));
 function choose(next,pin=false){
  clearTimeout(openTimer);openTimer=0;
+ post('panel:'+next);
  $('action-error')?.remove();
  clearTimeout(leaveTimer);const selected=document.querySelector(`[data-widget="${next}"]`);bridgeY=selected?selected.offsetTop+14:40;document.getElementById("bridge").style.top=bridgeY+"px";mode=next;pinned=pin;dock.dataset.mode=next;setPanelSize(({weather:610,music:570,focus:570,folders:405,system:450,tools:490,life:610,calendar:552})[next]||552);
  const open=next!=='closed';$('rail').style.opacity='1';const widget=document.querySelector(`[data-widget-page="${next}"]`);$('widget-page').hidden=!widget;document.querySelectorAll('[data-widget-page]').forEach(el=>el.hidden=el!==widget);document.querySelectorAll('[data-widget]').forEach(el=>{el.setAttribute('aria-expanded',String(el.dataset.widget===next));el.classList.toggle('selected',el.dataset.widget===next);});if(widget)text('widget-title',document.querySelector(`[data-widget="${next}"] .rail-label`).textContent);document.querySelector('.tabs').style.visibility=widget||next==='calendar'?'hidden':'visible';springs.width.target=open?(next==='both'?736:368):0;springs.opacity.target=open?1:0;springs.capsule.target=open?1:0;springs.network.target=next==='network'?1:0;springs.page.target=next==='network'?1:0;
