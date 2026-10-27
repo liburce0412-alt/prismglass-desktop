@@ -20,7 +20,7 @@ foreach($private in @('prismglass-install.json','install-record.json','installer
 foreach($public in @('LiquidDesktop/desktop.js','LiquidDesktop/PrismGlass.ico','LiquidDesktop/companion-web/manifest.webmanifest','LiquidDesktop/pins.json','LICENSE','VERSION')){Check (!(Test-PrivateBundlePath $public)) ("Package accepts product file: $public")}
 $fixture=Join-Path $repo ('artifacts/tests/setup-'+[guid]::NewGuid().ToString('N'))
 try{
- $install=Join-Path $fixture '安装 空格';$skinBase=Join-Path $fixture '自定义皮肤';$skin=Join-Path $skinBase 'PrismGlass';$rainmeter=Join-Path $fixture 'Rainmeter.exe';$settings=Join-Path $fixture 'Rainmeter.ini'
+ $install=Join-Path $fixture '安装 空格🙂';$skinBase=Join-Path $fixture '自定义皮肤';$skin=Join-Path $skinBase 'PrismGlass';$rainmeter=Join-Path $fixture 'Rainmeter.exe';$settings=Join-Path $fixture 'Rainmeter.ini'
  New-Item -ItemType Directory -Path $fixture -Force | Out-Null
  [IO.File]::WriteAllText($rainmeter,'inert fixture')
  [IO.File]::WriteAllText($settings,"[Rainmeter]`r`nSkinPath=$skinBase`r`n",[Text.Encoding]::Unicode)
@@ -110,10 +110,17 @@ try{
  $shell=New-Object -ComObject WScript.Shell
  $oldShortcut=Join-Path $desktop '开启 PrismGlass.lnk'
  $otherShortcut=Join-Path $desktop '退出 PrismGlass.lnk'
- # Create through WScript at an ASCII filename, then exercise real Unicode shortcut paths.
+ # WScript creates only an ASCII shell; Shell writes Unicode arguments before the filename is moved.
  $temporaryShortcut=Join-Path $fixture 'shortcut.lnk'
- $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $install 'DesktopMode.ps1')+'" -Mode Beauty';$link.Save();Move-Item -LiteralPath $temporaryShortcut -Destination $oldShortcut
- $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Arguments='-File "'+(Join-Path $foreign 'DesktopMode.ps1')+'" -Mode Game';$link.Save();Move-Item -LiteralPath $temporaryShortcut -Destination $otherShortcut
+ $unicodeShell=New-Object -ComObject Shell.Application
+ foreach($entry in @(@($oldShortcut,$install,'Beauty'),@($otherShortcut,$foreign,'Game'))){
+  $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=$pwsh;$link.Save()
+  $expected='-File "'+(Join-Path $entry[1] 'DesktopMode.ps1')+'" -Mode '+$entry[2]
+  $unicodeLink=$unicodeShell.Namespace($fixture).ParseName('shortcut.lnk').GetLink();$unicodeLink.Arguments=$expected;$unicodeLink.Save()
+  Move-Item -LiteralPath $temporaryShortcut -Destination $entry[0]
+  $readback=$unicodeShell.Namespace($desktop).ParseName((Split-Path $entry[0] -Leaf)).GetLink()
+  Check ($readback.Arguments -ceq $expected) 'Real shortcut preserves Unicode arguments under a Unicode filename'
+ }
  Remove-SetupLegacyDesktopShortcuts $install $desktop
  Check (!(Test-Path -LiteralPath $oldShortcut)) 'Upgrade removes the old desktop entry owned by this installation'
  Check (Test-Path -LiteralPath $otherShortcut) 'Upgrade preserves a same-name shortcut targeting another installation'
