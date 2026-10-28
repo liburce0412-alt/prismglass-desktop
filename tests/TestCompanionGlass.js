@@ -52,9 +52,11 @@ function fakeGL(options) {
 }
 function fixture(options = {}) {
   const gl = fakeGL(options), frames = new Map(), images = [], observers = [], resizeObservers = [];
-  let nextFrame = 1, time = 0, contextCalls = 0, contextOptions;
+  const measurements = { boundsReads: 0, styleReads: 0, hiddenWrites: 0, opticsWrites: 0 };
+  let nextFrame = 1, time = 0, contextCalls = 0, contextOptions, performanceCalls = 0;
   const viewport = { width: 1024, height: 768 };
   const body = Object.assign(target(), { dataset: { theme: 'Sky', reduced: options.reduced ? 'true' : 'false' }, firstChild: null, children: [], insertBefore(node) { this.children.unshift(node); node.parentNode = this; }, });
+  let optics; Object.defineProperty(body.dataset, 'optics', { get() { return optics; }, set(value) { measurements.opticsWrites++; optics = value; } });
   const main = Object.assign(target(), { id: 'main-content', bounds: rect(20, 80, 984, 490), getBoundingClientRect() { return this.bounds; }, contains(node) { return node.inMain; } });
   function region(id, bounds, inMain = true) {
     return { id, bounds, inMain, hidden: false, style: { visibility: 'visible', display: 'block', borderTopLeftRadius: '35px' }, getClientRects() { return this.hidden ? [] : [this.bounds]; }, getBoundingClientRect() { return this.bounds; } };
@@ -66,22 +68,23 @@ function fixture(options = {}) {
     body, hidden: !!options.hidden,
     createElement(name) {
       assert.equal(name, 'canvas');
-      canvas = Object.assign(target(), { hidden: false, width: 300, height: 150, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, getBoundingClientRect() { return this.hidden ? rect(0, 0, 0, 0) : rect(0, 0, viewport.width, viewport.height); }, getContext(kind, opts) { contextCalls++; contextOptions = opts; return options.noGL ? null : gl; }, remove() { body.children = body.children.filter(node => node !== this); } });
+      canvas = Object.assign(target(), { width: 300, height: 150, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, getBoundingClientRect() { measurements.boundsReads++; return this.hidden ? rect(0, 0, 0, 0) : rect(0, 0, viewport.width, viewport.height); }, getContext(kind, opts) { contextCalls++; contextOptions = opts; return options.noGL ? null : gl; }, remove() { body.children = body.children.filter(node => node !== this); } });
+      let hidden = false; Object.defineProperty(canvas, 'hidden', { get() { return hidden; }, set(value) { measurements.hiddenWrites++; hidden = value; } });
       return canvas;
     },
     querySelectorAll(selector) { assert.equal(selector, '[data-optical]'); return nodes; },
     getElementById(id) { return id === 'main-content' ? main : nodes.find(node => node.id === id); }
   });
   const media = Object.assign(target(), { matches: !!options.osReduced });
-  const window = Object.assign(target(), { location: new URL('https://companion.test:9443/' + (options.query === undefined ? '?opticalTest=grid' : options.query)), devicePixelRatio: 2, getComputedStyle(node) { return node.style; }, matchMedia() { return media; } });
+  const window = Object.assign(target(), { location: new URL('https://companion.test:9443/' + (options.query === undefined ? '?opticalTest=grid' : options.query)), devicePixelRatio: 2, getComputedStyle(node) { measurements.styleReads++; return node.style; }, matchMedia() { return media; } });
   class Image {
     constructor() { images.push(this); this.naturalWidth = 1448; this.naturalHeight = 1086; }
     set src(value) { this.url = value; }
   }
   class MutationObserver { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } }
   class ResizeObserver { constructor(fn) { this.fn = fn; this.nodes = []; resizeObservers.push(this); } observe(node) { this.nodes.push(node); } disconnect() { this.disconnected = true; } }
-  vm.runInNewContext(source, { window, document, URLSearchParams, URL, Image, MutationObserver, ResizeObserver, Float32Array, Uint8Array, performance: { now: () => time }, requestAnimationFrame(fn) { const id = nextFrame++; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); } }, { filename: 'companion-glass.js' });
-  return { gl, images, body, document, window, media, canvas, nodes, main, viewport, observers, resizeObservers, api: window.PrismGlassOptics, pending: () => frames.size, contextCalls: () => contextCalls, contextOptions: () => contextOptions, step(ms) { time = ms; const batch = [...frames.values()]; frames.clear(); batch.forEach(fn => fn(ms)); }, mutation() { observers[0].fn(); } };
+  vm.runInNewContext(source, { window, document, URLSearchParams, URL, Image, MutationObserver, ResizeObserver, Float32Array, Uint8Array, performance: { now: () => time + (performanceCalls++ % 2) * (options.frameCost || 0) }, requestAnimationFrame(fn) { const id = nextFrame++; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); } }, { filename: 'companion-glass.js' });
+  return { gl, images, body, document, window, media, canvas, nodes, main, viewport, observers, resizeObservers, measurements, api: window.PrismGlassOptics, pending: () => frames.size, contextCalls: () => contextCalls, contextOptions: () => contextOptions, step(ms) { time = ms; const batch = [...frames.values()]; frames.clear(); batch.forEach(fn => fn(ms)); }, mutation() { observers[0].fn(); } };
 }
 
 function test(name, fn) { fn(); groups++; console.log('PASS ' + name); }
@@ -130,6 +133,33 @@ test('image is same origin, loaded once, and GPU scene uploads only once per con
   assert.equal(f.images.length, 1); assert.equal(f.gl.allocations.filter(call => call.args.length === 6).length, 1);
   const originalSize = f.canvas.width; f.viewport.width = 768; f.viewport.height = 1024; f.window.emit('resize'); f.step(102);
   assert.notEqual(f.canvas.width, originalSize); assert.equal(f.gl.creates.filter(x => x.kind === 'Framebuffer').length, 1);
+});
+
+test('stable animation keeps every optical pass without repeated DOM writes or layout reads', () => {
+  const f = fixture(); f.api.setActive(true); f.step(0); const initial = { ...f.measurements }, allocations = f.gl.allocations.length;
+  for (let i = 1; i <= 60; i++) f.step(i * 34);
+  assert.deepEqual(f.measurements, initial, 'unchanged frames must reuse layout and ready/visible state');
+  assert.equal(f.api.inspect().frames, 61); assert.equal(f.api.inspect().scenePasses, 61); assert.equal(f.gl.draws.length, 305); assert.equal(f.gl.allocations.length, allocations);
+  assert.ok(f.gl.draws.at(-5).uniforms.time > f.gl.draws[0].uniforms.time, 'scene drift keeps advancing');
+  f.document.emit('pointerdown', { clientX: 730, clientY: 215 }); f.step(2074); assert.equal(f.gl.draws.at(-2).uniforms.press, 1, 'pointer response still updates without remeasuring layout'); assert.deepEqual(f.measurements, initial);
+});
+
+test('resize, scrolling, region resize and foreground restoration refresh cached geometry', () => {
+  const f = fixture(); f.api.setActive(true); f.step(0); const initialWidth = f.canvas.width;
+  f.viewport.width = 768; f.viewport.height = 1024; f.window.emit('resize'); f.step(34); assert.notEqual(f.canvas.width, initialWidth);
+  const music = f.nodes.find(node => node.id === 'music-card'), originalClip = f.gl.draws.at(-2).scissor;
+  music.bounds = rect(530, 170, 400, 290); f.main.emit('scroll'); f.step(68); assert.deepEqual(f.gl.draws.at(-2).uniforms.center, [730, 315]); assert.notDeepEqual(f.gl.draws.at(-2).scissor, originalClip);
+  music.bounds = rect(200, 170, 500, 290); f.resizeObservers[0].fn(); f.step(102); assert.deepEqual(f.gl.draws.at(-2).uniforms.halfSize, [250, 145]);
+  f.document.hidden = true; f.document.emit('visibilitychange'); f.viewport.width = 1200; f.viewport.height = 700;
+  const beforeResume = f.measurements.boundsReads; f.document.hidden = false; f.document.emit('visibilitychange'); f.step(1000);
+  assert.ok(f.measurements.boundsReads > beforeResume); assert.deepEqual(f.gl.draws.at(-5).uniforms.resolution, [1200, 700]); assert.equal(f.canvas.hidden, false); assert.equal(f.body.dataset.optics, 'ready'); assert.equal(f.contextCalls(), 1);
+});
+
+test('slow-frame quality reduction reallocates and remeasures once, then keeps cached geometry', () => {
+  const f = fixture({ frameCost: 31 }); f.api.setActive(true); f.step(0); const originalWidth = f.canvas.width, originalSceneWidth = f.api.inspect().sceneWidth, allocations = f.gl.allocations.length;
+  for (let i = 1; i <= 13; i++) f.step(i * 34);
+  assert.equal(f.canvas.width, Math.round(originalWidth * .75)); assert.ok(f.api.inspect().sceneWidth < originalSceneWidth); assert.equal(f.gl.allocations.length, allocations + 1); assert.equal(f.api.inspect().regions, 3);
+  const stable = { ...f.measurements }; f.step(476); f.step(510); assert.deepEqual(f.measurements, stable); assert.equal(f.gl.draws.length, 80); assert.equal(f.contextCalls(), 1);
 });
 
 test('hidden, reduced, pagehide and authentication stops preserve DOM and resume without extra context', () => {

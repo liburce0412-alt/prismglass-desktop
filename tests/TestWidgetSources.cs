@@ -45,6 +45,8 @@ internal static class TestWidgetSources{
   var music=Child(Map(backend.Read()),"music");Check((string)music["title"]=="QQ music fixture"&&(bool)music["playing"]&&((string)music["cover"]).StartsWith("https://prism-media.local/session-cover-0123456789abcdef.bin?v="),"QQ and other SMTC sessions supply the desktop card cover without the NetEase bridge");
   LyricBackgroundPalette.path="";music=Child(Map(backend.Read()),"music");Check((string)music["cover"]=="","missing session artwork does not retain another player's cover");
   MediaSnapshot.current=null;
+  backend.Action("weather");Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="weather","legacy weather action opens the shared city settings instead of an independently located forecast website");File.Delete(Path.Combine(root,"workspace.request"));
+  backend.Action("weather-settings");Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="weather","weather settings action uses the same selected location entry point");
   Console.WriteLine("Completed "+checks+" widget source checks.");
  }
 }

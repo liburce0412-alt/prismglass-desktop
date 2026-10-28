@@ -73,14 +73,16 @@ class TestCompanionServer {
  }
  static Task<CompanionReply> Background(Func<CompanionReply> action){return Task.Factory.StartNew(action,CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);}
  static void ConcurrencyChecks(string fixture){
+  string web=Path.Combine(fixture,"concurrency","companion-web");Directory.CreateDirectory(web);File.WriteAllText(Path.Combine(web,"index.html"),"<!doctype html><title>Fixture</title>");
   var assetEntered=new CountdownEvent(4);var coreEntered=new CountdownEvent(8);var releaseAssets=new ManualResetEventSlim(false);var releaseCore=new ManualResetEventSlim(false);bool blockCore=false;var running=new List<Task<CompanionReply>>();
   try{using(var server=new CompanionServer(Path.Combine(fixture,"concurrency"),(path,body,grant)=>{if(path.StartsWith("/api/assets/")){assetEntered.Signal();releaseAssets.Wait();return CompanionReply.Asset(new byte[]{1},"image/png");}if(blockCore){coreEntered.Signal();releaseCore.Wait();}return CompanionReply.Json(200,new{ok=true});},()=>false)){
    string cookie=Pair(server,new CompanionGrant{apps=true});for(int i=0;i<4;i++){int id=i;running.Add(Background(()=>Call(server,Asset(id),"GET",null,cookie,null)));}Check(assetEntered.Wait(3000),"four authorized image handlers occupy only the asset pool");
    Check(Retry(Call(server,Asset(5),"GET",null,cookie,null),"busy",1,1),"image burst returns short busy retry without reaching a fifth handler");Check(Call(server,"/api/state","GET",null,cookie,null).Status==200,"state request completes while every image slot is occupied");
    blockCore=true;for(int i=0;i<8;i++)running.Add(Background(()=>Call(server,"/api/state","GET",null,cookie,null)));Check(coreEntered.Wait(3000),"eight core handlers retain an independent bounded pool");Check(Retry(Call(server,"/api/state","GET",null,cookie,null),"busy",1,1),"core burst has its own short busy retry");
    var diagnostics=(Dictionary<string,object>)Status(server)["diagnostics"];Check(Convert.ToInt32(diagnostics["coreActive"])==8&&Convert.ToInt32(diagnostics["assetActive"])==4,"diagnostics report current independent in-flight counts");
+   var startup=Background(()=>Call(server,"/","GET",null,null,null));running.Add(startup);Check(!startup.Wait(100),"startup resource waits briefly instead of rejecting an HTTP/2 burst");
    releaseAssets.Set();for(int i=0;i<4;i++)Check(running[i].Wait(3000)&&running[i].Result.Status==200,"admitted asset request completes after release");
-   releaseCore.Set();Check(Task.WaitAll(running.ToArray(),3000),"all admitted core requests complete after release");blockCore=false;Check(Call(server,"/api/state","GET",null,cookie,null).Status==200,"concurrency rejection does not leak core slots");
+   releaseCore.Set();Check(Task.WaitAll(running.ToArray(),3000),"all admitted core requests complete after release");Check(startup.Result.Status==200,"queued startup resource loads when a request slot becomes available");blockCore=false;Check(Call(server,"/api/state","GET",null,cookie,null).Status==200,"concurrency rejection does not leak core slots");
    diagnostics=(Dictionary<string,object>)Status(server)["diagnostics"];Check(Convert.ToInt32(diagnostics["coreActive"])==0&&Convert.ToInt32(diagnostics["assetActive"])==0,"both request pools return to zero in flight");
   }}finally{releaseAssets.Set();releaseCore.Set();if(running.Count>0)Task.WaitAll(running.ToArray(),5000);assetEntered.Dispose();coreEntered.Dispose();releaseAssets.Dispose();releaseCore.Dispose();}
  }
@@ -98,14 +100,15 @@ class TestCompanionServer {
   Check(policy["img-src"]=="'self' blob:"&&policy["connect-src"]=="'self'"&&policy["script-src"]=="'self'"&&policy["base-uri"]=="'none'"&&policy["object-src"]=="'none'","CSP allows memory image blobs without widening scripts, network or base URLs");
  }
  static void GrantChecks(string fixture){
-  var defaults=new CompanionGrant();Check(!defaults.pointer&&!defaults.power,"new pointer and power grants default to false");string root=Path.Combine(fixture,"grant-update");bool locked=false;
+  var defaults=new CompanionGrant();Check(!defaults.pointer&&!defaults.power&&!defaults.keyboard,"new mouse, power and keyboard grants default to false");string root=Path.Combine(fixture,"grant-update");bool locked=false;
   using(var server=new CompanionServer(root,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>locked)){
    string cookie=Pair(server,new CompanionGrant{apps=true,tasks=true,notes=true,music=true,control=true});var device=Device(server);var previous=device.grants;string csrf=device.csrf,hash=device.tokenHash;DateTime expiry=device.expiresAt;var commands=device.commands;
    var initial=(Dictionary<string,object>)Data(Call(server,"/api/session","GET",null,cookie,null))["grants"];Check(!(bool)initial["pointer"]&&!(bool)initial["power"]&&(bool)initial["control"],"existing desktop control grant does not imply pointer or power");
-   server.UpdateGrant(device.id,new CompanionGrant{apps=true,tasks=true,notes=true,music=true,control=true,pointer=true,power=true});Check(!previous.Active&&!Object.ReferenceEquals(previous,device.grants)&&device.grants.Active&&device.grants.pointer&&device.grants.power,"explicit update replaces the trusted grant and invalidates its previous leases");
+   Check(!(bool)initial["keyboard"],"old control grants do not imply keyboard input");
+   server.UpdateGrant(device.id,new CompanionGrant{apps=true,tasks=true,notes=true,music=true,control=true,pointer=true,power=true,keyboard=true});Check(!previous.Active&&!Object.ReferenceEquals(previous,device.grants)&&device.grants.Active&&device.grants.pointer&&device.grants.power&&device.grants.keyboard,"explicit update replaces the trusted grant and invalidates its previous leases");
    Check(device.grants.apps&&device.grants.tasks&&device.grants.notes&&device.grants.music&&device.grants.control&&device.csrf==csrf&&device.tokenHash==hash&&device.expiresAt==expiry&&Object.ReferenceEquals(device.commands,commands),"permission update preserves selected existing grants and session identity, expiry and dedup history");
    var session=Data(Call(server,"/api/session","GET",null,cookie,null));Check((string)session["csrf"]==csrf&&(bool)((Dictionary<string,object>)session["grants"])["pointer"],"existing paired cookie sees saved permission updates without repairing pairing");
-   using(var restored=new CompanionServer(root,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>false))Check(Device(restored).grants.pointer&&Device(restored).grants.power&&Device(restored).grants.notes,"new explicit permissions persist in the protected fixture store");
+   using(var restored=new CompanionServer(root,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>false))Check(Device(restored).grants.pointer&&Device(restored).grants.power&&Device(restored).grants.keyboard&&Device(restored).grants.notes,"new explicit permissions persist in the protected fixture store");
    previous=device.grants;string file=Path.Combine(root,"runtime-data","companion","devices.bin");bool failed=false;using(var held=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.None))try{server.UpdateGrant(device.id,new CompanionGrant());}catch(IOException){failed=true;}
    Check(failed&&Object.ReferenceEquals(previous,device.grants)&&previous.Active&&previous.pointer&&previous.power,"permission persistence failure keeps the original active grants unchanged");Check(Call(server,"/api/session","GET",null,cookie,null).Status==200,"failed permission update leaves the existing session usable");
    locked=true;failed=false;try{server.UpdateGrant(device.id,new CompanionGrant());}catch(InvalidOperationException){failed=true;}Check(failed&&Object.ReferenceEquals(previous,device.grants),"locked desktop cannot change permissions");locked=false;server.Stop();server.UpdateGrant(device.id,new CompanionGrant{pointer=true});Check(!device.grants.Active&&!previous.Active,"editing a stopped device cannot reactivate its session");
@@ -180,7 +183,7 @@ class TestCompanionServer {
     server.Stop();Check(Call(server,"/api/session","GET",null,cookie,null).Status==401,"stop invalidates in-flight session grants");
    }
    HostnameChecks(fixture);PairingLifetimeChecks(fixture);RememberDeviceChecks(fixture);
-    BudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);
+    BudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);ScreenRouteChecks(fixture);
    Console.WriteLine("Passed "+checks+" companion transport checks.");
   }catch(Exception ex){Console.WriteLine("FAIL "+ex);Environment.ExitCode=1;}finally{release.Set();entered.Dispose();release.Dispose();Directory.Delete(fixture,true);}
  }
@@ -247,4 +250,21 @@ class TestCompanionServer {
    Check(Call(server,"/api/lyrics-style","POST",body,cookie,csrf).Status==200&&calls==1&&Call(server,"/api/lyrics-style","POST",body,cookie,csrf).Status==200&&calls==1,"style write requires both permissions and remains deduplicated");
   }
  }
+ static void ScreenRouteChecks(string fixture){
+  int calls=0;bool locked=false;using(var server=new CompanionServer(Path.Combine(fixture,"screen-security"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>locked)){
+   Check(Call(server,"/api/screen","GET",null,null,null).Status==401&&calls==0,"screen metadata requires pairing");
+   string cookie=Pair(server,new CompanionGrant{pointer=true});string csrf=Device(server).csrf;
+   Check(Call(server,"/api/screen","GET",null,cookie,null).Status==403&&calls==0,"pointer permission does not grant screen access");
+   server.UpdateGrant(Device(server).id,new CompanionGrant{screen=true});
+   Check(Call(server,"/api/screen","GET",null,cookie,null).Status==200&&calls==1,"explicit screen grant authorizes metadata");
+   var offer=new{monitor=0,quality="720",offer="v=0\r\n"};
+   Check(Call(server,"/api/screen/begin","POST",offer,cookie,null).Status==403&&calls==1,"screen signaling requires CSRF");
+   var cross=Request("/api/screen/begin","POST",offer,cookie,csrf);cross.Origin="https://evil.example";Check(server.Dispatch(cross,Origin).Status==403&&calls==1,"foreign origin cannot open a video stream");
+   Check(Call(server,"/api/screen/begin","GET",null,cookie,null).Status==403&&calls==1,"image-style GET cannot open capture");
+   Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==200&&calls==2&&Device(server).commands.Count==0,"ephemeral signaling does not cache video sessions in action history");
+   locked=true;Check(Call(server,"/api/screen/ping","POST",new{lease="test"},cookie,csrf).Status==423&&calls==2,"lock blocks stream heartbeats");locked=false;
+   server.Revoke(Device(server).id);Check(Call(server,"/api/screen","GET",null,cookie,null).Status==401&&calls==2,"revoked viewer cannot access streaming routes");
+  }
+ }
+
 }

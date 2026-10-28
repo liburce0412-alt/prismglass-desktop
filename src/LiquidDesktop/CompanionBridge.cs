@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -18,8 +18,9 @@ internal sealed class CompanionBridge {
  readonly Dictionary<string,string> remote=new Dictionary<string,string>(),allowed=new Dictionary<string,string>();
  readonly Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();string appsRevision=Guid.NewGuid().ToString("N"),appsSource="",coverId="",coverSource="";byte[] cover;
  public CompanionBridge(string path,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics dockLyrics,Func<Func<object>,object> dispatch,Func<bool> isLocked,CompanionContext foreground=null,CompanionControls remoteControls=null){root=path;library=apps;preferences=settings;shared=data;lyrics=dockLyrics;content=new CompanionContent(path);lyricsStyle=new LyricsStyleStore(path);onDesktop=dispatch;locked=isLocked;context=foreground??new CompanionContext();controls=remoteControls??new CompanionControls(isLocked);}
- public void StopControls(){controls.CancelAll();}
- public void Dispose(){controls.Dispose();}
+ CompanionStream screenStream;
+ public void StopControls(){controls.CancelAll();if(screenStream!=null)screenStream.Stop();}
+ public void Dispose(){controls.Dispose();if(screenStream!=null)screenStream.Dispose();}
  internal static string EntrySignature(AppLibraryEntry entry){return entry.kind+"\n"+entry.path+"\n"+entry.arguments+"\n"+entry.target;}
  public void Allow(Dictionary<string,string> entries){lock(gate){allowed.Clear();foreach(var p in entries)allowed[p.Key]=p.Value;appsSource="";remote.Clear();icons.Clear();PublishAssets();}}
  void PublishAssets(){assetSnapshot=new Assets{icons=new Dictionary<string,byte[]>(icons),coverId=coverId,cover=cover};}
@@ -31,6 +32,7 @@ internal sealed class CompanionBridge {
  bool Permitted(AppLibraryEntry entry){string signature;return entry!=null&&entry.kind!="action"&&allowed.TryGetValue(entry.id,out signature)&&signature==EntrySignature(entry);}
  object Desktop(CompanionGrant grant,Func<object> operation){return onDesktop(()=>{if(!grant.Active||locked())throw new UnauthorizedAccessException();return operation();});}
  public CompanionReply Handle(string path,Dictionary<string,object> request,CompanionGrant grant){
+  if(path=="/api/screen"||path.StartsWith("/api/screen/",StringComparison.Ordinal)){CompanionStream stream;lock(gate){if(screenStream==null)screenStream=new CompanionStream(root,locked);stream=screenStream;}return stream.Handle(path,request,grant);}
   if(path=="/api/pointer"||path.StartsWith("/api/pointer/",StringComparison.Ordinal))return controls.Pointer(path,request,grant);
   if(path.StartsWith("/api/power/",StringComparison.Ordinal))return controls.Power(path,request,grant);
   if(path.StartsWith("/api/assets/",StringComparison.Ordinal)){if(!grant.Active||locked())return CompanionReply.Json(423,new{error="locked"});string id=path.Substring(12);byte[] bytes;var snapshot=assetSnapshot;if(grant.apps&&snapshot.icons.TryGetValue(id,out bytes))return CompanionReply.Asset(bytes,"image/png");if(grant.music&&id==snapshot.coverId&&snapshot.cover!=null)return CompanionReply.Asset(snapshot.cover,"image/jpeg");return CompanionReply.Json(404,new{error="not_found"});}
@@ -67,7 +69,7 @@ internal sealed class CompanionBridge {
   var widgets=Map(shared.ReadWidgets());var settings=Map(Desktop(grant,()=>ReadContent(Settings)));
   object music=new{available=false};if(grant.music){var state=Map(Desktop(grant,()=>lyrics.CompanionSnapshot(DateTime.UtcNow)));state["cover"]=Cover(state);music=state;}
   var focus=Value(widgets,"focus") as Dictionary<string,object>;if(focus==null||!Object.Equals(Value(focus,"available"),true)||!FocusAvailable())focus=new Dictionary<string,object>{{"available",false},{"reason",focus==null||Text(focus,"reason")==""?"专注采集尚未运行，请在电脑端重新开启伴随屏。":Text(focus,"reason")}};
-  return new{protocol=1,serverTime=Now(),locked=false,theme=Value(settings,"theme"),settings=settings,lyricsSettings=grant.music?ReadContent(()=>lyricsStyle.Read(grant.control)):new{available=false},permissions=new{apps=grant.apps,tasks=grant.tasks,notes=grant.notes,music=grant.music,control=grant.control,pointer=grant.pointer,power=grant.power},controls=controls.Snapshot(grant),
+  return new{protocol=1,serverTime=Now(),locked=false,theme=Value(settings,"theme"),settings=settings,lyricsSettings=grant.music?ReadContent(()=>lyricsStyle.Read(grant.control)):new{available=false},permissions=new{apps=grant.apps,tasks=grant.tasks,notes=grant.notes,music=grant.music,control=grant.control,pointer=grant.pointer,power=grant.power,screen=grant.screen,keyboard=grant.keyboard},controls=controls.Snapshot(grant),
    weather=Section(widgets,"weather","widget-Weather.json",true,"temp","code","high","low","sunrise","sunset"),system=Section(widgets,"system","widget-System.json",false,"cpu","ram","down","up"),volume=Section(widgets,"volume","widget-Music.json",false,"value"),music=music,
    disk=Pick(Map(Value(widgets,"disk")),"available","free","total","usedPercent","updatedAt","reason"),context=grant.control?context.Snapshot():new{available=false},focus=focus,tasks=grant.tasks?ReadContent(content.ReadTasks):new{available=false},notes=grant.notes?ReadContent(content.ReadNotes):new{available=false}};
  }

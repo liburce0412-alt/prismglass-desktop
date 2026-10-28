@@ -11,7 +11,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 internal sealed class TopIsland : Form {
  readonly string root;readonly bool preview;readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly WidgetBackend widgets;readonly SharedDesktopData shared;readonly string instance;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly Timer timer=new Timer();
- bool ready,painted,closed,dragging,paused,outlineReady,readyNotified;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="";Rectangle screen;float scale=1;int ticks,regionUpdates;object pendingPreferences;
+ bool ready,painted,closed,dragging,paused,outlineReady,readyNotified,refreshingWallpaper;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="";Rectangle screen;float scale=1;int ticks,regionUpdates;object pendingPreferences;
  public event Action Ready;public event Action<string> Failed;
  public bool IsPainted {get{return painted;}}
  public Rectangle OcclusionBounds {get{int width=mode=="bar"?Width-8:(int)Math.Min(Width-8,272*scale);return new Rectangle(Left+(Width-width)/2,Top+12,width,(int)((mode=="bar"?42:48)*scale));}}
@@ -67,11 +67,17 @@ internal sealed class TopIsland : Form {
  void Tick(bool force){if(!ready||closed)return;if(force||ticks%(paused?15:2)==0){var data=shared==null?widgets.Read():shared.ReadWidgets();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}if(ticks++%15==0){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Diagnostic("island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}}
  void Script(string name,string args){string file=Path.GetFullPath(Path.Combine(root,"..",name));if(!File.Exists(file))throw new FileNotFoundException(name);Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+file+"\" "+args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
+ async void RefreshWallpaper(){
+  if(refreshingWallpaper)return;refreshingWallpaper=true;Send(new{type="wallpaper-refresh",busy=true,failed=false,message="正在更新玻璃…"});
+  try{await WallpaperRefresh.Run(root);Publish();Send(new{type="wallpaper-refresh",busy=false,failed=false,message="壁纸玻璃已更新"});}
+  catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"wallpaper-refresh-error.txt"),ex.ToString());}catch{}Send(new{type="wallpaper-refresh",busy=false,failed=true,message="更新失败，请重试或检查壁纸文件"});}
+  finally{refreshingWallpaper=false;}
+ }
  public async void OpenTray(){if(preview||closed)return;bool opened=await SystemTray.OpenAsync();Send(new{type="feedback",message=opened?"系统托盘已打开":"系统任务栏已显示，可点击隐藏图标箭头"});}
  void Action(string id){switch(id){
   case "theme":File.WriteAllText(Path.Combine(root,"theme.txt"),theme=="Astro"?"Sky":"Astro");break;
   case "motion":var motion=Path.Combine(root,"paused.txt");File.WriteAllText(motion,File.Exists(motion)&&File.ReadAllText(motion).Trim()=="true"?"false":"true");break;
-  case "refresh":Script("RefreshGlass.ps1","");break;
+  case "refresh":RefreshWallpaper();break;
   case "game":Script("DesktopMode.ps1","-Mode Game -ShowErrors");break;
   case "settings":File.WriteAllText(Path.Combine(root,"workspace.request"),"settings");break;
   case "apps":File.WriteAllText(Path.Combine(root,"workspace.request"),"apps");break;

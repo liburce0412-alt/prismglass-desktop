@@ -11,6 +11,8 @@
   var pointerSamples = [], pointerActions = [], pointerHeld = false, pointerDragWanted = false, pointerLastSent = 0, pointerLastTap = null, pointerSpeed = 1, pointerNatural = true, wheelContact = null;
   var powerTicket = null, powerBusy = false, powerError = '', controlsVersion = 0, resumePage = '', resumeScene = 'auto', volumeEditing = false;
   var powerNames = { lock: '锁定', sleep: '睡眠', restart: '重启', shutdown: '关机' };
+  var keyboardComposing = false, keyboardSending = false;
+  var remoteKeys = Array.prototype.slice.call(document.querySelectorAll('[data-remote-key]'));
   var actionButtons = Array.prototype.slice.call(document.querySelectorAll('[data-action]'));
   var privateViews = Array.prototype.slice.call(document.querySelectorAll('.private-view'));
 
@@ -21,7 +23,7 @@
   function requestId() { var bytes = new Uint8Array(16); crypto.getRandomValues(bytes); return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
   function safeAsset(url) { return typeof url === 'string' && /^\/api\/assets\/[a-zA-Z0-9_-]{1,96}$/.test(url) ? url : ''; }
   function number(value) { return typeof value === 'number' && isFinite(value) ? value : null; }
-  function percent(value) { return number(value) === null ? '—' : Math.round(value) + '%'; }
+  function percent(value) { return number(value) === null || value < 0 || value > 100 ? '—' : Math.round(value) + '%'; }
   function rate(value) { return number(value) === null ? '—' : value >= 1048576 ? (value / 1048576).toFixed(1) + ' MB/s' : Math.round(value / 1024) + ' KB/s'; }
   function time(value) { return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); }
   function duration(seconds) { seconds = Math.max(0, Math.floor(seconds)); return ('0' + Math.floor(seconds / 60)).slice(-2) + ':' + ('0' + seconds % 60).slice(-2); }
@@ -65,6 +67,7 @@
   }
 
   function clearPrivate(keepDraft, keepPairInput) {
+    $('screen-text').value = ''; keyboardComposing = false; keyboardSending = false; keyboardPanel(false);
     if (window.PrismCompanionScan) window.PrismCompanionScan.stop();
     volumeEditing = false;
     if (session && state) { resumePage = page; resumeScene = scene; }
@@ -81,6 +84,7 @@
         if ($('task-text').value) offlineDraft.task = $('task-text').value;
       }
     } else offlineDraft = null;
+    if (window.PrismCompanionScreen) window.PrismCompanionScreen.clear();
     epoch++; clearTimeout(pollTimer); clearTimeout(pairTimer); clearTimeout(searchTimer); requests.forEach(function (c) { c.abort(); }); requests = [];
     Object.keys(assets).forEach(function (key) { var asset = assets[key]; if (asset.controller) asset.controller.abort(); if (asset.blob) URL.revokeObjectURL(asset.blob); });
     assets = Object.create(null); wantedAssets = Object.create(null); assetActive = 0; appNodes = Object.create(null); appPage = 0; composing = false; rememberedContext = {}; touchKey = ''; scene = 'auto'; $('touch-scene').value = 'auto';
@@ -89,8 +93,9 @@
     setPresentation(false); $('presentation-toggle').disabled = true;
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = true; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
     privateViews.forEach(function (node) { node.hidden = true; });
-    ['task-list', 'quick-apps', 'app-grid', 'app-categories', 'app-folders', 'touch-actions', 'touch-extra'].forEach(function (id) { $(id).replaceChildren(); });
-    ['track-title', 'track-artist', 'lyric-current', 'lyric-next', 'music-source', 'weather-main', 'weather-detail', 'countdown', 'apps-status', 'focus-completed', 'home-context', 'touch-context', 'asset-status', 'data-status'].forEach(function (id) { text(id, ''); });
+    ['task-list', 'quick-apps', 'app-grid', 'app-categories', 'app-folders', 'touch-actions', 'touch-extra'].forEach(function (id) { $(id).textContent = ''; });
+    ['track-title', 'track-artist', 'lyric-current', 'lyric-next', 'music-source', 'weather-main', 'weather-detail', 'countdown', 'apps-status', 'focus-completed', 'home-context', 'touch-context', 'asset-status', 'data-status', 'home-task-count', 'home-task-first', 'home-task-second', 'home-countdown', 'music-elapsed', 'music-duration'].forEach(function (id) { text(id, ''); });
+    visible('music-timeline', false); $('music-progress').value = 0;
     ['cpu-value', 'memory-value', 'disk-value', 'network-value', 'volume-value'].forEach(function (id) { text(id, '—'); });
     ['task-text', 'note-text', 'app-search'].forEach(function (id) { $(id).value = ''; });
     if (keepPairInput !== true) $('pair-code').value = '';
@@ -137,7 +142,7 @@
       text('pair-hint', error.status === 423 ? '电脑解锁后会自动重新同步。' : error.status === 401 ? '请在电脑开启配对，输入新的配对码。' : '请检查电脑是否运行 PrismGlass，以及两台设备是否在同一局域网。');
       text('pair-status', error.status === 423 ? '电脑锁定期间不能读取个人内容或执行操作。' : '个人内容由电脑端选择共享。');
     }
-    feedback(mutation && error.network ? '连接中断，本次操作的结果未知。请在电脑核对后再操作；页面不会自动重试。' : error.message, true);
+    feedback(mutation && error.network ? '连接中断，本次操作的结果未知。请在电脑核对后再操作；页面不会自动重试。' : error.message, true, !mutation && (error.network || error.status === 401 || error.status === 423) ? 'connection' : '');
   }
   function schedule(delay) { clearTimeout(pollTimer); if (!document.hidden && !pairing && !versionChanged) pollTimer = setTimeout(refresh, Math.max(delay, cooldownUntil - Date.now())); }
   async function refresh() {
@@ -159,7 +164,7 @@
       privateViews.forEach(function (node) { node.hidden = false; }); renderState(); connection(cooling() ? '同步稍后恢复' : '已连接电脑', !cooling()); text('last-sync', '最近同步 ' + time(Date.now()));
       visible('pair-panel', false); $('logout').disabled = false; $('pair-code').value = '';
       if (permission('apps') && (!apps || state.appsRevision != null && String(state.appsRevision) !== String(apps.revision) || Date.now() - appsAt > 10000)) await loadApps();
-      if (!cooling() && feedbackKind === 'cooldown') feedback('', false);
+      if (!cooling() && (feedbackKind === 'cooldown' || feedbackKind === 'connection')) feedback('', false);
       syncAssets();
     } catch (error) { unavailable(error, false, anonymousProbe && error.status === 401); }
     finally { polling = false; schedule(session ? 2000 : 5000); }
@@ -192,12 +197,12 @@
     if (!m.available || !safeAsset(m.cover)) { $('cover').removeAttribute('src'); $('cover').hidden = true; $('cover').dataset.asset = ''; }
     var context = state.context || {}; text('home-context', context.available && context.appName ? '电脑正在使用 · ' + context.appName : '');
     var missing = []; if (!w.available) missing.push('天气：' + (w.reason || '电脑暂未提供数据')); if (permission('music') && !m.available) missing.push('音乐：' + (m.reason || '没有可用的媒体会话')); if (!(state.focus || {}).available) missing.push('专注：' + ((state.focus || {}).reason || '电脑暂未提供计时')); text('data-status', missing.join('；'));
-    renderTasks(); renderNotes(); renderFocus();
+    renderTasks(); renderNotes(); renderFocus(); renderMusicProgress();
     var settings = state.settings || {}; text('theme-toggle', '切换到 ' + (settings.theme === 'Astro' ? 'Sky' : 'Astro')); text('motion-toggle', settings.manualPaused ? '恢复电脑动效' : '暂停电脑动效');
     $('theme-toggle').disabled = !permission('control') || !!pending.settings || blocked(); $('motion-toggle').disabled = !permission('control') || !!pending.settings || blocked();
     $('apps-tab').disabled = !permission('apps'); $('all-apps').disabled = !permission('apps');
     actionButtons.forEach(function (button) { var action = button.dataset.action; button.disabled = blocked() || !permission(button.dataset.permission) || !!pending[action] || action.indexOf('focus.') === 0 && !(state.focus || {}).available || action.indexOf('volume.') === 0 && action !== 'volume.mute' && !v.available; });
-    if (!permission('apps')) { apps = null; $('quick-apps').replaceChildren(); text('quick-empty', '电脑尚未共享应用入口。'); visible('quick-empty', true); }
+    if (!permission('apps')) { apps = null; $('quick-apps').textContent = ''; text('quick-empty', '电脑尚未共享应用入口。'); visible('quick-empty', true); }
     visible('focus-card', !!(state.focus || {}).available); visible('quick-card', permission('apps')); renderTouchBar(); renderControls(); renderControlCenter(); renderWidgets(); syncAssets();
     if (window.PrismCompanionSettings) window.PrismCompanionSettings.render(state, session.grants || {}, pending, blocked());
     if (window.PrismGlassOptics) window.PrismGlassOptics.invalidate();
@@ -206,12 +211,16 @@
     var tasks = state.tasks || {}, allowed = permission('tasks') && tasks.available;
     $('task-text').maxLength = 120; $('task-text').disabled = !allowed; $('task-add').disabled = !allowed || !!pending.tasks || blocked();
     var items = allowed && Array.isArray(tasks.items) ? tasks.items : [];
+    var open = items.filter(function (item) { return !item.done; });
+    text('home-task-count', allowed ? open.length ? open.length + ' 件待办' : '暂时都完成了' : permission('tasks') ? '等待电脑同步' : '待办尚未共享');
+    text('home-task-first', allowed ? open.length ? open[0].text : '空一点时间，做喜欢的事。' : '在电脑开启共享后，在这里查看。');
+    text('home-task-second', open.length > 1 ? open[1].text : ''); visible('home-task-second', open.length > 1);
     var filtered = items.filter(function (item) { return taskFilter === 'all' || (taskFilter === 'done') === !!item.done; }), listKey = JSON.stringify([!!allowed, tasks.revision, taskFilter, filtered]);
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = !allowed; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
     text('task-count', allowed ? items.filter(function (t) { return !t.done; }).length + ' 项未完成' : permission('tasks') ? '暂不可用' : '未共享');
     text('tasks-empty', !allowed ? permission('tasks') ? tasks.reason || '电脑暂未提供待办，稍后会自动同步。' : '请在电脑允许此设备共享待办。' : taskFilter === 'open' ? '没有未完成的待办。' : taskFilter === 'done' ? '还没有已完成的待办。' : '手边的事情，都已记好。'); visible('tasks-empty', !filtered.length);
     if (listKey !== taskListKey) {
-      taskListKey = listKey; $('task-list').replaceChildren();
+      taskListKey = listKey; $('task-list').textContent = '';
       filtered.forEach(function (item) {
       var li = document.createElement('li'), toggle = document.createElement('button'), mark = document.createElement('span'), label = document.createElement('span'), remove = document.createElement('button');
       toggle.type = 'button'; toggle.className = 'task-toggle'; toggle.setAttribute('aria-pressed', String(!!item.done)); toggle.disabled = !!pending.tasks;
@@ -225,6 +234,16 @@
     Array.prototype.forEach.call($('task-list').children, function (row) { row.children[0].disabled = row.children[1].disabled = !!pending.tasks || blocked(); });
     visible('countdown', !!(allowed && tasks.countdownTitle && tasks.countdownDate));
     if (allowed && tasks.countdownTitle && tasks.countdownDate) { var date = new Date(tasks.countdownDate + 'T00:00:00'), today = new Date(Date.now() + clockOffset); today.setHours(0, 0, 0, 0); var days = Math.round((date - today) / 86400000); text('countdown', tasks.countdownTitle + ' · ' + (isFinite(days) ? days > 0 ? '还有 ' + days + ' 天' : days === 0 ? '就是今天' : '已过 ' + Math.abs(days) + ' 天' : tasks.countdownDate)); }
+    text('home-countdown', $('countdown').hidden ? '' : $('countdown').textContent); visible('home-countdown', !$('countdown').hidden);
+  }
+  function renderMusicProgress() {
+    var music = state && permission('music') ? state.music || {} : {};
+    var available = music.available && number(music.position) !== null && number(music.duration) !== null && music.duration > 0;
+    visible('music-timeline', !!available);
+    if (!available) { $('music-progress').value = 0; text('music-elapsed', ''); text('music-duration', ''); return; }
+    var elapsed = Math.min(music.duration, Math.max(0, music.position + (music.playing && number(state.serverTime) !== null ? Math.min(5, Math.max(0, (Date.now() + clockOffset - state.serverTime) / 1000)) : 0)));
+    $('music-progress').max = music.duration; $('music-progress').value = elapsed;
+    text('music-elapsed', duration(elapsed)); text('music-duration', duration(music.duration));
   }
   function renderNotes() {
     var notes = state.notes || {}, allowed = permission('notes') && notes.available;
@@ -263,7 +282,7 @@
   function updateAppButtons() { Object.keys(appNodes).forEach(function (id) { var button = appNodes[id].button; button.disabled = button.dataset.unavailable === 'true' || !!pending['app.open'] || !permission('apps') || versionChanged || blocked(); }); }
   function mountApps(id, items) {
     var container = $(id), buttons = items.map(appButton), same = container.children.length === buttons.length && buttons.every(function (button, index) { return container.children[index] === button; });
-    if (!same) { container.replaceChildren(); buttons.forEach(function (button) { container.appendChild(button); }); }
+    if (!same) { container.textContent = ''; buttons.forEach(function (button) { container.appendChild(button); }); }
   }
   function renderApps() {
     if (!apps || !permission('apps')) return;
@@ -277,9 +296,9 @@
     var query = $('app-search').value.trim().toLocaleLowerCase(), gridKey = JSON.stringify([categories, folders, category, folder]);
     if (gridKey !== appGridKey) {
       appGridKey = gridKey;
-      $('app-categories').replaceChildren(); $('app-categories').appendChild(filterButton('全部', !category, function () { category = ''; folder = ''; appPage = 0; renderApps(); }));
+      $('app-categories').textContent = ''; $('app-categories').appendChild(filterButton('全部', !category, function () { category = ''; folder = ''; appPage = 0; renderApps(); }));
       categories.forEach(function (c) { $('app-categories').appendChild(filterButton(c.name, category === c.id, function () { category = c.id; folder = ''; appPage = 0; renderApps(); })); });
-      $('app-folders').replaceChildren(); if (folder) $('app-folders').appendChild(filterButton('所有文件夹', false, function () { folder = ''; appPage = 0; renderApps(); }));
+      $('app-folders').textContent = ''; if (folder) $('app-folders').appendChild(filterButton('所有文件夹', false, function () { folder = ''; appPage = 0; renderApps(); }));
       folders.filter(function (f) { return !category || f.category === category; }).forEach(function (f) { $('app-folders').appendChild(filterButton('▱ ' + f.name, folder === f.id, function () { folder = folder === f.id ? '' : f.id; appPage = 0; renderApps(); })); });
     }
     var filtered = items.filter(function (item) { return (!category || item.category === category) && (!folder || item.folder === folder) && (!query || String(item.name).toLocaleLowerCase().indexOf(query) >= 0 || String(item.search || '').toLocaleLowerCase().indexOf(query) >= 0); });
@@ -296,6 +315,7 @@
     if ($('feedback').dataset.error !== 'true') feedback('', false);
     if (page === 'pointer' && next !== 'pointer') stopPointer(true);
     page = next; document.body.dataset.page = page;
+    if (window.PrismCompanionScreen) window.PrismCompanionScreen.render(session && session.grants, session && session.csrf, page === 'pointer');
     ['home', 'work', 'notes', 'apps', 'pointer', 'widgets', 'computer', 'appearance'].forEach(function (name) { visible(name + '-page', page === name); if (page === name) $(name + '-tab').setAttribute('aria-current', 'page'); else $(name + '-tab').removeAttribute('aria-current'); });
     if (page !== 'widgets' && window.PrismCompanionWidgets) window.PrismCompanionWidgets.pause();
     $('main-content').scrollTop = 0; if (apps) renderApps(); else syncAssets();
@@ -373,7 +393,7 @@
     text('touch-context', specific && !matched ? '请先在电脑切到' + names[selected] + '，此处不会切换电脑窗口。' : (scene === 'auto' ? '自动跟随 · ' : '已固定 · ') + (specific && context.appName ? context.appName : names[selected]) + (permission(specific || selected !== 'music' ? 'control' : 'music') ? '' : ' · 未授权控制'));
     var key = JSON.stringify([selected, specific ? context.id : '', definitions]);
     if (key !== touchKey) {
-      touchKey = key; $('touch-actions').replaceChildren(); $('touch-extra').replaceChildren(); visible('touch-extra', false); visible('touch-more', definitions.length > 4); $('touch-more').setAttribute('aria-expanded', 'false');
+      touchKey = key; $('touch-actions').textContent = ''; $('touch-extra').textContent = ''; visible('touch-extra', false); visible('touch-more', definitions.length > 4); $('touch-more').setAttribute('aria-expanded', 'false');
       definitions.forEach(function (definition, index) {
         var button = document.createElement('button'); button.type = 'button'; button.textContent = definition.label; button.dataset.touchId = definition.id; button.dataset.permission = definition.permission;
         if (['next-tab','palette','media.toggle','focus.toggle'].indexOf(definition.id) >= 0) button.className = 'touch-primary';
@@ -413,12 +433,23 @@
     else text(id, error.message || '操作未完成，请重新操作。');
   }
   function stopPointer(notify) {
+    keyboardSending = false;
     wheelContact = null; $('pointer-wheel').dataset.active = 'false'; $('pointer-wheel').setAttribute('aria-disabled', 'true'); $('wheel-up').disabled = $('wheel-down').disabled = true;
     var lease = pointerLease; ++pointerGeneration; pointerLease = ''; pointerSeq = 0; pointerExpires = 0; pointerBusy = false; fingers = {}; gesture = null; pointerDelta = null; pointerSamples = []; pointerActions = []; pointerHeld = false; pointerDragWanted = false; pointerLastTap = null; clearTimeout(pointerTimer); pointerTimer = 0;
     $('pointer-surface').dataset.active = 'false'; $('pointer-enable').disabled = !permission('pointer'); $('pointer-stop').disabled = $('pointer-left').disabled = $('pointer-right').disabled = true;
     text('pointer-status', permission('pointer') ? '触控已停止，点击启用后继续。' : '在电脑选中此设备，勾选“触控板”并更新权限后即可使用。');
     // Release also survives privacy clearing, pagehide and cancellation of ordinary requests.
     if (lease && session) releasePointerLease(lease, session.csrf);
+    renderKeyboard();
+  }
+  function keyboardPanel(open) { if (!open) $('screen-text').blur(); document.body.dataset.screenKeyboard = String(open); $('screen-keyboard').hidden = !open; $('screen-keyboard-toggle').setAttribute('aria-expanded', String(open)); text('screen-keyboard-toggle', open ? '收起键盘' : '键盘'); }
+  function renderKeyboard() {
+    var allowed = permission('keyboard'), ready = allowed && !!pointerLease && permission('pointer') && page === 'pointer' && !document.hidden;
+    $('screen-keyboard-toggle').disabled = !ready; $('screen-text').disabled = !ready; $('screen-text-send').disabled = !ready || keyboardSending;
+    remoteKeys.forEach(function (button) { button.disabled = !ready || keyboardSending; });
+    if (!allowed) { $('screen-text').value = ''; keyboardPanel(false); text('keyboard-status', '在电脑为此设备勾选“键盘输入”，文字与按键才会启用。'); }
+    else if (!ready) text('keyboard-status', '启用触控后，可展开键盘向电脑输入。');
+    else if (!keyboardSending && $('keyboard-status').textContent.indexOf('启用') >= 0) text('keyboard-status', '先选中电脑输入框，再输入文字或使用按键。');
   }
   function releasePointerLease(lease, csrf) {
     try { fetch('/api/pointer/end', { method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ leaseId: lease }) }).catch(function () {}); } catch (_) {}
@@ -434,15 +465,16 @@
       $('pointer-surface').dataset.active = 'true'; $('pointer-stop').disabled = $('pointer-left').disabled = $('pointer-right').disabled = false;
       text('pointer-status', '已启用 · 单指移动，双击按住拖拽，双指轻点右键、上下滚动。');
     } catch (error) { if (generation === pointerGeneration) { stopPointer(false); controlError(error, 'pointer-status'); } }
-    finally { if (generation === pointerGeneration) { pointerBusy = false; $('pointer-enable').disabled = !!pointerLease || !permission('pointer'); } }
+    finally { if (generation === pointerGeneration) { pointerBusy = false; $('pointer-enable').disabled = !!pointerLease || !permission('pointer'); renderKeyboard(); } }
   }
   async function sendPointer(kind, values) {
+    if ((kind === 'text' || kind === 'key') && !permission('keyboard')) return false;
     if (!pointerLease || pointerBusy || !permission('pointer') || document.hidden || page !== 'pointer') return;
     if (Date.now() + clockOffset >= pointerExpires) { stopPointer(false); return; }
     var generation = pointerGeneration, body = { leaseId: pointerLease, seq: ++pointerSeq, kind: kind }; Object.keys(values).forEach(function (key) { body[key] = values[key]; }); pointerBusy = true; pointerLastSent = Date.now();
     if (kind === 'drag' && values.phase === 'start') pointerHeld = true;
     if (kind === 'drag' && values.phase === 'end') pointerHeld = false;
-    try { var result = await request('/api/pointer', body, true); if (generation === pointerGeneration) pointerExpires = result.expiresAt; }
+    try { var result = await request('/api/pointer', body, true); if (generation === pointerGeneration) { pointerExpires = result.expiresAt; return true; } }
     catch (error) { if (generation === pointerGeneration) { stopPointer(false); controlError(error, 'pointer-status'); } }
     finally { if (generation === pointerGeneration) { pointerBusy = false; queuePointer(); } }
   }
@@ -510,6 +542,8 @@
     }
   }
   function renderControls() {
+    renderKeyboard();
+    if (window.PrismCompanionScreen) window.PrismCompanionScreen.render(session && session.grants, session && session.csrf, page === 'pointer');
     if (!permission('pointer') && pointerLease) stopPointer(false);
     $('pointer-enable').disabled = !permission('pointer') || !!pointerLease || pointerBusy;
     if (!pointerLease && !pointerBusy) text('pointer-status', permission('pointer') ? '点击启用触控板，再用手指移动电脑鼠标。' : '在电脑选中此设备，勾选“触控板”并更新权限后即可使用。');
@@ -584,6 +618,7 @@
   $('work-tab').onclick = function () { showPage('work'); }; $('notes-tab').onclick = function () { showPage('notes'); };
   ['pointer', 'widgets', 'computer'].forEach(function (name) { $(name + '-tab').onclick = function () { showPage(name); }; });
     if (window.PrismCompanionSettings) window.PrismCompanionSettings.init(write);
+  $('screen-open').onclick = function () { showPage('pointer'); };
   $('appearance-tab').onclick = function () { showPage('appearance'); };
   $('appearance-back').onclick = $('touch-computer').onclick = function () { showPage('computer'); };
   $('local-widgets').onclick = function () { showPage('widgets'); };
@@ -596,6 +631,22 @@
   window.addEventListener('companion-widget-immerse', function () { setPresentation(true); });
   $('home-focus').onclick = function () { showPage('work'); };
   $('pointer-enable').onclick = beginPointer; $('pointer-stop').onclick = function () { stopPointer(true); };
+  $('screen-keyboard-toggle').onclick = function () { if (!permission('keyboard') || !pointerLease) return; var open = $('screen-keyboard').hidden; keyboardPanel(open); if (open) $('screen-text').focus(); };
+  $('screen-text').oncompositionstart = function () { keyboardComposing = true; };
+  $('screen-text').oncompositionend = function () { keyboardComposing = false; };
+  $('screen-text').oninput = function () { if (pointerLease && Date.now() - pointerLastSent > 5000) pointerAction('move', { dx: 0, dy: 0 }); };
+  $('screen-text-form').onsubmit = async function (event) {
+    event.preventDefault(); if (keyboardComposing || keyboardSending || !permission('keyboard') || !pointerLease) return;
+    var input = $('screen-text'), value = input.value;
+    if (!value || value.length > 256 || /[\x00-\x1f\x7f-\x9f]/.test(value)) { text('keyboard-status', '请输入 1–256 个字符；回车请用下方按键。'); return; }
+    if (pointerBusy || pointerHeld || pointerDragWanted) { text('keyboard-status', '请先结束当前触控操作，再发送文字。'); return; }
+    var generation = pointerGeneration, authGeneration = epoch; keyboardSending = true; renderKeyboard(); text('keyboard-status', '正在发送文字…');
+    var sent = await sendPointer('text', { text: value });
+    if (generation !== pointerGeneration || authGeneration !== epoch) return;
+    keyboardSending = false; if (sent && input.value === value) input.value = ''; renderKeyboard();
+    if (permission('keyboard') && pointerLease) text('keyboard-status', sent ? '文字已发送。' : '未确认发送，请查看电脑后再操作。');
+  };
+  remoteKeys.forEach(function (button) { button.onclick = function () { if (!permission('keyboard') || keyboardSending) return; endPointerDrag(); pointerAction('key', { key: button.getAttribute('data-remote-key') }); }; });
   $('pointer-speed').oninput = function () { var value = Number(this.value); if (!isFinite(value)) value = 100; value = Math.max(50, Math.min(200, value)); pointerSpeed = value / 100; text('pointer-speed-value', value + '%'); pointerDelta = null; pointerSamples = []; };
   $('pointer-natural').checked = true; $('pointer-natural').onchange = function () { pointerNatural = this.checked; pointerDelta = null; pointerSamples = []; };
   ['left', 'right'].forEach(function (button) { $('pointer-' + button).onclick = function () { clickPointer(button); }; });
@@ -655,6 +706,9 @@
   $('touch-pin').onclick = function () { if (!session || !state) return; var next = (state.context || {}).scene; scene = scene !== 'auto' ? 'auto' : ['general', 'browser', 'editor', 'music', 'focus'].indexOf(next) >= 0 ? next : 'general'; $('touch-scene').value = scene; renderTouchBar(); };
   ['all', 'open', 'done'].forEach(function (filter) { $('task-filter-' + filter).onclick = function () { if (state) { taskFilter = filter; renderTasks(); } }; });
   $('presentation-toggle').onclick = function () { setPresentation(document.body.dataset.presentation !== 'true'); };
+  $('music-immerse').onclick = function () { $('presentation-mode').value = 'lyrics'; setPresentation(true); };
+  $('home-tasks').onclick = function () { showPage('work'); };
+  $('home-tools').onclick = function () { showPage('widgets'); };
   $('presentation-exit').onclick = function () { setPresentation(false); };
   $('presentation-mode').onchange = function () { setPresentation(document.body.dataset.presentation === 'true'); };
   document.querySelector('.brand').onclick = function (event) { event.preventDefault(); showPage('home'); };
@@ -720,10 +774,10 @@
     if (calendarDay !== day) {
       calendarDay = day; text('today-label', now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })); text('calendar-month', now.getFullYear() + ' / ' + ('0' + (now.getMonth() + 1)).slice(-2));
       var days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(), offset = (new Date(now.getFullYear(), now.getMonth(), 1).getDay() + 6) % 7;
-      $('calendar-days').replaceChildren();
+      $('calendar-days').textContent = '';
       for (var i = 0; i < offset + days; i++) { var cell = document.createElement('span'); if (i >= offset) { var date = i - offset + 1; cell.textContent = date; cell.setAttribute('role', 'listitem'); cell.setAttribute('aria-label', (now.getMonth() + 1) + '月' + date + '日'); if (date === now.getDate()) { cell.className = 'today'; cell.setAttribute('aria-current', 'date'); } else if (i % 7 >= 5) cell.className = 'weekend'; } else cell.setAttribute('aria-hidden', 'true'); $('calendar-days').appendChild(cell); }
     }
-    if (state) { renderFocus(); renderControls(); }
+    if (state) { renderFocus(); renderControls(); renderMusicProgress(); }
     if (pointerLease && Date.now() + clockOffset >= pointerExpires) stopPointer(true);
     renderWidgets();
   }

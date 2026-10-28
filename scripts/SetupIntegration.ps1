@@ -67,6 +67,18 @@ function Remove-SetupLegacyDesktopShortcuts([string]$InstallRoot,[string]$Deskto
   if([IO.Path]::GetFileName($shortcut.Path) -in @('pwsh.exe','powershell.exe') -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
  }
 }
+function Remove-SetupLoginStartup([string]$InstallRoot,[string]$StartupRoot) {
+ $path=Join-Path $StartupRoot 'PrismGlass.lnk'
+ if(!(Test-Path -LiteralPath $path -PathType Leaf)){return}
+ $shell=New-Object -ComObject Shell.Application
+ $folder=$shell.Namespace($StartupRoot)
+ if(!$folder){throw 'Cannot read the Windows startup folder.'}
+ $item=$folder.ParseName('PrismGlass.lnk')
+ if(!$item -or !$item.IsLink){return};$link=$item.GetLink()
+ $target=Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell/v1.0/powershell.exe'
+ $arguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+(Join-Path $InstallRoot 'DesktopMode.ps1')+'" -Mode Beauty'
+ if($link.Path -eq $target -and $link.Arguments -eq $arguments){Remove-Item -LiteralPath $path}
+}
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {
  $source=Join-Path $InstallRoot 'rainmeter/PrismGlass'
  if(!(Test-Path -LiteralPath (Join-Path $source 'Dock/Main.ini'))){throw 'The installation package is missing its Dock skin.'}
@@ -134,6 +146,7 @@ if($Mode -eq 'Uninstall'){
    if($relative -in $owner.files -or $generated){& $record.rainmeter '!DeactivateConfig' ('PrismGlass\'+$folder.Name)}
   }
  }
+ Remove-SetupLoginStartup $Root ([Environment]::GetFolderPath('Startup'))
  Remove-SetupSkin $Root $skin
  # User data and companion system configuration intentionally remain available.
  'PrismGlass skin removed. User data, companion setup records and shared runtimes were retained.'

@@ -67,7 +67,8 @@ internal sealed class WorkspaceWindow : Form {
  public void PublishRuntime(object value,bool motionPaused=false){runtime=value;runtimePaused=motionPaused;if(IsOpen){Send(new{type="runtime",value=runtime});PublishLayout();}}
  void Send(object message){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));}
  void PublishLayout(){var b=display.Bounds;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks});}
- void Publish(){PublishLayout();PublishSettings(true);PublishLyrics(true);PublishWeather();Send(new{type="page",page=page,section=requestedSection});requestedSection="";Send(new{type="apps",snapshot=library.GetSnapshot()});if(runtime!=null)Send(new{type="runtime",value=runtime});}
+ void Publish(){PublishLayout();PublishSettings(true);PublishLyrics(true);PublishWeather();PublishStartup();Send(new{type="page",page=page,section=requestedSection});requestedSection="";Send(new{type="apps",snapshot=library.GetSnapshot()});if(runtime!=null)Send(new{type="runtime",value=runtime});}
+ void PublishStartup(){Send(new{type="startup",value=LoginStartup.Read(root)});}
  void PublishWeather(){try{weatherObserved=WeatherLocation.ReadText(root);Send(new{type="weather-location",place=WeatherLocation.ParseSaved(weatherObserved),error=""});}catch(Exception ex){Send(new{type="weather-location",place=(WeatherPlace)null,error=ex.Message});}}
  void CancelWeatherSearch(){weatherRequest++;weatherResults.Clear();if(weatherSearch!=null){weatherSearch.Cancel();weatherSearch=null;}}
  async void SearchWeather(string query,int request){CancelWeatherSearch();weatherRequest=request;var operation=new CancellationTokenSource();weatherSearch=operation;try{var results=await WeatherLocation.Search(query,operation.Token);if(!closed&&IsOpen&&weatherSearch==operation){weatherResults=results;Send(new{type="weather-results",request=request,places=results,error=""});}}
@@ -93,6 +94,8 @@ internal sealed class WorkspaceWindow : Form {
    preferences.Apply((Dictionary<string,object>)patch,Convert.ToInt64(revision));PublishSettings(true);Send(new{type="saved",scope="settings",message="已保存"});var handler=SettingsChanged;if(handler!=null)handler();return;
   }
   if(action=="companion"){var handler=CompanionRequested;if(handler!=null)handler();return;}
+  if(action=="startup-read"){PublishStartup();return;}
+  if(action=="startup"){object value;if(!message.TryGetValue("enabled",out value)||!(value is bool))throw new ArgumentException("自启设置无效。");try{var state=LoginStartup.Set(root,(bool)value);Send(new{type="startup",value=state});if(state.error.Length>0)throw new IOException(state.error);Send(new{type="saved",message=state.enabled?"已开启：下次登录 Windows 时启动 PrismGlass":"已关闭开机自启"});}catch{PublishStartup();throw;}return;}
   if(action=="weather-cancel"){CancelWeatherSearch();return;}
   if(action=="weather-search"){int request;if(!Int32.TryParse(Value(message,"request"),out request)||request<1)throw new ArgumentException("城市搜索请求无效。");SearchWeather(Value(message,"query"),request);return;}
   if(action=="weather-select"){int request,index;if(!Int32.TryParse(Value(message,"request"),out request)||request!=weatherRequest||!Int32.TryParse(Value(message,"index"),out index)||index<0||index>=weatherResults.Count)throw new ArgumentException("城市列表已经更新，请重新搜索。");WeatherLocation.Save(root,weatherResults[index],weatherObserved);PublishWeather();Send(new{type="saved",message="城市已保存，天气正在更新"});return;}
@@ -124,6 +127,7 @@ internal sealed class WorkspaceWindow : Form {
  void SystemAction(string command){switch(command){
   case "settings":page="settings";Place();PublishLayout();Send(new{type="page",page=page});return;
   case "windows-settings":Process.Start(new ProcessStartInfo("ms-settings:"){UseShellExecute=true});break;
+  case "startup-settings":Process.Start(new ProcessStartInfo("ms-settings:startupapps"){UseShellExecute=true});break;
   case "cursor-settings":File.WriteAllText(Path.Combine(root,"shelf.request"),"manage");Hide();break;
   case "task-manager":Process.Start(new ProcessStartInfo("taskmgr.exe"){UseShellExecute=true});break;
   case "explorer":Process.Start(new ProcessStartInfo("explorer.exe"){UseShellExecute=true});break;

@@ -2,7 +2,7 @@
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.9.0-beta.3"
+  #define AppVersion "0.9.1"
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"

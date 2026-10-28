@@ -7,8 +7,8 @@ using System.Threading;
 // Session objects, rather than client-supplied device IDs, own every lease and confirmation.
 internal sealed class CompanionControls : IDisposable {
  internal sealed class MouseCommand {
-  public readonly string kind,button;public readonly int dx,dy,steps;
-  public MouseCommand(string type,int x=0,int y=0,int scroll=0,string click=""){kind=type;dx=x;dy=y;steps=scroll;button=click;}
+  public readonly string kind,button,text,key;public readonly int dx,dy,steps;
+  public MouseCommand(string type,int x=0,int y=0,int scroll=0,string click="",string inputText="",string keyName=""){kind=type;dx=x;dy=y;steps=scroll;button=click;text=inputText;key=keyName;}
  }
  sealed class Lease {public CompanionGrant owner;public string id;public int seq;public DateTime expires,dragExpires;public bool dragging;}
  sealed class Ticket {public string id,action;public DateTime expires;}
@@ -30,6 +30,11 @@ internal sealed class CompanionControls : IDisposable {
  static bool Integer(Dictionary<string,object> data,string key,out int result){result=0;object value;if(!data.TryGetValue(key,out value)||value==null||value is bool||value is string)return false;
   if(!(value is int||value is long||value is double||value is decimal))return false;try{double number=Convert.ToDouble(value,CultureInfo.InvariantCulture);if(Double.IsNaN(number)||Double.IsInfinity(number)||number!=Math.Truncate(number)||number<int.MinValue||number>int.MaxValue)return false;result=(int)number;return true;}catch{return false;}}
  static int Clamp(int value,int limit){return Math.Max(-limit,Math.Min(limit,value));}
+ internal static bool ValidText(string value){
+  if(String.IsNullOrEmpty(value)||value.Length>256)return false;
+  for(int i=0;i<value.Length;i++){if(Char.IsControl(value[i]))return false;if(Char.IsHighSurrogate(value[i])){if(++i>=value.Length||!Char.IsLowSurrogate(value[i]))return false;}else if(Char.IsLowSurrogate(value[i]))return false;}return true;
+ }
+ static ushort[] KeyCodes(string key){switch(key){case "escape":return new ushort[]{27};case "tab":return new ushort[]{9};case "enter":return new ushort[]{13};case "backspace":return new ushort[]{8};case "left":return new ushort[]{37};case "up":return new ushort[]{38};case "right":return new ushort[]{39};case "down":return new ushort[]{40};case "select-all":return new ushort[]{17,65};case "copy":return new ushort[]{17,67};case "paste":return new ushort[]{17,86};case "undo":return new ushort[]{17,90};case "switch-window":return new ushort[]{18,9};default:return null;}}
  static CompanionReply Error(int status,string code,string message){return CompanionReply.Json(status,new{error=code,message=message});}
  static CompanionReply Invalid(){return Error(400,"invalid_request","控制参数无效，请重新操作。");}
  static object JobState(Job value){return value==null?(object)new{status="idle",action="",id="",executeAt=0L,message=""}:new{status=value.status,action=value.action,id=value.id,executeAt=Stamp(value.executeAt),message=value.message};}
@@ -68,11 +73,16 @@ internal sealed class CompanionControls : IDisposable {
   else if(kind=="scroll"){if(!Keys(request,"leaseId","seq","kind","steps")||!Integer(request,"steps",out steps))return Invalid();command=new MouseCommand(kind,scroll:Clamp(steps,5));}
   else if(kind=="click"){string button=Text(request,"button");if(!Keys(request,"leaseId","seq","kind","button")||(button!="left"&&button!="right"))return Invalid();command=new MouseCommand(kind,click:button);}
   else if(kind=="drag"){phase=Text(request,"phase");if(!Keys(request,"leaseId","seq","kind","phase")||(phase!="start"&&phase!="hold"&&phase!="end"))return Invalid();}
+  else if(kind=="text"||kind=="key"){
+   if(!grant.keyboard)return Error(403,"keyboard_denied","请在电脑为此设备允许键盘输入。");
+   string value=Text(request,kind=="text"?"text":"key");if(!Keys(request,"leaseId","seq","kind",kind=="text"?"text":"key")||(kind=="text"?!ValidText(value):KeyCodes(value)==null))return Invalid();
+   command=new MouseCommand(kind,inputText:kind=="text"?value:"",keyName:kind=="key"?value:"");
+  }
   else return Invalid();
   if(sequence<=lease.seq)return CompanionReply.Json(200,new{ignored=true,seq=lease.seq,expiresAt=Stamp(lease.expires)});
   // Record before injection: even a partial native failure must never replay a click.
-  lease.seq=sequence;if(!Allowed(grant,true)){EndLease();return Error(403,"forbidden","鼠标权限已撤销或电脑已锁定。");}
-  if(lease.dragging&&(kind=="click"||kind=="scroll"))return Error(409,"drag_active","请先松开拖拽，再点击或滚动。");
+  lease.seq=sequence;if(!Allowed(grant,true)||((kind=="text"||kind=="key")&&!grant.keyboard)){EndLease();return Error(403,"forbidden","输入权限已撤销或电脑已锁定。");}
+  if(lease.dragging&&(kind=="click"||kind=="scroll"||kind=="text"||kind=="key"))return Error(409,"drag_active","请先松开拖拽，再使用其他输入。");
   if(kind=="drag"){
    if(phase=="end"){ReleaseDrag(lease);if(releasePending){EndLease();return Error(503,"input_blocked","Windows 暂未接受鼠标松开，请在电脑端查看后重试。");}}
    else if(phase=="hold"&&!lease.dragging)return Error(409,"drag_expired","拖拽已结束，请松开手指后重新操作。");
@@ -121,9 +131,16 @@ internal sealed class CompanionControls : IDisposable {
  public void Dispose(){lock(gate){if(disposed)return;disposed=true;EndLease();tickets.Clear();CancelPending("伴随屏已关闭，操作已取消。");}if(timer!=null)timer.Dispose();}
 
  [StructLayout(LayoutKind.Sequential)]internal struct Input {public uint type;public InputUnion data;}
- [StructLayout(LayoutKind.Explicit)]internal struct InputUnion {[FieldOffset(0)]public MouseInput mouse;}
+ [StructLayout(LayoutKind.Explicit)]internal struct InputUnion {[FieldOffset(0)]public MouseInput mouse;[FieldOffset(0)]public KeyboardInput keyboard;}
  [StructLayout(LayoutKind.Sequential)]internal struct MouseInput {public int x,y;public uint data,flags,time;public UIntPtr extra;}
+ [StructLayout(LayoutKind.Sequential)]internal struct KeyboardInput {public ushort key,scan;public uint flags,time;public UIntPtr extra;}
  internal static Input[] Inputs(MouseCommand command){
+  if(command.kind=="text"){
+   if(!ValidText(command.text))throw new ArgumentException("Invalid input text");var textInputs=new List<Input>();foreach(char c in command.text){textInputs.Add(Key(0,c,4));textInputs.Add(Key(0,c,6));}return textInputs.ToArray();
+  }
+  if(command.kind=="key"){
+   var codes=KeyCodes(command.key);if(codes==null)throw new ArgumentException("Unsupported key");var keyInputs=new List<Input>();foreach(ushort code in codes)keyInputs.Add(Key(code,0,code>=37&&code<=40?1u:0u));for(int i=codes.Length-1;i>=0;i--)keyInputs.Add(Key(codes[i],0,(codes[i]>=37&&codes[i]<=40?1u:0u)|2u));return keyInputs.ToArray();
+  }
   if(command.kind=="move")return new[]{Mouse(command.dx,command.dy,0,0x0001)};
   if(command.kind=="scroll")return new[]{Mouse(0,0,unchecked((uint)(command.steps*120)),0x0800)};
   if(command.kind=="down")return new[]{Mouse(0,0,0,0x0002)};
@@ -132,8 +149,10 @@ internal sealed class CompanionControls : IDisposable {
   return command.button=="left"?new[]{Mouse(0,0,0,0x0002),Mouse(0,0,0,0x0004)}:new[]{Mouse(0,0,0,0x0008),Mouse(0,0,0,0x0010)};
  }
  static Input Mouse(int x,int y,uint data,uint flags){return new Input{type=0,data=new InputUnion{mouse=new MouseInput{x=x,y=y,data=data,flags=flags}}};}
+ static Input Key(ushort key,ushort scan,uint flags){return new Input{type=1,data=new InputUnion{keyboard=new KeyboardInput{key=key,scan=scan,flags=flags}}};}
  static bool SendMouse(MouseCommand command){var inputs=Inputs(command);uint sent=SendInput((uint)inputs.Length,inputs,Marshal.SizeOf(typeof(Input)));if(sent==inputs.Length)return true;
-  if(command.kind=="click"&&sent>0)SendInput(1,new[]{inputs[1]},Marshal.SizeOf(typeof(Input)));return false;
+  if(command.kind=="click"&&sent>0)SendInput(1,new[]{inputs[1]},Marshal.SizeOf(typeof(Input)));
+  if((command.kind=="key"||command.kind=="text")&&sent>0){var release=new List<Input>();for(int i=(int)sent-1;i>=0;i--)if((inputs[i].data.keyboard.flags&2)==0){var input=inputs[i];input.data.keyboard.flags|=2;release.Add(input);}if(release.Count>0)SendInput((uint)release.Count,release.ToArray(),Marshal.SizeOf(typeof(Input)));}return false;
  }
  static string NativeFailure(string action){int code=Marshal.GetLastWin32Error();return code==5||code==1300||code==1314?"当前用户没有执行此电源操作的权限，请在电脑端操作。":"Windows 未接受“"+(action=="lock"?"锁定":action=="sleep"?"睡眠":action=="restart"?"重启":"关机")+"”（错误 "+code.ToString(CultureInfo.InvariantCulture)+"），请在电脑端检查。";}
  static string SendPower(string action){

@@ -61,6 +61,32 @@ test('stopwatch stops on visibility and bfcache lifecycle and requires explicit 
   f.hide(); assert.equal(f.intervals.size, 0); f.advance(180000); f.show(); f.api.render(sample, { tasks: true }); assert.equal(f.all['widget-stopwatch'].textContent, '00:05'); assert.equal(f.all['widget-stopwatch-toggle'].textContent, '继续');
   f.click('widget-stopwatch-toggle'); f.advance(2500); assert.equal(f.all['widget-stopwatch'].textContent, '00:08'); f.window.emit('pagehide'); assert.equal(f.intervals.size, 0); f.advance(20000); f.window.emit('pageshow'); assert.equal(f.all['widget-stopwatch'].textContent, '00:08'); f.click('widget-stopwatch-reset'); assert.equal(f.all['widget-stopwatch'].textContent, '00:00');
 });
+test('timer presets reuse duration validation and stay disabled while counting down', () => {
+  const f = fixture();
+  for (const minutes of [1, 3, 5, 15]) {
+    f.click('widget-timer-preset-' + minutes); assert.equal(f.all['widget-timer-minutes'].value, String(minutes)); assert.equal(f.all['widget-timer'].textContent, String(minutes).padStart(2, '0') + ':00'); assert.equal(f.stored().duration, minutes * 60);
+    for (const other of [1, 3, 5, 15]) assert.equal(f.all['widget-timer-preset-' + other].attributes['aria-pressed'], String(other === minutes));
+  }
+  f.click('widget-timer-toggle'); f.advance(1000);
+  for (const minutes of [1, 3, 5, 15]) { assert.equal(f.all['widget-timer-preset-' + minutes].disabled, true); f.all['widget-timer-preset-' + minutes].onclick(); }
+  assert.equal(f.all['widget-timer'].textContent, '14:59'); assert.equal(f.all['widget-timer-minutes'].value, '15');
+  f.click('widget-timer-toggle'); f.click('widget-timer-preset-1'); assert.equal(f.all['widget-timer'].textContent, '01:00');
+  for (const invalid of ['0', '181', '1.5', '']) { f.all['widget-timer-minutes'].value = invalid; f.all['widget-timer-minutes'].onchange(); assert.equal(f.all['widget-timer-minutes'].value, '1'); }
+  f.all['widget-timer-minutes'].value = '180'; f.all['widget-timer-minutes'].onchange(); assert.equal(f.all['widget-timer'].textContent, '3:00:00'); assert.equal(f.stored().duration, 10800);
+});
+test('stopwatch retains only five lap durations across pauses and hides, never persists them, and resets numbering', () => {
+  const f = fixture(), laps = f.all['widget-stopwatch-laps']; assert.equal(laps.hidden, true); assert.equal(f.all['widget-stopwatch-lap'].disabled, true);
+  f.click('widget-stopwatch-toggle'); f.advance(2500); f.click('widget-stopwatch-lap'); assert.equal(laps.children[0].children[1].textContent, '00:02');
+  f.click('widget-stopwatch-toggle'); assert.equal(f.all['widget-stopwatch-lap'].disabled, true); f.all['widget-stopwatch-lap'].onclick(); assert.equal(laps.children.length, 1); f.advance(20000);
+  f.click('widget-stopwatch-toggle'); f.advance(3500); f.click('widget-stopwatch-lap'); assert.equal(laps.children[1].children[1].textContent, '00:03'); assert.equal(f.all['widget-stopwatch'].textContent, '00:06');
+  f.hide(); f.advance(30000); f.show(); assert.equal(laps.children.length, 2); assert.equal(f.all['widget-stopwatch-lap'].disabled, true);
+  f.click('widget-stopwatch-toggle');
+  for (let lap = 3; lap <= 7; lap++) { f.advance(lap * 1000); f.click('widget-stopwatch-lap'); }
+  assert.deepEqual(laps.children.map(row => row.children.map(node => node.textContent)), [3, 4, 5, 6, 7].map(lap => ['第 ' + lap + ' 圈', '00:0' + lap]));
+  f.window.emit('pagehide'); f.advance(60000); f.window.emit('pageshow'); assert.equal(laps.children.length, 5); assert.equal(f.all['widget-stopwatch-lap'].disabled, true); assert.equal(f.storageWrites.length, 0);
+  f.click('widget-timer-preset-5'); const saved = f.stored(); assert.deepEqual(Object.keys(saved).sort(), ['duration', 'order', 'version', 'visible', 'zone']); assert.equal(fixture({ saved }).all['widget-stopwatch-laps'].children.length, 0);
+  f.click('widget-stopwatch-reset'); assert.equal(laps.children.length, 0); assert.equal(laps.hidden, true); f.click('widget-stopwatch-toggle'); f.advance(1000); f.click('widget-stopwatch-lap'); assert.equal(laps.children[0].textContent, '第 1 圈00:01');
+});
 test('hide and reorder retain card nodes and persist only non-private preferences', () => {
   const f = fixture(); f.api.render(sample, { tasks: true }); const timerCard = f.all['widget-card-timer'];
   f.click('widget-timer-toggle'); f.advance(2000); const checkbox = f.preference('timer'); checkbox.checked = false; checkbox.onchange(); assert.equal(timerCard.hidden, true); f.advance(20000); checkbox.checked = true; checkbox.onchange(); assert.equal(f.all['widget-timer'].textContent, '02:58'); assert.equal(f.all['widget-timer-toggle'].textContent, '继续');

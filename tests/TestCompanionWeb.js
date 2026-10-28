@@ -13,16 +13,19 @@ class Node {
   constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; this.dataset = {}; this.hidden = false; this.disabled = false; this.value = ''; this.checked = false; this._text = ''; this.style = { setProperty() {} }; this.parentNode = null; }
   set value(value) { this._value = String(value); this.selectionStart = this.selectionEnd = this._value.length; }
   get value() { return this._value; }
-  set textContent(value) { this._text = String(value); this.children = []; }
+  set textContent(value) { this.textWrites = (this.textWrites || 0) + 1; this._text = String(value); this.children.forEach(child => { child.parentNode = null; }); this.children = []; }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
   set src(value) { this.setAttribute('src', value); }
   setAttribute(name, value) { this.attributes[name] = String(value); if (name === 'class') this.className = value; }
   getAttribute(name) { return this.attributes[name] == null ? null : this.attributes[name]; }
   removeAttribute(name) { delete this.attributes[name]; }
   setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+  focus() { this.focused = true; }
+  blur() { this.focused = false; }
   appendChild(child) { child.remove(); child.parentNode = this; this.children.push(child); return child; }
   remove() { if (this.parentNode) { this.parentNode.children = this.parentNode.children.filter(child => child !== this); this.parentNode = null; } }
-  replaceChildren(...children) { this._text = ''; this.children.forEach(child => { child.parentNode = null; }); this.children = []; children.forEach(child => this.appendChild(child)); this.replacements = (this.replacements || 0) + 1; }
+  // iPadOS 14.2 silently ignores replaceChildren() without arguments.
+  replaceChildren(...children) { if (!children.length) return; this._text = ''; this.children = []; children.forEach(child => this.appendChild(child)); }
 }
 const clone = value => JSON.parse(JSON.stringify(value));
 const sample = {
@@ -48,7 +51,7 @@ function fixture(options = {}) {
     for (const attr of attrs.matchAll(/([\w-]+)="([^"]*)"/g)) { node.setAttribute(attr[1], attr[2]); if (attr[1] === 'id') ids[attr[2]] = node; if (attr[1].startsWith('data-')) node.dataset[attr[1].slice(5)] = attr[2]; if (attr[1] === 'value') node.value = attr[2]; }
     node.hidden = /\bhidden\b/.test(attrs); node.disabled = /\bdisabled\b/.test(attrs); all.push(node);
   }
-  const document = { hidden: false, body: new Node('body'), getElementById: id => { assert(ids[id], 'Unknown DOM id: ' + id); return ids[id]; }, createElement: tag => { if (tag === 'img') imagesCreated++; return new Node(tag); }, querySelectorAll: selector => selector === '[data-action]' ? all.filter(n => n.dataset.action) : selector === '.private-view' ? all.filter(n => (n.className || '').split(' ').includes('private-view')) : [], querySelector: selector => selector === '.brand' ? all.find(n => n.className === 'brand') : null, addEventListener: (name, fn) => { listeners[name] = fn; } };
+  const document = { hidden: false, body: new Node('body'), getElementById: id => { assert(ids[id], 'Unknown DOM id: ' + id); return ids[id]; }, createElement: tag => { if (tag === 'img') imagesCreated++; return new Node(tag); }, querySelectorAll: selector => selector === '[data-remote-key]' ? all.filter(n => n.getAttribute('data-remote-key')) : selector === '[data-action]' ? all.filter(n => n.dataset.action) : selector === '.private-view' ? all.filter(n => (n.className || '').split(' ').includes('private-view')) : [], querySelector: selector => selector === '.brand' ? all.find(n => n.className === 'brand') : null, addEventListener: (name, fn) => { listeners[name] = fn; } };
   const current = clone(options.state || sample), applications = clone(options.apps || appSample);
   const fetch = async (url, request) => {
     const call = { url, request, body: request.body ? JSON.parse(request.body) : null }; calls.push(call);
@@ -69,6 +72,20 @@ const click = (f, action) => (f.all.find(n => n.dataset.action === action) || f.
 const submit = node => node.onsubmit({ preventDefault() {} });
 
 (async function () {
+  const brief = fixture({ state: { ...sample, music: { ...sample.music, position: 63, duration: 245, playing: false } } }); await brief.boot();
+  assert.equal(brief.ids['home-task-first'].textContent, '<script>私人任务</script>');
+  assert.equal(brief.ids['home-task-count'].textContent, '1 件待办');
+  assert.match(brief.ids['home-countdown'].textContent, /一个事件/);
+  assert.equal(brief.ids['music-elapsed'].textContent, '01:03'); assert.equal(brief.ids['music-duration'].textContent, '04:05');
+  assert.equal(brief.ids['music-progress'].value, '63');
+  brief.ids['home-tasks'].onclick(); assert.equal(brief.document.body.dataset.page, 'work');
+  brief.ids['home-tools'].onclick(); assert.equal(brief.document.body.dataset.page, 'widgets');
+  brief.ids['music-immerse'].onclick(); assert.equal(brief.document.body.dataset.presentationMode, 'lyrics');
+  await brief.hide();
+  ['home-task-first', 'home-task-second', 'home-task-count', 'home-countdown', 'music-elapsed', 'music-duration'].forEach(id => assert.equal(brief.ids[id].textContent, '', 'Private summary must clear: ' + id));
+  assert.equal(brief.ids['home-brief'].hidden, true); assert.equal(brief.ids['music-timeline'].hidden, true);
+  const noBrief = fixture({ grants: { ...grants, tasks: false, music: false } }); await noBrief.boot();
+  assert.equal(noBrief.ids['home-task-count'].textContent, '待办尚未共享'); assert.equal(noBrief.ids['home-countdown'].textContent, ''); assert.equal(noBrief.ids['music-timeline'].hidden, true);
   const restoring = fixture(); assert.equal(restoring.ids['pair-form'].hidden, true, 'Startup restores the remembered session before offering pairing'); await restoring.boot();
   assert.equal(restoring.ids['pair-panel'].hidden, true); await restoring.hide(); assert.equal(restoring.ids['pair-form'].hidden, true); await restoring.show(); assert.equal(restoring.ids['pair-panel'].hidden, true);
   assert.equal(restoring.calls.filter(c => c.url === '/api/pair').length, 0, 'Reopening an authenticated home-screen window never submits another pairing request');
@@ -149,12 +166,13 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   await scanned.hide(); await scanned.show(); assert.equal(scanned.ids['pair-code'].value, '', 'Hidden page clears scanned code without restoring fragment');
   for (const hash of ['#pair=12345', '#pair=1234567', '#pair=123456&extra=1', '#pair=%31%32%33%34%35%36']) { const invalid = fixture({ hash }); assert.equal(invalid.ids['pair-code'].value, ''); assert.equal(invalid.location.hash, ''); }
   const queryCode = fixture({ search: '?pair=123456' }); assert.equal(queryCode.ids['pair-code'].value, '', 'Query parameters never prefill pairing');
+  const invalidVolume = fixture(); invalidVolume.current.volume.data.value = -1; await invalidVolume.boot(); assert.equal(invalidVolume.ids['volume-value'].textContent, '—', 'Unavailable volume sentinel never appears as a negative percentage');
   const stableTasks = fixture(); await stableTasks.boot(); const originalTaskRow = stableTasks.ids['task-list'].children[0];
   stableTasks.ids['note-text'].setSelectionRange(1, 2); stableTasks.ids['task-text'].value = '正在输入的任务'; await stableTasks.timers(2000);
   assert.equal(stableTasks.ids['task-list'].children[0], originalTaskRow, 'Unchanged polling preserves task buttons and keyboard focus');
   assert.equal(stableTasks.ids['note-text'].selectionStart, 1); assert.equal(stableTasks.ids['note-text'].selectionEnd, 2, 'Unchanged note polling preserves caret and selection');
-  const stableReplacements = stableTasks.ids['task-list'].replacements; stableTasks.current.system.data.cpu = 80; stableTasks.current.tasks.countdownTitle = '倒计时已改名'; await stableTasks.timers(2000); await stableTasks.timers(2000);
-  assert.equal(stableTasks.ids['task-list'].replacements, stableReplacements); assert.equal(stableTasks.ids['task-list'].children.length, 1, 'Repeated polling never appends duplicate tasks');
+  const stableReplacements = stableTasks.ids['task-list'].textWrites; stableTasks.current.system.data.cpu = 80; stableTasks.current.tasks.countdownTitle = '倒计时已改名'; await stableTasks.timers(2000); await stableTasks.timers(2000);
+  assert.equal(stableTasks.ids['task-list'].textWrites, stableReplacements); assert.equal(stableTasks.ids['task-list'].children.length, 1, 'Repeated polling never appends duplicate tasks');
   assert.equal(stableTasks.ids['task-text'].value, '正在输入的任务'); assert.match(stableTasks.ids.countdown.textContent, /倒计时已改名/, 'Countdown updates independently of task row rebuilding');
   stableTasks.current.tasks.revision = 'tasks-2'; stableTasks.current.tasks.items[0].done = true; stableTasks.current.tasks.items.push({ id: 'task2', text: '电脑新增的任务', done: false }); await stableTasks.timers(2000);
   assert.equal(stableTasks.ids['task-list'].children.length, 2); assert.equal(stableTasks.ids['task-list'].children[0].children[0].getAttribute('aria-pressed'), 'true');
@@ -164,7 +182,7 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   assert.equal(stableTasks.calls.find(call => call.url === '/api/tasks').body.expectedRevision, 'tasks-2', 'Preserved controls still send the latest task revision');
   releaseTask(response({ ok: true })); await flush(); assert.equal(updatedTaskRow.children[0].disabled, false); assert.equal(stableTasks.ids['task-list'].children[0], updatedTaskRow);
   stableTasks.handler(undefined); stableTasks.current.tasks.items = []; stableTasks.current.tasks.revision = 'tasks-3'; await stableTasks.timers(0); assert.equal(stableTasks.ids['task-list'].children.length, 0); assert.equal(stableTasks.ids['tasks-empty'].hidden, false);
-  const emptyReplacements = stableTasks.ids['task-list'].replacements; await stableTasks.timers(2000); assert.equal(stableTasks.ids['task-list'].replacements, emptyReplacements, 'Unchanged empty lists do not rebuild');
+  const emptyReplacements = stableTasks.ids['task-list'].textWrites; await stableTasks.timers(2000); assert.equal(stableTasks.ids['task-list'].textWrites, emptyReplacements, 'Unchanged empty lists do not rebuild');
   stableTasks.current.tasks.available = false; stableTasks.current.notes.available = false; await stableTasks.timers(2000); assert.equal(stableTasks.ids['task-count'].textContent, '暂不可用'); assert.equal(stableTasks.ids['note-text'].value, '');
   stableTasks.current.tasks.available = true; stableTasks.current.tasks.items = clone(sample.tasks.items); stableTasks.current.notes.available = true; await stableTasks.timers(2000); assert.equal(stableTasks.ids['task-list'].children.length, 1); assert.equal(stableTasks.ids['note-text'].value, sample.notes.text);
   await stableTasks.hide(); await stableTasks.show(); assert.equal(stableTasks.ids['task-list'].children.length, 1, 'Privacy purge resets the render cache before restoring the same snapshot');
@@ -235,6 +253,10 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   const timeout = fixture(); await timeout.boot(); timeout.handler(call => call.url === '/api/action' ? new Promise((resolve, reject) => call.request.signal.addEventListener('abort', () => reject(new Error('aborted')))) : undefined);
   click(timeout, 'media.next'); await flush(); await timeout.timers(6500); assert.equal(timeout.ids['track-title'].textContent, ''); assert.match(timeout.ids.feedback.textContent, /结果未知/);
   timeout.handler(undefined); await timeout.timers(0); assert.equal(timeout.calls.filter(c => c.url === '/api/action').length, 1, 'Reconnect never replays action');
+  assert.match(timeout.ids.feedback.textContent, /结果未知/, 'Successful reconnect must retain uncertain write results');
+  const readTimeout = fixture(); await readTimeout.boot(); readTimeout.handler(call => call.url === '/api/state' ? new Promise((resolve,reject) => call.request.signal.addEventListener('abort',()=>reject(new Error('aborted')))) : undefined);
+  await readTimeout.timers(2000); await readTimeout.timers(6500); assert.match(readTimeout.ids.feedback.textContent,/连接超时/);
+  readTimeout.handler(undefined); await readTimeout.timers(5000); assert.equal(readTimeout.ids['connection-status'].textContent,'已连接电脑'); assert.equal(readTimeout.ids.feedback.hidden,true,'Confirmed recovery removes obsolete connection errors');
 
   const draft = fixture(); await draft.boot();
   const noteDraft = '  未确认保存的笔记\n第二行  ', taskDraft = '  尚未提交的待办  ';
@@ -380,6 +402,28 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   for (let i = 1; i <= 3529; i++) { elapsed += 17; pointerBudget.ids['pointer-surface'].onpointermove(pointerEvent(i, 0)); await pointerPulse(pointerBudget); }
   pointerBudget.ids['pointer-stop'].onclick(); await flush(); assert(pointerPackets(pointerBudget).length >= 3500 && wireTimes.length <= 5400, 'Continuous healthy coalescing approaches 59 Hz within the bounded pointer transport budget');
   for (let end = 0, start = 0; end < wireTimes.length; end++) { while (wireTimes[end] - wireTimes[start] >= 1000) start++; assert(end - start + 1 <= 61 && end - start + 1 <= 90, 'Near-sixty-Hz sampling includes begin/end with room in the ninety-request device budget'); }
+  const keyboard = fixture({ state: { ...sample, permissions: { ...grants, pointer: true, keyboard: true } } });
+  const keyboardHandler = c => c.url === '/api/pointer/begin' ? response({ leaseId: 'keyboard', expiresAt: Date.now() + 120000 }) : c.url === '/api/pointer' ? response({ expiresAt: Date.now() + 120000 }) : undefined;
+  keyboard.handler(keyboardHandler); await keyboard.boot(); keyboard.ids['pointer-tab'].onclick();
+  assert.equal(keyboard.ids['screen-keyboard-toggle'].disabled, true, 'Keyboard also requires an active control lease');
+  await keyboard.ids['pointer-enable'].onclick(); keyboard.ids['screen-keyboard-toggle'].onclick();
+  const input = keyboard.ids['screen-text'], form = keyboard.ids['screen-text-form'];
+  assert.equal(input.focused, true, 'The user tap synchronously focuses a native text input');
+  input.oncompositionstart(); input.value = 'nihao'; await submit(form); assert.equal(pointerPackets(keyboard).length, 0, 'IME candidate composition never sends unfinished text');
+  input.value = '你好 iPad 😀'; input.oncompositionend(); await submit(form);
+  assert.deepEqual(pointerPackets(keyboard).map(p => [p.kind, p.text]), [['text', '你好 iPad 😀']]); assert.equal(input.value, ''); assert.equal(input.disabled, false);
+  let finishText; keyboard.handler(c => c.url === '/api/pointer' && c.body.kind === 'text' ? new Promise(resolve => { finishText = resolve; }) : keyboardHandler(c));
+  input.value = '第一句'; const sending = submit(form); await flush(); assert.equal(input.disabled, false, 'Sending must not dismiss the native keyboard');
+  await submit(form); assert.equal(pointerPackets(keyboard).length, 2, 'Double submit cannot duplicate input');
+  input.value = '下一句'; finishText(response({ expiresAt: Date.now() + 120000 })); await sending; assert.equal(input.value, '下一句', 'A late success preserves newly drafted text');
+  keyboard.handler(keyboardHandler); const remoteBackspace = keyboard.all.find(n => n.getAttribute('data-remote-key') === 'backspace'); remoteBackspace.onclick(); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).at(-1).key, 'backspace');
+  keyboard.ids['screen-keyboard-toggle'].onclick(); assert.equal(input.focused, false, 'Closing the panel releases the native keyboard focus');
+  keyboard.handler(c => c.url === '/api/pointer' ? response({ message: 'fixture rejected' }, 503) : keyboardHandler(c)); await submit(form); assert.equal(input.value, '下一句', 'An uncertain send retains the draft for inspection and never retries');
+  assert.equal(keyboard.ids['screen-keyboard-toggle'].disabled, true); const rejectedCount = pointerPackets(keyboard).length; await keyboard.timers(2000); assert.equal(pointerPackets(keyboard).length, rejectedCount);
+  keyboard.handler(keyboardHandler); await keyboard.ids['pointer-enable'].onclick(); keyboard.ids['screen-keyboard-toggle'].onclick(); input.value = '私人草稿';
+  keyboard.current.permissions.keyboard = false; await keyboard.timers(2000); assert.equal(input.value, ''); assert.equal(keyboard.ids['screen-keyboard'].hidden, true); assert.equal(remoteBackspace.disabled, true);
+  remoteBackspace.onclick(); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).length, rejectedCount, 'Revocation blocks queued keyboard actions');
+
   const power = fixture({ state: { ...sample, permissions: { ...grants, power: true }, controls: { power: { status: 'idle' } } } });
   power.handler(c => c.url === '/api/power/prepare' ? response({ ticketId: 'confirm-ticket', expiresAt: Date.now() + 30000 }) : c.url === '/api/power/commit' ? response({ status: 'pending', action: 'shutdown', id: 'job', executeAt: Date.now() + 15000 }, 202) : c.url === '/api/power/cancel' ? response({ status: 'cancelled', id: 'job', message: '已取消' }) : undefined);
   await power.boot(); power.ids['computer-tab'].onclick(); await power.ids['power-shutdown'].onclick(); await flush();

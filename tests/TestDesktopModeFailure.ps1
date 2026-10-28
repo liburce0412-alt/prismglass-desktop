@@ -19,6 +19,11 @@ try{
  Check (![IO.File]::ReadAllText($log).Contains('Rainmeter 无法启动')) 'Only the latest failure is retained, without an unbounded log'
  $message=Write-DesktopModeFailure (Join-Path $fixture 'missing') 'Game' 'original failure' $false
  Check ($message.Contains('original failure') -and $message.Contains('无法保存')) 'An unavailable log directory never hides the original failure'
+ $icons=$ast.Find({param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Extent.Text -eq '[DesktopIcons]::SetVisible(!$readiness.primaryEnabled)'},$true)
+ Check ($null -ne $icons) 'Beauty icon visibility follows primary desktop enablement, not a saved ordinary-desktop state'
+ $visibleExpression=$icons.Arguments[0].Extent.Text
+ foreach($enabled in @($true,$false)){$readiness=@{primaryEnabled=$enabled};Check ((Invoke-Expression $visibleExpression) -eq !$enabled) ('Primary enabled='+$enabled+' gives the correct native icon visibility')}
+ Check ([IO.File]::ReadAllText($source).Contains("-ArgumentList '--renderer'")) 'Internal renderer launch cannot recurse through the public startup entry'
  Check ($ast.ParamBlock.Parameters.Name.VariablePath.UserPath -contains 'ShowErrors') 'Interactive launches can opt into visible errors; background callers stay nonmodal'
 }finally{
  $boundary=[IO.Path]::GetFullPath((Join-Path $repo 'artifacts/tests'))+[IO.Path]::DirectorySeparatorChar

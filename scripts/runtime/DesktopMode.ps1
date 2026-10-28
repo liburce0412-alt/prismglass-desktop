@@ -133,11 +133,6 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  $releaseDeadline=(Get-Date).AddSeconds(15)
  while([DesktopTaskbar]::RestoreKeysHeld() -and (Get-Date) -lt $releaseDeadline){Start-Sleep -Milliseconds 100}
  if([DesktopTaskbar]::RestoreKeysHeld()){throw '请松开 Ctrl、Alt、Shift 和 F12 快捷键后，再次打开 PrismGlass。'}
- $iconsVisible=$false
- if(Test-Path $statePath){
-  $saved=Get-Content $statePath -Encoding UTF8 -Raw|ConvertFrom-Json
-  if($null -ne $saved.DesktopIconsVisible){$iconsVisible=[bool]$saved.DesktopIconsVisible}
- }
  $rainmeterWasRunning=[bool](Get-Process Rainmeter -ErrorAction SilentlyContinue)
  if(!(Test-Path -LiteralPath $rainmeter -PathType Leaf)){throw '找不到已配置的 Rainmeter 程序，请重新运行 PrismGlass 安装器检查必需组件。'}
  if(!$rainmeterWasRunning){Start-Process $rainmeter -WindowStyle Hidden}
@@ -147,7 +142,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  $beautySkinsActivated=$true
  foreach($config in @('Focus','Music','System','Weather')){& $rainmeter '!ActivateConfig' ('PrismGlass\'+$config) 'Main.ini'}
  if($python -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'music-bridge.enabled')) -and !(& $ownedBridge)){$startedBridge=Start-Process $python -ArgumentList ('"'+$bridge+'"') -WindowStyle Hidden -PassThru}
- if(!(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $glassPath})){$startedRenderer=Start-Process $glassPath -WindowStyle Hidden -PassThru}
+ if(!(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $glassPath})){$startedRenderer=Start-Process $glassPath -ArgumentList '--renderer' -WindowStyle Hidden -PassThru}
  $rendererDeadline=(Get-Date).AddSeconds(35)
  $renderReady=$false
  while((Get-Date) -lt $rendererDeadline){
@@ -166,7 +161,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
  # Clear both Explorer's cached FWF_NOICONS and saved folder-view preference.
  # Only the current icon window is hidden; next login remains ordinary.
  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideIcons -Value 0
- [DesktopIcons]::SetVisible($(if($readiness.primaryEnabled){$iconsVisible}else{$true}))
+ [DesktopIcons]::SetVisible(!$readiness.primaryEnabled)
  # LiquidDesktop temporarily hides the taskbar and releases its work area after readiness.
  # Do not enable persistent auto-hide or preempt its work-area restore snapshot here.
  if(Test-Path $statePath){Remove-Item -LiteralPath $statePath}

@@ -89,7 +89,7 @@ internal sealed class WidgetBackend {
    case "volume-down":Bang("!CommandMeasure Volume \"ChangeVolume -5\" \"PrismGlass\\Music\"");break;
    case "sound":Launch("ms-settings:sound","");break;
    case "music":Launch("mswindowsmusic:","");break;
-   case "weather":Launch("https://www.msn.com/weather","");break;
+   case "weather":
    case "weather-settings":File.WriteAllText(Path.Combine(root,"workspace.request"),"weather");break;
    case "task-manager":Launch("taskmgr.exe","");break;
    case "desktop":Launch("explorer.exe","\""+Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)+"\"");break;

@@ -25,7 +25,7 @@
   function named(node, id) { node.id = id; return node; }
   function button(id, label, action) { var node = named(el('button', '', label), id); node.type = 'button'; node.onclick = action; return node; }
   function icon(kind) {
-    var paths = { timer: ['M9 3h6m-3 0v3', 'M12 10v4l3 2'], stopwatch: ['M9 3h6m-3 0v3m5 2 2-2', 'M12 10v4'], world: ['M3 12h18M12 3c6 5 6 13 0 18-6-5-6-13 0-18'], breath: ['M4 14c0-5 5-9 8-11 3 2 8 6 8 11a8 8 0 0 1-16 0Z'], weather: ['M5 15a4 4 0 1 1 3-7 5 5 0 0 1 9 3 3 3 0 0 1 0 6H7'], tasks: ['M8 6h12M8 12h12M8 18h12M3 6h1m-1 6h1m-1 6h1'], immerse: ['M9 3H4v5m11-5h5v5M4 16v5h5m11-5v5h-5'], up: ['m6 14 6-6 6 6'], down: ['m6 10 6 6 6-6'] };
+    var paths = { calculator: ['M6 3h12v18H6zM9 6h6M9 10h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1'], date: ['M4 5h16v16H4zM8 3v4m8-4v4M4 10h16m-12 4h2m4 0h2m-8 3h2'], timer: ['M9 3h6m-3 0v3', 'M12 10v4l3 2'], stopwatch: ['M9 3h6m-3 0v3m5 2 2-2', 'M12 10v4'], world: ['M3 12h18M12 3c6 5 6 13 0 18-6-5-6-13 0-18'], breath: ['M4 14c0-5 5-9 8-11 3 2 8 6 8 11a8 8 0 0 1-16 0Z'], weather: ['M5 15a4 4 0 1 1 3-7 5 5 0 0 1 9 3 3 3 0 0 1 0 6H7'], tasks: ['M8 6h12M8 12h12M8 18h12M3 6h1m-1 6h1m-1 6h1'], immerse: ['M9 3H4v5m11-5h5v5M4 16v5h5m11-5v5h-5'], up: ['m6 14 6-6 6 6'], down: ['m6 10 6 6 6-6'] };
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.classList.add('ui-icon');
     if (['timer', 'stopwatch', 'world'].indexOf(kind) >= 0) { var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); circle.setAttribute('cx', '12'); circle.setAttribute('cy', kind === 'world' ? '12' : '14'); circle.setAttribute('r', kind === 'world' ? '9' : '8'); svg.appendChild(circle); }
     (paths[kind] || []).forEach(function (d) { var path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d); svg.appendChild(path); }); return svg;
@@ -46,6 +46,8 @@
 
   var timerCard = card('timer', '一杯茶，一次拉伸，或一个短暂的停顿。'), timerTime = named(el('strong', 'widget-number', elapsedClock(timer.remaining)), 'widget-timer'), timerLabel = el('label', 'widget-duration-label', '分钟'), timerMinutes = named(el('input'), 'widget-timer-minutes');
   timerCard.appendChild(timerTime); timerMinutes.type = 'number'; timerMinutes.min = '1'; timerMinutes.max = '180'; timerMinutes.step = '1'; timerMinutes.inputMode = 'numeric'; timerMinutes.value = String(preferences.duration / 60); timerLabel.appendChild(timerMinutes); timerCard.appendChild(timerLabel);
+  var timerPresets = el('div', 'widget-presets'); timerPresets.setAttribute('role', 'group'); timerPresets.setAttribute('aria-label', '快捷计时时长'); timerCard.appendChild(timerPresets);
+  var timerPresetButtons = [1, 3, 5, 15].map(function (minutes) { var preset = button('widget-timer-preset-' + minutes, minutes + ' 分钟', function () { if (timer.running) return; timerMinutes.value = String(minutes); timerMinutes.onchange(); }); preset.value = String(minutes); timerPresets.appendChild(preset); return preset; });
   var timerStatus = status('widget-timer-status', timerCard, '仅在此页前台计时'), timerActions = controls(timerCard);
   var timerToggle = button('widget-timer-toggle', '开始', function () {
     if (timer.running) pauseOne('timer', '已暂停，可继续');
@@ -58,7 +60,14 @@
   var watchCard = card('stopwatch', '给投入的时间，留一个准确的刻度。'), watchTime = named(el('strong', 'widget-number', '00:00'), 'widget-stopwatch'); watchCard.appendChild(watchTime);
   var watchStatus = status('widget-stopwatch-status', watchCard, '页面隐藏时暂停，不在后台继续计时'), watchActions = controls(watchCard);
   var watchToggle = button('widget-stopwatch-toggle', '开始', function () { if (stopwatch.running) pauseOne('stopwatch', '已暂停，可继续'); else if (activePage() && shown('stopwatch')) { stopwatch.running = true; stopwatch.started = performance.now(); set(watchStatus, '计时中 · 离开此页会暂停'); } updateTools(); syncTicker(); });
-  watchActions.appendChild(watchToggle); watchActions.appendChild(button('widget-stopwatch-reset', '归零', function () { stopwatch.running = false; stopwatch.elapsed = 0; set(watchStatus, '已归零'); updateTools(); }));
+  var lapCount = 0, lapAt = 0, watchLaps = named(el('ol', 'widget-laps'), 'widget-stopwatch-laps'); watchLaps.hidden = true; watchLaps.setAttribute('aria-label', '最近五圈');
+  var watchLap = button('widget-stopwatch-lap', '记一圈', function () {
+    if (!stopwatch.running || !activePage() || !shown('stopwatch')) return;
+    var elapsed = stopwatchElapsed(), lapTime = elapsedClock(elapsed - lapAt), row = el('li'); lapAt = elapsed; lapCount++;
+    row.appendChild(el('span', '', '第 ' + lapCount + ' 圈')); row.appendChild(el('strong', '', lapTime)); watchLaps.appendChild(row);
+    if (watchLaps.children.length > 5) watchLaps.children[0].remove(); watchLaps.hidden = false; set(watchStatus, '第 ' + lapCount + ' 圈 · 本圈 ' + lapTime + '，保留最近五圈');
+  });
+  watchActions.appendChild(watchToggle); watchActions.appendChild(watchLap); watchActions.appendChild(button('widget-stopwatch-reset', '归零', function () { stopwatch.running = false; stopwatch.elapsed = 0; lapCount = 0; lapAt = 0; watchLaps.textContent = ''; watchLaps.hidden = true; set(watchStatus, '已归零'); updateTools(); })); watchCard.appendChild(watchLaps);
 
   var worldCard = card('world', '从这块屏幕，望向另一个时区。'), worldTime = named(el('strong', 'widget-number', '—'), 'widget-world-time'), worldDate = el('p', 'widget-world-date'), worldZone = named(el('select'), 'widget-zone');
   worldZone.setAttribute('aria-label', '世界时钟城市'); zones.forEach(function (zone) { var option = el('option', '', zone[1]); option.value = zone[0]; worldZone.appendChild(option); }); worldZone.value = preferences.zone; worldCard.appendChild(worldTime); worldCard.appendChild(worldDate); worldCard.appendChild(worldZone);
@@ -128,7 +137,9 @@
   function updateTools() {
     var remaining = timerRemaining(); if (timer.running && remaining <= 0) { timer.running = false; timer.remaining = 0; set(timerStatus, '时间到了 · 已在页面前台完成'); }
     set(timerTime, elapsedClock(Math.ceil(remaining / 1000) * 1000)); set(timerToggle, timer.running ? '暂停' : timer.remaining < preferences.duration * 1000 && timer.remaining > 0 ? '继续' : '开始'); timerMinutes.disabled = timer.running;
+    timerPresetButtons.forEach(function (preset) { preset.disabled = timer.running; preset.setAttribute('aria-pressed', String(Number(preset.value) * 60 === preferences.duration)); });
     set(watchTime, elapsedClock(stopwatchElapsed())); set(watchToggle, stopwatch.running ? '暂停' : stopwatch.elapsed > 0 ? '继续' : '开始');
+    watchLap.disabled = !stopwatch.running || !activePage() || !shown('stopwatch');
     var still = document.body.dataset.reduced === 'true' || !!(reduced && reduced.matches); orb.dataset.running = String(breath.running && !still); set(breathToggle, breath.running ? '暂停呼吸' : '开始呼吸');
     if (breath.running) set(breathStatus, still ? '减少动态已开启 · 按自己的节奏呼吸' : Math.floor((performance.now() - breath.started) / 1000) % 8 < 4 ? '慢慢吸气' : '缓缓呼气');
     var second = Math.floor(Date.now() / 1000); if (second !== lastSecond) { lastSecond = second; var date = new Date(); set(worldTime, clockFormat ? clockFormat.format(date) : '—'); set(worldDate, dateFormat ? dateFormat.format(date) : '此浏览器不支持所选时区'); if (dateInput) updateDateDistance(); }

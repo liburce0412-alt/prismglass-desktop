@@ -40,7 +40,7 @@ Copy-Item "$repo/rainmeter" $out -Recurse -Force
 Copy-Item "$repo/licenses" $out -Recurse -Force
 Copy-Item "$repo/assets/Cursors" $out -Recurse -Force
 Copy-Item "$repo/LICENSE","$repo/THIRD-PARTY-NOTICES.md","$repo/README.md" $out
-Copy-Item "$repo/docs/COMPANION.md" $out
+Copy-Item "$repo/docs/COMPANION.md","$repo/docs/COMPANION-SCREEN.md" $out
 Copy-Item "$repo/docs/PRIVACY.md" $out
 Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1" $out
 # Windows PowerShell 5.1 needs a BOM to read Chinese scripts independently of the system locale.

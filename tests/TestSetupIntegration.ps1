@@ -126,6 +126,18 @@ try{
  Remove-SetupLegacyDesktopShortcuts $install $desktop
  Check (!(Test-Path -LiteralPath $oldShortcut)) 'Upgrade removes the old desktop entry owned by this installation'
  Check (Test-Path -LiteralPath $otherShortcut) 'Upgrade preserves a same-name shortcut targeting another installation'
+ $startup=Join-Path $fixture '启动目录';New-Item -ItemType Directory -Path $startup | Out-Null
+ $startupLink=Join-Path $startup 'PrismGlass.lnk'
+ $link=$shell.CreateShortcut($temporaryShortcut);$link.TargetPath=Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell/v1.0/powershell.exe';$link.Save()
+ $startupArguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+(Join-Path $install 'DesktopMode.ps1')+'" -Mode Beauty'
+ $unicodeLink=$unicodeShell.Namespace($fixture).ParseName('shortcut.lnk').GetLink();$unicodeLink.Arguments=$startupArguments;$unicodeLink.Save()
+ Move-Item -LiteralPath $temporaryShortcut -Destination $startupLink
+ Remove-SetupLoginStartup $foreign $startup
+ Check (Test-Path -LiteralPath $startupLink) 'Uninstall preserves another installation login shortcut'
+ Remove-SetupLoginStartup $install $startup
+ Check (!(Test-Path -LiteralPath $startupLink)) 'Uninstall removes the login shortcut owned by this installation'
+ Remove-SetupLoginStartup $install $startup
+ Check (!(Test-Path -LiteralPath $startupLink)) 'Login shortcut cleanup is idempotent'
  $unownedSkin=Join-Path $fixture 'UnownedSkin';New-Item -ItemType Directory -Path $unownedSkin | Out-Null
  Reject {Remove-SetupSkin $install $unownedSkin} 'Existing skin without an owner is still protected on uninstall retry'
  $iss=Get-Content -LiteralPath (Join-Path $repo 'packaging/PrismGlass.iss') -Encoding UTF8 -Raw

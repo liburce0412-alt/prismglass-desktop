@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 internal sealed class CompanionGrant {
- public bool apps,tasks,notes,music,control,pointer,power;
+ public bool apps,tasks,notes,music,control,pointer,power,screen,keyboard;
  internal volatile bool Active;
 }
 internal sealed class CompanionReply {
@@ -53,7 +53,7 @@ internal sealed class CompanionServer : IDisposable {
  static bool Equal(string left,string right){if(left==null||right==null)return false;byte[] a=Encoding.UTF8.GetBytes(left),b=Encoding.UTF8.GetBytes(right);int mismatch=a.Length^b.Length;for(int i=0;i<Math.Min(a.Length,b.Length);i++)mismatch|=a[i]^b[i];return mismatch==0;}
  static bool Opaque(string value){return value!=null&&Regex.IsMatch(value,"\\A[a-zA-Z0-9_-]{16,96}\\z");}
  static string Text(Dictionary<string,object> body,string key){object value;return body.TryGetValue(key,out value)?value as string:null;}
- static CompanionGrant Copy(CompanionGrant value){return new CompanionGrant{apps=value.apps,tasks=value.tasks,notes=value.notes,music=value.music,control=value.control,pointer=value.pointer,power=value.power,Active=true};}
+ static CompanionGrant Copy(CompanionGrant value){return new CompanionGrant{apps=value.apps,tasks=value.tasks,notes=value.notes,music=value.music,control=value.control,pointer=value.pointer,power=value.power,screen=value.screen,keyboard=value.keyboard,Active=true};}
  public static string Endpoint(string address,int port){
   IPAddress ip;if(!IPAddress.TryParse(address,out ip)||ip.AddressFamily!=System.Net.Sockets.AddressFamily.InterNetwork||port<1024||port>65535)throw new ArgumentException("请选择本机的局域网 IPv4 地址和 1024–65535 端口。");
   var bytes=ip.GetAddressBytes();if(!(bytes[0]==10||(bytes[0]==172&&bytes[1]>=16&&bytes[1]<=31)||(bytes[0]==192&&bytes[1]==168)))throw new ArgumentException("伴随屏仅支持专用局域网 IPv4 地址。");
@@ -105,9 +105,14 @@ internal sealed class CompanionServer : IDisposable {
  static bool AssetPath(string path){return path!=null&&path.StartsWith("/api/assets/",StringComparison.Ordinal);}
  static bool PointerPath(string path){return path=="/api/pointer"||path=="/api/pointer/begin"||path=="/api/pointer/end";}
  static bool PowerPath(string path){return path=="/api/power/prepare"||path=="/api/power/commit"||path=="/api/power/cancel";}
+ static bool ScreenWritePath(string path){return path=="/api/screen/begin"||path=="/api/screen/ping"||path=="/api/screen/end";}
  static int BodyLimit(string path){return PointerPath(path)||PowerPath(path)?ControlBody:MaxBody;}
  static string RouteCategory(string path){return AssetPath(path)?"asset":PointerPath(path)?"pointer":path=="/api/power/cancel"?"power_cancel":PowerPath(path)?"power":path=="/api/pair"?"pair":path!=null&&path.StartsWith("/api/",StringComparison.Ordinal)?"core":"static";}
- CompanionReply Enter(string path,out SemaphoreSlim slots){slots=AssetPath(path)?assetRequests:PointerPath(path)?pointerRequests:path=="/api/power/cancel"?cancelRequests:PowerPath(path)?powerRequests:requests;return slots.Wait(0)?null:Reject(429,"busy","服务暂时繁忙，请稍后重试。",RouteCategory(path),"concurrency",1);}
+ CompanionReply Enter(string path,out SemaphoreSlim slots){
+  slots=AssetPath(path)?assetRequests:PointerPath(path)?pointerRequests:path=="/api/power/cancel"?cancelRequests:PowerPath(path)?powerRequests:requests;
+  // Safari multiplexes startup files over HTTP/2 and does not retry rejected scripts.
+  return slots.Wait(path!=null&&!path.StartsWith("/api/",StringComparison.Ordinal)?1000:0)?null:Reject(429,"busy","服务暂时繁忙，请稍后重试。",RouteCategory(path),"concurrency",1);
+ }
  CompanionReply Reject(int status,string code,string message,string route,string scope,int retryAfter){
   // Only fixed server-defined categories enter this bounded in-memory summary. Never retain a URL, address, device ID, cookie or body.
   lock(gate){string key=code+":"+route+":"+scope;Rejection value;if(!rejections.TryGetValue(key,out value)){value=new Rejection{error=code,route=route,scope=scope};rejections.Add(key,value);}if(value.count<long.MaxValue)value.count++;value.lastAt=Now;}
@@ -157,7 +162,7 @@ internal sealed class CompanionServer : IDisposable {
     }
     if(!Route(request.Path,write,grant))return CompanionReply.Error(403,"not_allowed","该操作未获此设备的共享授权。");
     if(write&&!Equal(request.Csrf,device.csrf))return CompanionReply.Error(403,"csrf_denied","会话校验失败，请重新载入页面。");
-    if(write&&!pointer&&!cancel){string id=Text(body,"requestId");if(!Opaque(id))return CompanionReply.Error(400,"request_id_required","请提供有效的唯一请求编号。");string signature=Hash(request.Path+"\n"+request.Body);
+    if(write&&!pointer&&!cancel&&!ScreenWritePath(request.Path)){string id=Text(body,"requestId");if(!Opaque(id))return CompanionReply.Error(400,"request_id_required","请提供有效的唯一请求编号。");string signature=Hash(request.Path+"\n"+request.Body);
      if(device.commands.TryGetValue(id,out command)){if(command.signature!=signature)return CompanionReply.Error(409,"request_id_reused","同一个请求编号不能用于不同操作。");return command.reply??CompanionReply.Error(409,"request_pending","操作仍在执行，结果待确认。请勿重复操作。");}
      // shortcut: retain every accepted ID for this process session; re-pair after 4096 writes instead of forgetting and replaying an old command.
      if(device.commands.Count>=4096||device.cachedBytes>MaxCachedReplies-MaxCommandReply)return Reject(409,"session_budget","本次会话操作已达上限，请在电脑撤销后重新配对。",category,"session",0);command=new Command{signature=signature};device.commands.Add(id,command);device.cachedBytes+=MaxCommandReply;
@@ -169,6 +174,8 @@ internal sealed class CompanionServer : IDisposable {
   }catch{var failure=CompanionReply.Error(500,"operation_failed","操作未能确认完成，请查看电脑端。不会自动重复执行。");lock(gate)if(command!=null)failure=CacheCommand(device,command,failure);return failure;}
  }
  static bool Route(string path,bool write,CompanionGrant grant){
+  if(path=="/api/screen")return !write&&grant.screen;
+  if(ScreenWritePath(path))return write&&grant.screen;
   if(!write)return path=="/api/state"||(path=="/api/apps"&&grant.apps)||(Regex.IsMatch(path,"\\A/api/assets/[a-zA-Z0-9_-]{16,96}\\z")&&(grant.apps||grant.music));
   if(PointerPath(path))return grant.pointer;if(PowerPath(path))return grant.power;
   return path=="/api/logout"||path=="/api/action"||path=="/api/tasks"&&grant.tasks||path=="/api/notes"&&grant.notes||path=="/api/settings"&&grant.control||path=="/api/lyrics-style"&&grant.music&&grant.control;
@@ -180,7 +187,7 @@ internal sealed class CompanionServer : IDisposable {
   int wait=RateWait(rates,"pair:"+remote,6,60);if(wait>0)return Reject(429,"pair_limited","配对尝试过多，请稍后重试。","pair","pair",wait);if(pairingExpires<=Now||pairingCode.Length==0||pairingAttempts>=12)return CompanionReply.Error(401,"pair_closed","请在电脑端开启新的配对窗口。");pairingAttempts++;if(!Equal(Text(body,"code"),pairingCode))return CompanionReply.Error(401,"pair_code","配对码不正确或已过期。");string name=Text(body,"name");if(body.Count!=2||String.IsNullOrWhiteSpace(name)||name.Length>40||Regex.IsMatch(name,"[\\x00-\\x1f\\x7f]"))return CompanionReply.Error(400,"bad_name","设备名称应为 1–40 个可见字符。");if(pending.Count>=4||devices.FindAll(d=>d.expiresAt>Now).Count>=MaxDevices)return Reject(409,"device_limit","配对设备已达上限，请先在电脑清理旧请求或设备。","pair","devices",0);var next=new Pending{id=Guid.NewGuid().ToString("N"),ticket=Token(),name=name.Trim(),expiresAt=Now.AddMinutes(2)};pending.Add(next.id,next);return CompanionReply.Json(202,new{status="pending",ticket=next.ticket});
  }
  CompanionReply Static(string path){
-  string name,type;bool shared=false;if(path=="/"||path=="/index.html"){name="index.html";type="text/html; charset=utf-8";}else if(path=="/companion.css"||path=="/companion-appearance.css"||path=="/dock-lyrics.css"){name=path.Substring(1);type="text/css; charset=utf-8";shared=path=="/dock-lyrics.css";}else if(path=="/companion.js"||path=="/companion-scan.js"||path=="/jsqr.js"||path=="/companion-glass.js"||path=="/companion-lyrics.js"||path=="/companion-settings.js"||path=="/companion-widgets.js"||path=="/lyrics-style.js"){name=path.Substring(1);type="application/javascript; charset=utf-8";shared=path=="/lyrics-style.js";}else if(path=="/companion-scene.jpg"){name="companion-scene.jpg";type="image/jpeg";}else if(path=="/manifest.webmanifest"){name="manifest.webmanifest";type="application/manifest+json; charset=utf-8";}else if(path=="/companion-icon.png"){name="companion-icon.png";type="image/png";}else return CompanionReply.Error(404,"not_found","页面不存在。");
+  string name,type;bool shared=false;if(path=="/"||path=="/index.html"){name="index.html";type="text/html; charset=utf-8";}else if(path=="/companion.css"||path=="/companion-appearance.css"||path=="/dock-lyrics.css"){name=path.Substring(1);type="text/css; charset=utf-8";shared=path=="/dock-lyrics.css";}else if(path=="/companion.js"||path=="/companion-screen.js"||path=="/companion-scan.js"||path=="/jsqr.js"||path=="/companion-glass.js"||path=="/companion-lyrics.js"||path=="/companion-settings.js"||path=="/companion-widgets.js"||path=="/lyrics-style.js"){name=path.Substring(1);type="application/javascript; charset=utf-8";shared=path=="/lyrics-style.js";}else if(path=="/companion-scene.jpg"){name="companion-scene.jpg";type="image/jpeg";}else if(path=="/manifest.webmanifest"){name="manifest.webmanifest";type="application/manifest+json; charset=utf-8";}else if(path=="/companion-icon.png"){name="companion-icon.png";type="image/png";}else return CompanionReply.Error(404,"not_found","页面不存在。");
   try{string file=Path.Combine(shared?Path.GetDirectoryName(webRoot.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)):webRoot,name);if(!File.Exists(file)||new FileInfo(file).Length>524288||(File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)return CompanionReply.Error(503,"assets_missing","伴随屏网页资源未正确安装。");return new CompanionReply{Status=200,ContentType=type,Body=File.ReadAllBytes(file)};}catch{return CompanionReply.Error(503,"assets_missing","伴随屏网页资源暂不可用。");}
  }
  void Load(){try{if(!File.Exists(store))return;if(new FileInfo(store).Length>65536)throw new IOException();byte[] clear=ProtectedData.Unprotect(File.ReadAllBytes(store),null,DataProtectionScope.CurrentUser);var saved=json.Deserialize<List<Device>>(Encoding.UTF8.GetString(clear));if(saved==null||saved.Count>MaxDevices)throw new IOException();var seen=new HashSet<string>();foreach(var device in saved){if(device==null||!Opaque(device.id)||String.IsNullOrEmpty(device.name)||device.name.Length>40||device.tokenHash==null||device.tokenHash.Length!=44||!Opaque(device.csrf)||device.grants==null||!seen.Add(device.id))throw new IOException();device.commands=new Dictionary<string,Command>();device.grants.Active=device.expiresAt>Now;devices.Add(device);}}catch{devices.Clear();loadError="无法读取已配对设备，原文件已保留。请检查用户账户和运行目录。";}}

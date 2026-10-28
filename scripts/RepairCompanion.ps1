@@ -87,11 +87,15 @@ function Assert-CompanionDnsCertificate($Certificate,[string]$HostName,$Authorit
  }finally{$chain.Dispose()}
 }
 function Get-CompanionCertificate([string]$Thumbprint){
- # Enumerating public metadata distinguishes an absent certificate from an unreadable store.
- $matches=@(Get-ChildItem -LiteralPath Cert:\LocalMachine\My -ErrorAction Stop|Where-Object Thumbprint -EQ $Thumbprint)
- if($matches.Count -gt 1){throw 'Duplicate certificate thumbprints were returned by the machine store.'}
- if($matches.Count){return $matches[0]}
- return $null
+ # App-launched PowerShell may not mount Cert:; read the same store directly.
+ $store=[Security.Cryptography.X509Certificates.X509Store]::new('My','LocalMachine')
+ try{
+  $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+  $matches=$store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,$Thumbprint,$false)
+  if($matches.Count -gt 1){throw 'Duplicate certificate thumbprints were returned by the machine store.'}
+  if($matches.Count){return $matches[0]}
+  return $null
+ }finally{$store.Close()}
 }
 function Test-CompanionAdministrator {
  $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())

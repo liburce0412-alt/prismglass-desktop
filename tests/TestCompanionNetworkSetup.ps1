@@ -21,6 +21,9 @@ $argsBase=@{AppRoot=$app;Address='192.168.1.50';InterfaceIndex=19;HostName=$fixe
 $realWrite=(Get-Command Write-CompanionNetworkRecord).ScriptBlock
 $resources=[Collections.Generic.List[IDisposable]]::new()
 try{
+ # Only this test process loses its optional provider drive; machine stores stay read-only.
+ if(Get-PSDrive -Name Cert -ErrorAction SilentlyContinue){Remove-PSDrive -Name Cert}
+ Check ($null -eq (Get-CompanionCertificate ('0'*40))) 'certificate preflight works without a Cert provider drive'
  [IO.Directory]::CreateDirectory((Split-Path $recordPath))|Out-Null
  [IO.File]::WriteAllText((Join-Path $app 'LiquidDesktop.exe'),'fixture')
  [IO.File]::WriteAllText((Join-Path $app 'CompanionServer.cs'),'fixture')

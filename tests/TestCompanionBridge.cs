@@ -52,6 +52,7 @@ internal static class TestCompanionBridge {
   Check(controlBridge.Handle("/api/pointer",new Dictionary<string,object>{{"leaseId",lease["leaseId"]},{"seq",1},{"kind","move"},{"dx",8},{"dy",3}},device).Status==200&&pointerCalls==1,"pointer fast path reaches injected controls");
   var controlState=Body(controlBridge.Handle("/api/state",Request(),device));
   Check((bool)Object(controlState["permissions"])["pointer"]&&(bool)Object(Object(controlState["controls"])["pointer"])["active"],"state projects current control grants and lease");
+  Check(!(bool)Object(controlState["permissions"])["keyboard"],"state keeps mouse and keyboard authorization separate");device.keyboard=true;Check((bool)Object(Body(controlBridge.Handle("/api/state",Request(),device))["permissions"])["keyboard"],"state projects an explicitly enabled keyboard grant");
   var confirm=Body(controlBridge.Handle("/api/power/prepare",Request("action","shutdown"),device));
   Check(controlBridge.Handle("/api/power/commit",Request("ticketId",(string)confirm["ticketId"]),device).Status==202&&powerCalls==0,"bridge schedules confirmed power without immediate execution");
   controlBridge.StopControls();controlClock=controlClock.AddMinutes(1);fakeControls.Tick();

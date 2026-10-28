@@ -148,7 +148,7 @@
   }
   function draw(now) {
     // Restore layout before measuring a canvas hidden by the CSS fallback.
-    canvas.hidden = false; uploadSource(); resize(); if (dirty) collectRegions();
+    if (canvas.hidden) canvas.hidden = false; uploadSource(); if (dirty) { resize(); collectRegions(); }
     var night = document.body.dataset.theme === 'Astro' ? 1 : 0, seconds = frameTime / 1000;
     gl.disable(gl.SCISSOR_TEST); gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer); gl.viewport(0, 0, sceneWidth, sceneHeight); use(sourceProgram); bind(sourceProgram, 'picture', sourceTexture); two(sourceProgram, 'resolution', width, height); two(sourceProgram, 'imageSize', testGrid ? 1 : image.naturalWidth, testGrid ? 1 : image.naturalHeight); one(sourceProgram, 'night', night); one(sourceProgram, 'time', seconds); one(sourceProgram, 'grid', testGrid ? 1 : 0); gl.drawArrays(gl.TRIANGLES, 0, 6); stats.scenePasses++;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); use(glassProgram); bind(glassProgram, 'scene', sceneTexture); two(glassProgram, 'resolution', width, height); one(glassProgram, 'night', night); one(glassProgram, 'time', seconds); one(glassProgram, 'backgroundOnly', 1); gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -159,7 +159,7 @@
       var c = region.clip, left = Math.max(0, Math.floor(c[0] * scale)), top = Math.max(0, Math.floor(c[1] * scale)), right = Math.min(canvas.width, Math.ceil(c[2] * scale)), bottom = Math.min(canvas.height, Math.ceil(c[3] * scale));
       gl.scissor(left, canvas.height - bottom, Math.max(0, right - left), Math.max(0, bottom - top)); gl.drawArrays(gl.TRIANGLES, 0, 6);
     });
-    gl.disable(gl.SCISSOR_TEST); stats.frames++; stats.fallback = ''; canvas.hidden = false; document.body.dataset.optics = 'ready';
+    gl.disable(gl.SCISSOR_TEST); stats.frames++; stats.fallback = ''; if (document.body.dataset.optics !== 'ready') document.body.dataset.optics = 'ready';
   }
   function frame(now) {
     raf = 0; if (!canRun()) { stop('paused'); return; }

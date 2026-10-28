@@ -65,6 +65,21 @@ internal static class TestCompanionControls {
   var down=CompanionControls.Inputs(new CompanionControls.MouseCommand("down",click:"left"));var up=CompanionControls.Inputs(new CompanionControls.MouseCommand("up",click:"left"));Check(down.Length==1&&down[0].data.mouse.flags==2&&up.Length==1&&up[0].data.mouse.flags==4,"native drag structs encode explicit left press and release without invoking SendInput");
  }
  static void Main(){
+  Check(!new CompanionGrant().keyboard,"existing devices do not silently gain keyboard permission");
+  using(var f=new Fixture()){
+   var grant=Grant();string lease=Begin(f,grant);var text=Body("leaseId",lease,"seq",1,"kind","text","text","你好 iPad 😀");
+   Check(f.controls.Pointer("/api/pointer",text,grant).Status==403&&f.inputs.Count==0,"mouse permission alone cannot type text");grant.keyboard=true;
+   Check(f.controls.Pointer("/api/pointer",text,grant).Status==200&&f.inputs.Last().text=="你好 iPad 😀","authorized lease accepts composed Unicode text");
+   f.controls.Pointer("/api/pointer",text,grant);Check(f.inputs.Count==1,"replayed text sequence is never typed twice");
+   foreach(string invalid in new[]{"",new string('a',257),"line\nreturn","\ud800","\udc00"})Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",2,"kind","text","text",invalid),grant).Status==400,"invalid or oversized keyboard text is rejected");
+   Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",2,"kind","key","key","run-shell"),grant).Status==400,"keyboard only accepts the fixed key list");
+   Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",2,"kind","key","key","copy","flags",4),grant).Status==400,"keyboard cannot supply raw native input flags");
+   Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",2,"kind","key","key","copy"),grant).Status==200&&f.inputs.Last().key=="copy","authorized keyboard sends a complete shortcut");
+   grant.keyboard=false;Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",3,"kind","key","key","enter"),grant).Status==403,"keyboard revocation blocks new keys while preserving separate mouse permission");
+   grant.keyboard=true;f.Advance(20);Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",3,"kind","key","key","enter"),grant).Status==409,"keyboard cannot reuse an expired input lease");
+  }
+  var unicode=CompanionControls.Inputs(new CompanionControls.MouseCommand("text",inputText:"中😀"));Check(unicode.Length==6&&unicode.All(i=>i.type==1)&&unicode[0].data.keyboard.scan=='中'&&unicode[0].data.keyboard.flags==4&&unicode[1].data.keyboard.flags==6,"Unicode input preserves UTF-16 pairs with a release for each packet");
+  var shortcut=CompanionControls.Inputs(new CompanionControls.MouseCommand("key",keyName:"copy"));Check(shortcut.Select(i=>i.data.keyboard.key).SequenceEqual(new ushort[]{17,67,67,17})&&shortcut.Select(i=>i.data.keyboard.flags).SequenceEqual(new uint[]{0,0,2,2}),"shortcut releases modifiers in reverse order in the same native input batch");
   Check(!new CompanionGrant().pointer&&!new CompanionGrant().power,"new and old grants default to no pointer or power permission");
   using(var f=new Fixture()){
    var a=Grant();var b=Grant();var denied=new CompanionGrant{Active=true};
