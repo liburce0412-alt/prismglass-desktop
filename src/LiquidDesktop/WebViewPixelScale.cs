@@ -12,7 +12,7 @@ internal sealed class WebViewPixelScale {
  public WebViewPixelScale(WebView2 target,Action onChanged){view=target;changed=onChanged;RasterizationScale=1;}
  public async void Sync(bool force=false){await SyncAsync(force);}
  public async Task<bool> SyncAsync(bool force=false){
-  if(busy||view.IsDisposed||view.CoreWebView2==null||(!force&&DateTime.UtcNow<nextRead))return false;busy=true;nextRead=DateTime.UtcNow.AddSeconds(1);
+  if(busy||view.IsDisposed||view.CoreWebView2==null||(!force&&(!view.Visible||DateTime.UtcNow<nextRead)))return false;busy=true;nextRead=DateTime.UtcNow.AddSeconds(1);
   try{
    string value=await view.CoreWebView2.ExecuteScriptAsync("window.devicePixelRatio");
    if(view.IsDisposed||view.CoreWebView2==null)return false;

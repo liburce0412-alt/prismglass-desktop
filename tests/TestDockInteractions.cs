@@ -5,17 +5,50 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Reflection;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Web.Script.Serialization;
 
 internal static class TestDockInteractions {
  static int checks;
+ sealed class StateWindow:Form {
+  public int commands;public bool ignoreCommands;
+  protected override bool ShowWithoutActivation{get{return true;}}
+  protected override void WndProc(ref Message m){if(m.Msg==0x112&&(m.WParam.ToInt64()&0xFFF0)==0xF120){commands++;if(ignoreCommands)return;}base.WndProc(ref m);}
+ }
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr window);
  static void Check(bool value,string label){if(!value)throw new Exception(label);checks++;Console.WriteLine("PASS "+label);}
  static string[] Ids(string root){return DockBackend.ReadPins(root).Select(p=>"p"+p.id).ToArray();}
  static void Request(string root,string id){File.WriteAllText(Path.Combine(root,"dock-drag-request-primary.txt"),((long)(DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds)+"|"+id);}
+ static void WindowStateChecks(){
+  var previous=GetForegroundWindow();
+  try{using(var form=new StateWindow{ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Bounds=new Rectangle(-20000,-20000,320,180)}){
+   form.Show();var process=Process.GetCurrentProcess();var window=new DockWindow{handle=form.Handle.ToInt64(),pid=(uint)process.Id,path=process.MainModule.FileName};
+   Check(DockBackend.SetMinimized(window,true)&&form.WindowState==FormWindowState.Minimized,"shared window state path minimizes a real native window");
+   var stale=new DockWindow{handle=window.handle,pid=UInt32.MaxValue,path=window.path};
+   Check(!DockBackend.SetMinimized(stale,false)&&form.WindowState==FormWindowState.Minimized&&form.commands==0,"a reused or stale window identity cannot receive restore commands");
+   Check(DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Normal&&form.commands==1,"system-menu restore is processed before reporting success");
+   form.WindowState=FormWindowState.Maximized;int commands=form.commands;
+   Check(DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Maximized&&form.commands==commands,"already restored maximized windows retain their size");
+   Check(DockBackend.SetMinimized(window,true)&&DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Maximized,"restoring a minimized maximized window retains its maximized state");
+   bool rejected=false;try{DockBackend.Activate(stale);}catch(InvalidOperationException ex){rejected=ex.Message.Contains("窗口");}
+   Check(rejected,"activation reports stale identity instead of pretending to succeed");
+  }}finally{SetForegroundWindow(previous);}
+  StateWindow remote=null;DockWindow target=null;using(var ready=new ManualResetEventSlim())using(var blocked=new ManualResetEventSlim()){
+   var thread=new Thread(()=>{using(remote=new StateWindow{ignoreCommands=true,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Bounds=new Rectangle(-20000,-20000,320,180)}){remote.Shown+=(s,e)=>{var process=Process.GetCurrentProcess();target=new DockWindow{handle=remote.Handle.ToInt64(),pid=(uint)process.Id,path=process.MainModule.FileName};ready.Set();};Application.Run(remote);}});thread.SetApartmentState(ApartmentState.STA);thread.Start();
+   try{Check(ready.Wait(5000),"cross-thread window fixture is ready");
+    Check(DockBackend.SetMinimized(target,true)&&DockBackend.SetMinimized(target,false)&&remote.commands>0,"asynchronous restoration remains a fallback for custom system-menu handling on another UI thread");
+    DockBackend.SetMinimized(target,true);remote.BeginInvoke(new Action(()=>{blocked.Set();Thread.Sleep(900);}));Check(blocked.Wait(5000),"unresponsive-window fixture entered its controlled delay");
+    var elapsed=Stopwatch.StartNew();bool restored=DockBackend.SetMinimized(target,false);Check(!restored&&elapsed.ElapsedMilliseconds<800,"an unresponsive window returns failure within a bounded wait");
+   }finally{if(remote!=null&&!remote.IsDisposed)remote.BeginInvoke(new Action(()=>remote.Close()));Check(thread.Join(5000),"cross-thread fixture releases its window and message loop");SetForegroundWindow(previous);}
+  }
+ }
  [STAThread]static void Main(string[] args){
   if(args.Length!=1||Directory.Exists(args[0]))throw new ArgumentException("Pass a new disposable fixture directory.");
   string root=Path.GetFullPath(args[0]);Directory.CreateDirectory(root);
+  WindowStateChecks();
   Check(DockBackend.ResolveClick(0,false,false,false)==DockClickAction.Launch,"an app with no live windows launches");
   Check(DockBackend.ResolveClick(1,true,false,false)==DockClickAction.Minimize,"clicking the single foreground window minimizes it");
   Check(DockBackend.ResolveClick(1,false,false,false)==DockClickAction.Activate,"clicking a background window activates it");
@@ -86,7 +119,7 @@ internal static class TestDockInteractions {
   now=now.AddSeconds(1);DockBackend.BeginExternalDrag(root,c,"--cancel","Cancelled","");backend.TickDrag(docks,new Point(600,300),true,false,now);DockBackend.EndExternalDrag(root,true);backend.TickDrag(docks,new Point(100,50),false,false,now.AddMilliseconds(50));Check(Ids(root).Length==count+1,"an internal or Escape-cancelled browser drop never pins an entry");
   now=now.AddSeconds(1);string saved=File.ReadAllText(Path.Combine(root,"pins.json"));Request(root,"workspace");backend.TickDrag(docks,new Point(66,50),true,false,now);backend.TickDrag(docks,new Point(600,300),true,false,now.AddMilliseconds(50));
   Check(File.ReadAllText(Path.Combine(root,"pins.json"))==saved,"the application-center system entry cannot be moved or unpinned");
-  DockBackend.Click(root,"workspace",false);Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="apps","the system entry routes to the real application center");
+  DockBackend.Click(root,"workspace",false);Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="toggle-apps","Dock application-center click requests a toggle rather than unconditional reopening");
   var many=new List<DockEntry>{DockBackend.WorkspaceEntry("grid")};for(int i=0;i<35;i++)many.Add(new DockEntry{id="p"+i,name="App "+i,pinned=true});
   var visible=DockBackend.DisplayEntries(many,"more");Check(visible.Count==32&&visible[0].id=="workspace"&&visible[31].name=="更多应用 · 5","overflow counts include the fixed system entry without losing hidden apps");
   int slot;Check(DockBackend.BeforeAt(many,"p2",0,100,1,out slot)=="p0"&&slot==1,"insertion can never precede the system entry");

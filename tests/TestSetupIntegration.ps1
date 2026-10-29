@@ -16,7 +16,7 @@ Invoke-Expression $catalogFunction.Extent.Text
 $passed=0
 function Check([bool]$Condition,[string]$Name){if(!$Condition){throw "FAIL: $Name"};$script:passed++;"PASS: $Name"}
 function Reject([scriptblock]$Action,[string]$Name){$failed=$false;try{& $Action | Out-Null}catch{$failed=$true};Check $failed $Name}
-foreach($private in @('prismglass-install.json','install-record.json','installer-runtime.ini','LiquidDesktop/desktop-settings.json','LiquidDesktop/app-library.json','LiquidDesktop/companion-settings.json','LiquidDesktop/lyrics-settings.json','LiquidDesktop/devices.bin','LiquidDesktop/readiness.json','LiquidDesktop/runtime-data/settings.json','companion-setup/setup-record.json','LiquidDesktop/desktop-state.json','companion-key.pfx')){Check (Test-PrivateBundlePath $private) ("Package rejects private file: $private")}
+foreach($private in @('prismglass-install.json','install-record.json','installer-runtime.ini','LiquidDesktop/desktop-settings.json','LiquidDesktop/app-library.json','LiquidDesktop/companion-settings.json','LiquidDesktop/lyrics-settings.json','LiquidDesktop/devices.bin','LiquidDesktop/readiness.json','LiquidDesktop/weather-cache.json','LiquidDesktop/runtime-data/settings.json','companion-setup/setup-record.json','LiquidDesktop/desktop-state.json','companion-key.pfx')){Check (Test-PrivateBundlePath $private) ("Package rejects private file: $private")}
 foreach($public in @('LiquidDesktop/desktop.js','LiquidDesktop/PrismGlass.ico','LiquidDesktop/companion-web/manifest.webmanifest','LiquidDesktop/pins.json','LICENSE','VERSION')){Check (!(Test-PrivateBundlePath $public)) ("Package accepts product file: $public")}
 $fixture=Join-Path $repo ('artifacts/tests/setup-'+[guid]::NewGuid().ToString('N'))
 try{

@@ -72,6 +72,22 @@ const click = (f, action) => (f.all.find(n => n.dataset.action === action) || f.
 const submit = node => node.onsubmit({ preventDefault() {} });
 
 (async function () {
+  const sourceTime = Date.UTC(2026, 0, 2, 1, 23), weather = fixture({ state: { ...sample, weather: { available: true, updatedAt: sourceTime, data: { temp: 0, code: null, low: null, high: null, feelsLike: null, location: '杭州 · 浙江 · 中国', source: 'CMA GRAPES · Open-Meteo', kind: 'model', fetchedAt: Date.now() } } } }); await weather.boot();
+  assert.equal(weather.ids.weather.hidden, false); assert.equal(weather.ids['weather-main'].textContent, '0° · 天气状况未提供'); assert.equal(weather.ids['weather-detail'].hidden, true, 'Missing apparent temperature and range are not invented'); assert.equal(weather.ids['weather-location'].textContent, '杭州 · 浙江 · 中国'); assert.match(weather.ids['weather-stamp'].textContent, /01\/02/); assert.match(weather.ids['weather-stamp'].textContent, /CMA GRAPES · Open-Meteo · 数值预报/);
+  weather.current.weather.data.feelsLike = -2; weather.current.weather.data.stale = true; weather.current.weather.reason = '天气更新失败，保留上次数据。'; await weather.timers(2000);
+  assert.equal(weather.ids['weather-detail'].textContent, '体感 -2°'); assert.match(weather.ids['weather-stamp'].textContent, /^上次天气/); assert.equal(weather.ids['weather-status'].textContent, '天气更新失败，保留上次数据。');
+  weather.current.weather.data.code = 1; await weather.timers(2000); assert.equal(weather.ids['weather-main'].textContent, '0° · 晴间少云', 'WMO mainly clear is distinct from overcast');
+  weather.current.weather.available = false; weather.current.weather.reason = '天气数据已过期，请检查电脑网络。'; weather.current.weather.data = null; await weather.timers(2000);
+  assert.equal(weather.ids.weather.hidden, false, 'An authenticated home keeps the unavailable weather state visible'); assert.equal(weather.ids['weather-main'].textContent, '天气暂不可用'); assert.equal(weather.ids['weather-detail'].textContent, '天气数据已过期，请检查电脑网络。'); assert.equal(weather.ids['weather-location'].textContent, '电脑天气位置');
+  await weather.hide(); ['weather-location', 'weather-main', 'weather-detail', 'weather-stamp', 'weather-status'].forEach(id => assert.equal(weather.ids[id].textContent, '', 'Weather metadata clears on auth or visibility loss: ' + id)); assert.equal(weather.ids.weather.hidden, true);
+  const connectionPanel = fixture(); await connectionPanel.boot();
+  connectionPanel.ids['manage-button'].onclick(); assert.equal(connectionPanel.ids['connection-settings'].hidden, false); assert.equal(connectionPanel.ids['settings-close'].focused, true);
+  let escapePrevented = false; connectionPanel.ids['connection-settings'].onkeydown({ key: 'Escape', preventDefault() { escapePrevented = true; } });
+  assert(escapePrevented && connectionPanel.ids['connection-settings'].hidden && connectionPanel.ids['manage-button'].focused, 'Connection panel closes locally and returns focus to its opener');
+  connectionPanel.handler(() => { throw new TypeError('fixture network loss'); }); connectionPanel.ids['reconnect'].onclick(); await connectionPanel.timers(0);
+  assert.equal(connectionPanel.ids['pair-heading'].textContent, '连接暂时中断'); assert.equal(connectionPanel.ids['pair-retry'].hidden, false); assert.equal(connectionPanel.ids['music-card'].hidden, true);
+  connectionPanel.handler(null); connectionPanel.ids['pair-retry'].onclick(); await connectionPanel.timers(0);
+  assert.equal(connectionPanel.ids['pair-panel'].hidden, true); assert.equal(connectionPanel.ids['pair-retry'].hidden, true); assert(!connectionPanel.calls.some(c => c.request.method === 'POST'), 'Retry restores reads without replaying any computer operation');
   const brief = fixture({ state: { ...sample, music: { ...sample.music, position: 63, duration: 245, playing: false } } }); await brief.boot();
   assert.equal(brief.ids['home-task-first'].textContent, '<script>私人任务</script>');
   assert.equal(brief.ids['home-task-count'].textContent, '1 件待办');

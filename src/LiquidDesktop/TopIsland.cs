@@ -19,12 +19,14 @@ internal sealed class TopIsland : Form {
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr h,uint command);
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")]static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
+ // Hide the controller before its parent so TrySuspend sees IsVisible=false.
+ protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=true;}
  protected override bool ShowWithoutActivation{get{return !preview;}}
  protected override CreateParams CreateParams{get{var p=base.CreateParams;if(!preview){p.ExStyle|=0x80;p.ExStyle&=~0x40000;}return p;}}
  public TopIsland(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
  public TopIsland(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();outlineKey="";Publish();});
-  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;Place();view.Dock=DockStyle.Fill;Controls.Add(view);SetInitialShape();
+  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;Place();view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);SetInitialShape();
   Shown+=async(sender,args)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"island-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(environment);SyncPixelScale();
    var settings=view.CoreWebView2.Settings;settings.IsZoomControlEnabled=false;settings.AreDefaultContextMenusEnabled=false;settings.AreDevToolsEnabled=false;settings.IsStatusBarEnabled=false;
@@ -34,6 +36,7 @@ internal sealed class TopIsland : Form {
    view.CoreWebView2.WebMessageReceived+=(s,e)=>{if(String.Equals(e.Source,"https://prism-island.local/island.html",StringComparison.Ordinal))Receive(e.TryGetWebMessageAsString());};
    view.CoreWebView2.ProcessFailed+=(s,e)=>Fail("WebView2: "+e.ProcessFailedKind);view.Source=new Uri("https://prism-island.local/island.html");timer.Interval=1000;timer.Tick+=(s,e)=>Tick();timer.Start();
   }catch(Exception ex){Fail(ex.ToString());}};
+  VisibleChanged+=(s,e)=>{if(Visible&&ready)Tick(true);};
   Deactivate+=(s,e)=>{if(!dragging)Send(new{type="dismiss"});};
   FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();view.Dispose();};
  }
@@ -64,7 +67,13 @@ internal sealed class TopIsland : Form {
  void SetInitialShape(){float x=4,y=12,w=Width-8,h=42*scale,d=h;using(var path=new GraphicsPath()){path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddArc(x+w-d,y+h-d,d,d,0,90);path.AddArc(x,y+h-d,d,d,90,90);path.CloseFigure();ReplaceRegion(new Region(path));}}
  void ReplaceRegion(Region next){var old=Region;Region=next;if(old!=null)old.Dispose();}
  void Tick(){Tick(false);}
- void Tick(bool force){if(!ready||closed)return;if(force||ticks%(paused?15:2)==0){var data=shared==null?widgets.Read():shared.ReadWidgets();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}if(ticks++%15==0){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Diagnostic("island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}}
+ void Tick(bool force){
+  if(!ready||closed)return;bool read=Visible||force;
+  if(read&&(force||ticks%(paused?15:2)==0)){var data=shared==null?widgets.Read():shared.ReadWidgets();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}
+  if(ticks++%15==0&&read){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}
+  if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Diagnostic("island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}
+ }
+
  void Script(string name,string args){string file=Path.GetFullPath(Path.Combine(root,"..",name));if(!File.Exists(file))throw new FileNotFoundException(name);Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""+file+"\" "+args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
  async void RefreshWallpaper(){

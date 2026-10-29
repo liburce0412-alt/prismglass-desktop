@@ -47,6 +47,11 @@ internal static class TestWidgetSources{
   MediaSnapshot.current=null;
   backend.Action("weather");Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="weather","legacy weather action opens the shared city settings instead of an independently located forecast website");File.Delete(Path.Combine(root,"workspace.request"));
   backend.Action("weather-settings");Check(File.ReadAllText(Path.Combine(root,"workspace.request"))=="weather","weather settings action uses the same selected location entry point");
+  Install();File.WriteAllText(Path.Combine(root,"weather-location.txt"),"28.68396\n115.85306\n南昌\n");long sourceTime=(long)(DateTime.UtcNow.AddMinutes(-5)-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;
+  string weatherJson=json.Serialize(new{timezone="Asia/Shanghai",utc_offset_seconds=28800,current_units=new{time="unixtime",temperature_2m="°C",weather_code="wmo code"},current=new{time=sourceTime,temperature_2m=22.5,weather_code=2}});
+  var weatherCollector=new WeatherData(root,()=>"",url=>System.Threading.Tasks.Task.FromResult(weatherJson),()=>DateTime.UtcNow);weatherCollector.Read();weatherCollector.Pending.GetAwaiter().GetResult();File.SetLastWriteTimeUtc(Path.Combine(root,"widget-Weather.json"),DateTime.UtcNow.AddDays(-1));
+  backend=new WidgetBackend(root,ini,s=>commands.Add(s),()=>true,weatherCollector);all=Map(backend.Read());var nativeWeather=Child(all,"weather");weather=Child(Child(all,"sourceStatus"),"weather");Check((bool)weather["available"]&&(string)nativeWeather["location"]=="南昌"&&Convert.ToInt64(weather["updatedAt"])==sourceTime*1000&&Convert.ToInt64(weather["fetchedAt"])>sourceTime*1000,"desktop widgets receive the JSON collector's real weather independently of an old Rainmeter heartbeat");
+  commands.Clear();backend.EnsureCompanionSources();Check(commands.Count==3&&!commands.Exists(s=>s.Contains("PrismGlass\\Weather")),"the native weather collector does not start a duplicate Rainmeter weather source");
   Console.WriteLine("Completed "+checks+" widget source checks.");
  }
 }

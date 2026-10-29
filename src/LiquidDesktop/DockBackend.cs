@@ -51,6 +51,7 @@ internal sealed class DockBackend {
  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h,uint flags);
  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h,int cmd);
+ [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out UIntPtr result);
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
@@ -72,6 +73,7 @@ internal sealed class DockBackend {
   foreach(var p in pins)p.icon=IconFor(p.path,p.icon,"pin-"+p.id);
  }
  string IconFor(string path,string custom,string key){
+  custom=PersistentIcon(root,custom);
   string saved;string cacheKey=path+"|"+custom;if(icons.TryGetValue(cacheKey,out saved))return saved;
   saved=Path.Combine(root,"dock-icons",key+".png");
   try{if(!String.IsNullOrEmpty(custom)&&File.Exists(custom)){using(var input=Image.FromFile(custom))input.Save(saved,ImageFormat.Png);}
@@ -157,7 +159,20 @@ internal sealed class DockBackend {
  }
  static string B64(string s){return Convert.ToBase64String(Encoding.UTF8.GetBytes(s));}
  static bool Valid(DockWindow w){if(w==null||w.handle==0||w.pid==0||String.IsNullOrEmpty(w.path))return false;uint pid;GetWindowThreadProcessId(new IntPtr(w.handle),out pid);return pid==w.pid&&String.Equals(ProcessPath(pid),w.path,StringComparison.OrdinalIgnoreCase);}
- public static void Activate(DockWindow w){if(!Valid(w))return;var h=new IntPtr(w.handle);if(IsIconic(h))ShowWindowAsync(h,9);SetForegroundWindow(h);}
+ public static void Activate(DockWindow w){
+  if(!Valid(w))throw new InvalidOperationException("窗口已经关闭或变化，请重新选择应用。");var h=new IntPtr(w.handle);
+  if(!SetMinimized(w,false))throw new InvalidOperationException("窗口暂时无法还原，请从 Windows 任务栏打开后重试。");
+  SetForegroundWindow(h);
+  for(int i=0;i<10&&!Foreground(w,false);i++)Thread.Sleep(10);
+  if(!Valid(w)||!Foreground(w,false))throw new InvalidOperationException("Windows 暂未允许切到该窗口，请从任务栏选择它后重试。");
+ }
+ internal static bool SetMinimized(DockWindow w,bool minimized){
+  if(!Valid(w))return false;var h=new IntPtr(w.handle);if(IsIconic(h)==minimized)return true;
+  // System-menu commands work for windows that reject cross-process ShowWindow calls.
+  UIntPtr result;SendMessageTimeout(h,0x112,new IntPtr(minimized?0xF020:0xF120),IntPtr.Zero,2,250,out result);
+  if(IsIconic(h)!=minimized&&ShowWindowAsync(h,minimized?6:9))for(int i=0;i<20&&IsIconic(h)!=minimized;i++)Thread.Sleep(10);
+  return Valid(w)&&IsIconic(h)==minimized;
+ }
  internal static DockClickAction ResolveClick(int windows,bool foreground,bool minimized,bool forceNew){
   if(forceNew||windows==0)return DockClickAction.Launch;
   if(foreground&&!minimized)return DockClickAction.Minimize;
@@ -199,7 +214,7 @@ internal sealed class DockBackend {
   if(folder!=null)try{AtomicWrite(Path.Combine(folder,"dock-click.json"),new JavaScriptSerializer().Serialize(new{at=DateTime.UtcNow.ToString("o"),id=entry.id,action=action.ToString(),windows=windows.Count,foreground=GetForegroundWindow().ToInt64(),target=active==null?0:active.handle}));}catch(IOException){}catch(UnauthorizedAccessException){}
   if(folder!=null)foregroundHistory.Invalidate(); // A Dock activation belongs to one click only.
   if(action==DockClickAction.Launch){Launch(entry.path,entry.arguments);return;}
-  if(action==DockClickAction.Minimize){if(Valid(active))ShowWindowAsync(new IntPtr(active.handle),6);return;}
+  if(action==DockClickAction.Minimize){if(!SetMinimized(active,true))throw new InvalidOperationException("窗口暂时无法最小化，请使用该应用自己的最小化按钮。");return;}
   if(action==DockClickAction.Activate){Activate(windows[0]);return;}
   entry.windows=windows;var area=Screen.FromPoint(Cursor.Position).WorkingArea;
   var anchor=new Rectangle(area.Left,area.Bottom-24,area.Width,24);
@@ -217,16 +232,16 @@ internal sealed class DockBackend {
  }
  public DockEntry Entry(string id){if(previous.Length==0)return null;var e=json.Deserialize<List<DockEntry>>(previous).FirstOrDefault(x=>x.id==id);if(e!=null)e.windows=e.windows.Where(Valid).ToList();return e;}
  public static void Click(string root,string id,bool forceNew){
-  if(id==WorkspaceId){AtomicWrite(Path.Combine(root,"workspace.request"),"apps");return;}
+  if(id==WorkspaceId){AtomicWrite(Path.Combine(root,"workspace.request"),"toggle-apps");return;}
   if(id==OverflowId){MoreMenu(root);return;}
   try{var entries=new JavaScriptSerializer().Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json")));var entry=entries.FirstOrDefault(e=>e.id==id);if(entry==null)return;
    entry.windows=WindowsFor(entry.path,entry.arguments);
    Interact(root,entry,forceNew);
-  }catch(Exception ex){File.WriteAllText(Path.Combine(root,"dock-error.txt"),ex.Message);}
+  }catch(Exception ex){File.WriteAllText(Path.Combine(root,"dock-error.txt"),ex.Message);AtomicWrite(Path.Combine(root,"dock-notice.txt"),ex.Message);}
  }
 
  public static void Menu(string root,string id){
-  if(id==WorkspaceId){using(Hold(root))using(var owner=new Form())using(var menu=new ContextMenuStrip()){owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;menu.Items.Add("应用中心",null,(s,e)=>Click(root,WorkspaceId,false));menu.Items.Add("PrismGlass 设置",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"settings"));menu.Items.Add("Windows 设置",null,(s,e)=>Process.Start(new ProcessStartInfo("ms-settings:"){UseShellExecute=true}));menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);Application.Run(owner);}return;}
+  if(id==WorkspaceId){using(Hold(root))using(var owner=new Form())using(var menu=new ContextMenuStrip()){owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;menu.Items.Add("应用中心",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"apps"));menu.Items.Add("PrismGlass 设置",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"settings"));menu.Items.Add("Windows 设置",null,(s,e)=>Process.Start(new ProcessStartInfo("ms-settings:"){UseShellExecute=true}));menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);Application.Run(owner);}return;}
   if(id==OverflowId){MoreMenu(root);return;}
   try{
    var serializer=new JavaScriptSerializer();var entry=serializer.Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json"))).FirstOrDefault(e=>e.id==id);if(entry==null)return;
@@ -259,12 +274,19 @@ internal sealed class DockBackend {
  static void ChangePins(string folder,Action<List<DockPin>> change){
   WithLock(folder,()=>{var list=ReadPins(folder);var serializer=new JavaScriptSerializer();var before=serializer.Serialize(list);change(list);var after=serializer.Serialize(list);if(before!=after)AtomicWrite(Path.Combine(folder,"pins.json"),after);});
  }
- static bool SameTarget(DockPin pin,string path,string arguments){var a=LaunchIdentity(pin.path,pin.arguments);var b=LaunchIdentity(path,arguments);return String.Equals(a[0],b[0],StringComparison.OrdinalIgnoreCase)&&String.Equals(a[1],b[1],StringComparison.Ordinal);}
+ static bool SameTarget(DockPin pin,string path,string arguments){var a=LaunchIdentity(pin.path,pin.arguments);var b=LaunchIdentity(path,arguments);return (String.Equals(a[0],b[0],StringComparison.OrdinalIgnoreCase)||String.Equals(PhysicalPath(a[0]),PhysicalPath(b[0]),StringComparison.OrdinalIgnoreCase))&&String.Equals(a[1],b[1],StringComparison.Ordinal);}
+ internal static string PersistentIcon(string folder,string icon){
+  if(String.IsNullOrEmpty(icon))return "";
+  // Running slots are reused after restart; always regenerate their icons from the launch target.
+  if(Path.IsPathRooted(icon)&&String.Equals(Path.GetDirectoryName(Path.GetFullPath(icon)),Path.Combine(Path.GetFullPath(folder),"dock-icons"),StringComparison.OrdinalIgnoreCase)&&System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(icon),@"\Arun-[0-9]+\.png\z",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return "";
+  return icon;
+ }
  static void Position(List<DockPin> pins,DockPin pin,string beforeId){if(beforeId=="p"+pin.id)return;pins.Remove(pin);int index=String.IsNullOrEmpty(beforeId)?-1:pins.FindIndex(p=>"p"+p.id==beforeId);pins.Insert(index<0?pins.Count:index,pin);}
  public static string Pin(string folder,string path,string arguments,string name,string icon){return Pin(folder,path,arguments,name,icon,null);}
  public static string Pin(string folder,string path,string arguments,string name,string icon,string beforeId){
   if(String.IsNullOrWhiteSpace(path)||path.IndexOfAny(new[]{'\r','\n','\0','"'})>=0)throw new ArgumentException("应用入口路径无效。");
   if(!path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase))path=Path.GetFullPath(path);
+  icon=PersistentIcon(folder,icon);
   string result=null;ChangePins(folder,list=>{var pin=list.FirstOrDefault(p=>SameTarget(p,path,arguments));if(pin==null){pin=new DockPin{id=Guid.NewGuid().ToString("N"),path=path,arguments=arguments??"",name=String.IsNullOrWhiteSpace(name)?Path.GetFileNameWithoutExtension(path):name,icon=icon??"",exists=File.Exists(path)||Directory.Exists(path)||path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)};list.Add(pin);}if(beforeId!=null)Position(list,pin,beforeId);result="p"+pin.id;});return result;
  }
  public static void Unpin(string folder,string id){ChangePins(folder,list=>list.RemoveAll(p=>"p"+p.id==id));}

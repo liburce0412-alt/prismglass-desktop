@@ -30,7 +30,7 @@ internal sealed class DockPreview:Form {
   Deactivate+=(s,e)=>{if(keyboardMode)Close();};
  }
  public void EnableKeyboard(){if(!keyboardMode){keyboardMode=true;SetWindowLongPtr(Handle,-20,new IntPtr(GetWindowLongPtr(Handle,-20).ToInt64()&~0x08000000L));}Activate();Focus();Invalidate();}
- void SelectWindow(int index){if(index<0||index>=entry.windows.Count)return;var window=entry.windows[index];Close();DockBackend.Activate(window);}
+ void SelectWindow(int index){if(index<0||index>=entry.windows.Count)return;var window=entry.windows[index];Close();try{DockBackend.Activate(window);}catch(InvalidOperationException ex){MessageBox.Show(ex.Message,"无法切换窗口",MessageBoxButtons.OK,MessageBoxIcon.Information);}}
  internal static int NextSelection(int current,int delta,int count){return count==0?0:(current+delta%count+count)%count;}
  internal static int ColumnsForWidth(int width){return Math.Max(1,Math.Min(4,(width-36)/180));}
  void ChangePage(int direction){int pages=(entry.windows.Count+columns-1)/columns;if(pages<=1)return;page=(page+direction+pages)%pages;selected=page*columns;Build();}

@@ -41,3 +41,5 @@ __pycache__/
 **/lyrics-settings.json
 **/lyrics-status.txt
 **/dock-lyrics.txt*
+
+**/weather-cache.json

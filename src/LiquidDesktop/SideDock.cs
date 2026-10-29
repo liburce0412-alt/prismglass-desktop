@@ -29,6 +29,8 @@ internal sealed class SideDock : Form {
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr h,uint command);
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ // Hide the controller before its parent so TrySuspend sees IsVisible=false.
+ protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=true;}
  protected override bool ShowWithoutActivation {get{return !preview;}}
  protected override CreateParams CreateParams {get{var p=base.CreateParams;if(!preview){p.ExStyle|=0x80;p.ExStyle&=~0x40000;}return p;}}
  public SideDock(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
@@ -36,7 +38,7 @@ internal sealed class SideDock : Form {
   pixels=new WebViewPixelScale(view,()=>{Place();ApplyRegion();layout="";PublishLayout();});
   root=directory;preview=isPreview;shared=data;instance=screenInstance;source=shared==null?new SideDockData(root):null;widgets=shared==null?new WidgetBackend(root):shared.Widgets;
   Text=preview?"PrismGlass SideDock · 验证":"PrismGlass SideDock";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;
-  screen=Screen.PrimaryScreen.Bounds;Place();BackColor=Color.FromArgb(18,34,46);ApplyRegion();view.Dock=DockStyle.Fill;Controls.Add(view);
+  screen=Screen.PrimaryScreen.Bounds;Place();BackColor=Color.FromArgb(18,34,46);ApplyRegion();view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);
   Shown+=async(s,e)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"side-preview-runtime":"runtime-data"));
    await view.EnsureCoreWebView2Async(environment);
@@ -51,6 +53,7 @@ internal sealed class SideDock : Form {
    view.CoreWebView2.ProcessFailed+=(sender,a)=>Fail("WebView2: "+a.ProcessFailedKind);
    view.Source=new Uri("https://prism-side.local/sidedock.html");timer.Interval=1000;timer.Tick+=(sender,a)=>Tick();timer.Start();
   }catch(Exception ex){Fail(ex.ToString());}};
+  VisibleChanged+=(s,e)=>{if(Visible&&ready){widgetRead=DateTime.MinValue;dataRead=DateTime.MinValue;Tick();}};
   Deactivate+=DismissOnDeactivate;
   FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();view.Dispose();};
  }
@@ -126,9 +129,10 @@ internal sealed class SideDock : Form {
   if(paused!=motionPaused){motionPaused=paused;Send(new{type="motion",paused=paused});}
   var now=DateTime.UtcNow;
   if(painted&&(now-heartbeat).TotalSeconds>=2){heartbeat=now;File.WriteAllText(Diagnostic("side-heartbeat.txt"),now.ToString("o"));}
+  if(!Visible)return;
   if((now-widgetRead).TotalSeconds>=(paused?15:opened?1:5)){widgetRead=now;var data=json.Serialize(shared==null?widgets.Read():shared.ReadWidgets());if(data!=lastWidgets){lastWidgets=data;view.CoreWebView2.PostWebMessageAsJson(data);}}
   if((now-dataRead).TotalSeconds<(paused?30:5)||reading)return;dataRead=now;reading=true;
-  try{var data=await Task.Run(()=>shared==null?source.Read():shared.ReadData());if(!closed){Send(data);if(painted)File.WriteAllText(Diagnostic("side-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}}
+  try{var data=await Task.Run(()=>shared==null?source.Read():shared.ReadData());if(!closed&&Visible){Send(data);if(painted)File.WriteAllText(Diagnostic("side-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}}
   catch(Exception ex){if(!closed)File.WriteAllText(Diagnostic("side-error.txt"),ex.Message);}
   finally{reading=false;}
  }

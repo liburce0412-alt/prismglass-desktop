@@ -84,7 +84,7 @@ internal static class CompanionConnection {
  }
  internal static string VideoArguments(string root,string address,string peer,bool apply){
   CompanionServer.Endpoint(address,31890);CompanionServer.Endpoint(peer,31890);
-  string script=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(root)),"RepairCompanionVideo.ps1");if(!File.Exists(script))throw new InvalidOperationException("投屏连接修复工具尚未安装，请更新 PrismGlass。");
+  root=Path.GetFullPath(root).TrimEnd('\\','/');string script=Path.Combine(Path.GetDirectoryName(root),"RepairCompanionVideo.ps1");if(!File.Exists(script))throw new InvalidOperationException("投屏连接修复工具尚未安装，请更新 PrismGlass。");
   return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)+" -AppRoot "+Quote(root)+" -Address "+Quote(address)+" -PeerAddress "+Quote(peer)+(apply?" -Apply":"");
  }
  public static Task<Dictionary<string,object>> CheckVideo(string root,string address,string peer){return CheckArguments(root,VideoArguments(root,address,peer,false));}

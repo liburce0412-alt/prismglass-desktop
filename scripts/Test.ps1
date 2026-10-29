@@ -16,7 +16,7 @@ foreach($case in @(@('TestDesktopVisibility','DesktopVisibilityPolicy'),@('Verif
  else{& (Join-Path $out ($case[0]+'.exe'))}
  if($LASTEXITCODE -ne 0){throw 'Behavior test failed'}
 }
-foreach($script in @('TestCompanionServer.ps1','TestCompanionDiscovery.ps1','TestCompanionAddressDiscovery.ps1','TestCompanionConnection.ps1','TestCompanionContent.ps1','TestCompanionBridge.ps1','TestCompanionHost.ps1','TestCompanionContext.ps1','TestCompanionControls.ps1','TestWidgetSources.ps1')){& (Join-Path $PSScriptRoot $script)}
+foreach($script in @('TestCompanionServer.ps1','TestCompanionDiscovery.ps1','TestCompanionAddressDiscovery.ps1','TestCompanionConnection.ps1','TestCompanionContent.ps1','TestCompanionBridge.ps1','TestCompanionHost.ps1','TestCompanionContext.ps1','TestCompanionControls.ps1','TestWidgetSources.ps1','TestWeatherData.ps1')){& (Join-Path $PSScriptRoot $script)}
 & (Join-Path $repo 'tests/TestCompanionNetworkSetup.ps1')
 & (Join-Path $repo 'tests/TestCompanionVideoNetwork.ps1')
 & (Join-Path $repo 'tests/TestSetupIntegration.ps1')

@@ -31,7 +31,7 @@ internal static class DesktopSettingsFiles {
 
 internal sealed class DesktopPreferences {
  readonly string root,file;readonly JavaScriptSerializer json=new JavaScriptSerializer();string observed="",loadError="";
- static readonly string[] RightCards={"quota","desktop","notes","tasks","countdown","links","calculator"};
+ static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  public DesktopPreferenceState Current {get;private set;}
  public long Revision {get;private set;}
@@ -56,7 +56,13 @@ internal sealed class DesktopPreferences {
   if(value.theme!="Sky"&&value.theme!="Astro")throw new ArgumentException("未知主题。");Number(value.glassOpacity,60,100);Number(value.textScale,90,130);Number(value.gridColumns,4,10);Number(value.dockIconSize,32,72);HotkeyBinding.Parse(value.hotkey);
   if(value.monitors==null)value.monitors=new List<MonitorPreferences>();if(value.monitors.Count>32)throw new ArgumentException("显示器配置过多。");var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);foreach(var monitor in value.monitors){if(monitor==null||String.IsNullOrWhiteSpace(monitor.id)||monitor.id.Length>512||!seen.Add(monitor.id))throw new ArgumentException("显示器标识无效或重复。");Number(monitor.dockOffset,0,200);}
  }
- Dictionary<string,object> ReadSidecar(string name){var map=DesktopSettingsFiles.Map(DesktopSettingsFiles.Read(Path.Combine(root,name)));bool right=name=="shelf-state.json";string hidden=right?"hiddenCards":"hiddenLeftCards",order=right?"cardOrder":"leftCardOrder";object raw;if(map.TryGetValue(hidden,out raw)&&raw!=null)Cards(raw,right?RightCards:LeftCards);if(map.TryGetValue(order,out raw)&&raw!=null)Order(raw,right?RightCards:LeftCards);return map;}
+ internal static Dictionary<string,object> ReadShelfState(string text){
+  var map=DesktopSettingsFiles.Map(text);foreach(string key in new[]{"hiddenCards","cardOrder"}){object raw;if(!map.TryGetValue(key,out raw)||raw is string||!(raw is IEnumerable))continue;var items=new List<object>();foreach(var item in (IEnumerable)raw)if(!Object.Equals(item,"desktop"))items.Add(item);
+   // Retiring the only visible legacy card must not leave an empty rail; reading never rewrites user data.
+   if(key=="hiddenCards"&&Array.TrueForAll(RightCards,name=>items.Contains(name)))items.Remove("quota");map[key]=items;
+  }return map;
+ }
+ Dictionary<string,object> ReadSidecar(string name){bool right=name=="shelf-state.json";string text=DesktopSettingsFiles.Read(Path.Combine(root,name));var map=right?ReadShelfState(text):DesktopSettingsFiles.Map(text);string hidden=right?"hiddenCards":"hiddenLeftCards",order=right?"cardOrder":"leftCardOrder";object raw;if(map.TryGetValue(hidden,out raw)&&raw!=null)Cards(raw,right?RightCards:LeftCards);if(map.TryGetValue(order,out raw)&&raw!=null)Order(raw,right?RightCards:LeftCards);return map;}
  Dictionary<string,object> SnapshotSidecar(string name){try{return ReadSidecar(name);}catch(Exception ex){loadError=ex.Message;return new Dictionary<string,object>();}}
  public MonitorPreferences ForMonitor(string id,bool primary){var match=Current.monitors.Find(item=>String.Equals(item.id,id,StringComparison.OrdinalIgnoreCase));return match??new MonitorPreferences{id=id,enabled=primary};}
  public object Snapshot(){Reload();var result=DesktopSettingsFiles.Map(json.Serialize(Current));result["revision"]=Revision;var shelf=SnapshotSidecar("shelf-state.json");var left=SnapshotSidecar("sidebar-visibility.json");result["error"]=loadError;result["hiddenCards"]=Value(shelf,"hiddenCards",new string[0]);result["hiddenLeftCards"]=Value(left,"hiddenLeftCards",new string[0]);result["cardOrder"]=Value(shelf,"cardOrder",RightCards);result["leftCardOrder"]=Value(left,"leftCardOrder",LeftCards);

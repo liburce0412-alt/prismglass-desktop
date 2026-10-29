@@ -94,7 +94,7 @@
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = true; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
     privateViews.forEach(function (node) { node.hidden = true; });
     ['task-list', 'quick-apps', 'app-grid', 'app-categories', 'app-folders', 'touch-actions', 'touch-extra'].forEach(function (id) { $(id).textContent = ''; });
-    ['track-title', 'track-artist', 'lyric-current', 'lyric-next', 'music-source', 'weather-main', 'weather-detail', 'countdown', 'apps-status', 'focus-completed', 'home-context', 'touch-context', 'asset-status', 'data-status', 'home-task-count', 'home-task-first', 'home-task-second', 'home-countdown', 'music-elapsed', 'music-duration'].forEach(function (id) { text(id, ''); });
+    ['track-title', 'track-artist', 'lyric-current', 'lyric-next', 'music-source', 'weather-main', 'weather-detail', 'weather-location', 'weather-stamp', 'weather-status', 'countdown', 'apps-status', 'focus-completed', 'home-context', 'touch-context', 'asset-status', 'data-status', 'home-task-count', 'home-task-first', 'home-task-second', 'home-countdown', 'music-elapsed', 'music-duration'].forEach(function (id) { text(id, ''); });
     visible('music-timeline', false); $('music-progress').value = 0;
     ['cpu-value', 'memory-value', 'disk-value', 'network-value', 'volume-value'].forEach(function (id) { text(id, '—'); });
     ['task-text', 'note-text', 'app-search'].forEach(function (id) { $(id).value = ''; });
@@ -105,6 +105,7 @@
     $('theme-toggle').disabled = true; $('motion-toggle').disabled = true; $('apps-tab').disabled = true; $('work-tab').disabled = true; $('notes-tab').disabled = true; $('logout').disabled = true;
     $('pair-submit').disabled = false; $('pair-code').disabled = false; $('device-name').disabled = false; text('pair-submit', '请求配对');
     visible('note-reload', false); visible('pair-form', false); visible('pair-panel', true);
+    text('pair-heading', '让桌面，来到手边。'); visible('pair-retry', false);
     text('pair-hint', '正在恢复已记住的设备…'); text('pair-status', '连接成功后会自动进入，无需重复扫码。');
     actionButtons.forEach(function (button) { button.disabled = true; });
     document.body.dataset.music = 'quiet'; feedback('', false); showPage('home');
@@ -139,6 +140,7 @@
         text('pair-status', $('pair-code').value ? '配对码已填入，点击“请求配对”后还需在电脑确认。' : '主屏幕与 Safari 分别记住配对；请在日常使用的窗口内完成。'); return;
       }
       connection(error.status === 423 ? '电脑已锁定' : error.status === 401 ? '需要配对' : '连接中断', false);
+      text('pair-heading', error.status === 423 ? '电脑已锁定' : error.status === 401 ? '重新连接这台电脑' : '连接暂时中断'); visible('pair-retry', !!error.network);
       text('pair-hint', error.status === 423 ? '电脑解锁后会自动重新同步。' : error.status === 401 ? '请在电脑开启配对，输入新的配对码。' : '请检查电脑是否运行 PrismGlass，以及两台设备是否在同一局域网。');
       text('pair-status', error.status === 423 ? '电脑锁定期间不能读取个人内容或执行操作。' : '个人内容由电脑端选择共享。');
     }
@@ -170,7 +172,15 @@
     finally { polling = false; schedule(session ? 2000 : 5000); }
   }
 
-  function weatherLabel(code) { if (code === 0) return '晴'; if (code <= 3) return '多云'; if (code <= 48) return '雾'; if (code >= 95) return '雷雨'; if (code >= 71 && code <= 77 || code >= 85 && code <= 86) return '雪'; return '雨'; }
+  function weatherLabel(code) { if (number(code) === null) return '天气状况未提供'; if (code === 0) return '晴'; if (code === 1) return '晴间少云'; if (code === 2) return '多云'; if (code === 3) return '阴'; if (code === 45 || code === 48) return '雾'; if (code >= 51 && code <= 67) return '雨'; if (code >= 71 && code <= 77 || code === 85 || code === 86) return '雪'; if (code >= 80 && code <= 82) return '阵雨'; if (code >= 95 && code <= 99) return '雷雨'; return '天气状况未提供'; }
+  function weatherStamp(weather) {
+    var value = weather.updatedAt, data = weather.data || {}, parts = [];
+    if (data.stale === true) parts.push('上次天气');
+    if (number(value) !== null && value > 0) { var date = new Date(value), today = date.toDateString() === new Date().toDateString(); parts.push(date.toLocaleString('zh-CN', { month: today ? undefined : '2-digit', day: today ? undefined : '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + ' 数据'); }
+    else parts.push('数据时间未提供');
+    if (data.source) parts.push(data.source); if (data.kind === 'model') parts.push('数值预报'); else if (data.kind === 'observation') parts.push('观测数据');
+    return parts.join(' · ');
+  }
   function renderState() {
     if (!state || !session || versionChanged) return;
     pruneAssets();
@@ -178,9 +188,16 @@
     if (document.body.dataset.presentation === 'true' && document.body.dataset.presentationMode === 'lyrics' && !permission('music')) setPresentation(true);
     document.body.dataset.theme = state.theme === 'Astro' ? 'Astro' : 'Sky';
     var w = state.weather || {}, wd = w.data || {}, s = state.system || {}, sd = s.data || {}, v = state.volume || {};
-    text('weather-main', w.available && number(wd.temp) !== null ? Math.round(wd.temp) + '° · ' + (number(wd.code) !== null ? weatherLabel(wd.code) : '天气') : '天气未获取');
-    text('weather-detail', w.available ? (number(wd.low) !== null && number(wd.high) !== null ? Math.round(wd.low) + '° / ' + Math.round(wd.high) + '° · ' : '') + (w.updatedAt ? time(w.updatedAt) + ' 更新' : '来自电脑') : '电脑天气组件未提供有效数据');
-    visible('weather', !!w.available); $('work-tab').disabled = false; $('notes-tab').disabled = false;
+    var weatherAvailable = w.available === true && number(wd.temp) !== null, weatherMetrics = [];
+    if (number(wd.feelsLike) !== null) weatherMetrics.push('体感 ' + Math.round(wd.feelsLike) + '°');
+    if (number(wd.low) !== null && number(wd.high) !== null) weatherMetrics.push(Math.round(wd.low) + '° / ' + Math.round(wd.high) + '°');
+    text('weather-location', wd.location || '电脑天气位置');
+    text('weather-main', weatherAvailable ? Math.round(wd.temp) + '° · ' + weatherLabel(wd.code) : '天气暂不可用');
+    text('weather-detail', weatherAvailable ? weatherMetrics.join(' · ') : w.reason || '请在电脑中检查天气位置与网络。'); visible('weather-detail', !weatherAvailable || weatherMetrics.length > 0);
+    text('weather-stamp', weatherAvailable ? weatherStamp(w) : '等待电脑提供有效数据');
+    text('weather-status', weatherAvailable && wd.stale === true ? w.reason || wd.reason || '正在等待新的天气数据。' : ''); visible('weather-status', weatherAvailable && wd.stale === true);
+    $('weather').dataset.state = !weatherAvailable ? 'unavailable' : wd.stale === true ? 'stale' : 'ready';
+    visible('weather', true); $('work-tab').disabled = false; $('notes-tab').disabled = false;
     text('cpu-value', s.available ? percent(sd.cpu) : '—'); text('memory-value', s.available ? percent(sd.ram) : '—');
     var disk = state.disk || {}; text('disk-value', disk.available && number(disk.free) !== null ? Math.round(disk.free / 1073741824) + ' GB 可用' : disk.reason || '未提供'); visible('disk-metric', !!disk.available);
     text('network-value', s.available && (number(sd.down) !== null || number(sd.up) !== null) ? '↓ ' + rate(sd.down) + '  ↑ ' + rate(sd.up) : '未获取');
@@ -712,12 +729,14 @@
   $('presentation-exit').onclick = function () { setPresentation(false); };
   $('presentation-mode').onchange = function () { setPresentation(document.body.dataset.presentation === 'true'); };
   document.querySelector('.brand').onclick = function (event) { event.preventDefault(); showPage('home'); };
-  $('manage-button').onclick = function () { var show = $('connection-settings').hidden; visible('connection-settings', show); $('manage-button').setAttribute('aria-expanded', String(show)); };
-  $('settings-close').onclick = function () { visible('connection-settings', false); $('manage-button').setAttribute('aria-expanded', 'false'); };
+  function connectionSettings(show) { visible('connection-settings', show); $('manage-button').setAttribute('aria-expanded', String(show)); (show ? $('settings-close') : $('manage-button')).focus(); }
+  $('manage-button').onclick = function () { connectionSettings($('connection-settings').hidden); };
+  $('settings-close').onclick = function () { connectionSettings(false); };
+  $('connection-settings').onkeydown = function (event) { if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) { event.preventDefault(); connectionSettings(false); } };
   $('reduce-motion').checked = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   $('reduce-motion').onchange = function () { document.body.dataset.reduced = String($('reduce-motion').checked); if (state) renderState(); };
   $('reduce-motion').onchange();
-  $('reconnect').onclick = function () { if (cooling()) { feedback(rateNotice(), true, 'cooldown'); schedule(0); return; } clearPrivate(true); feedback('', false); connection('正在连接', false); schedule(0); };
+  $('pair-retry').onclick = $('reconnect').onclick = function () { if (cooling()) { feedback(rateNotice(), true, 'cooldown'); schedule(0); return; } clearPrivate(true); feedback('', false); connection('正在连接', false); schedule(0); };
   $('logout').onclick = async function () {
     if (!session || $('logout').disabled) return;
     $('logout').disabled = true;
@@ -739,7 +758,7 @@
       if (result.status === 'paired') { ticket = ''; pairing = false; pairDeadline = 0; writesBlocked = false; $('pair-code').value = ''; text('pair-status', '电脑已批准，正在同步…'); schedule(0); }
       else if (result.status === 'pending') {
         if (Date.now() >= pairDeadline) throw new Error('等待电脑批准已超时。请在电脑重新开启配对，使用新的二维码或配对码。');
-        if (Date.now() >= pairDeadline - 90000) text('pair-status', '仍在等待电脑批准：请回到电脑的伴随屏窗口，选择共享内容并批准此设备。本次请求从发送起两分钟有效。'); pairTimer = setTimeout(pollPair, 2000);
+        if (Date.now() >= pairDeadline - 90000) text('pair-status', '仍在等待电脑批准：请在电脑“设置 → iPad 伴随屏”选择共享内容并批准此设备。本次请求从发送起两分钟有效。'); pairTimer = setTimeout(pollPair, 2000);
       }
       else throw new Error('配对状态无效，请重新输入配对码。');
     } catch (error) { pairingFailed(error); }
@@ -752,7 +771,7 @@
     event.preventDefault(); if ($('pair-submit').disabled || document.hidden) return;
     var code = $('pair-code').value.replace(/\s/g, ''), name = $('device-name').value.trim(); if (!/^\d{6}$/.test(code) || !name) { text('pair-status', '请输入六位数字配对码和设备名称，可直接粘贴带空格的配对码。'); return; }
     clearPrivate(); pairing = true; visible('pair-form', true); $('pair-scan').disabled = true; $('pair-submit').disabled = true; $('pair-code').disabled = true; $('device-name').disabled = true; text('pair-hint', '确认一次，日常自动连接。'); text('pair-status', '正在发送配对请求…'); feedback('', false);
-    try { var result = await request('/api/pair', { code: code, name: name }); if (result.status !== 'pending' || typeof result.ticket !== 'string') throw new Error('配对请求未建立，请重试。'); ticket = result.ticket; pairDeadline = Date.now() + 120000; $('pair-code').value = ''; text('pair-submit', '等待批准'); text('pair-status', '请在两分钟内回到电脑的伴随屏窗口，选择共享内容并批准此设备。'); connection('等待电脑批准', false); pairTimer = setTimeout(pollPair, 2000); }
+    try { var result = await request('/api/pair', { code: code, name: name }); if (result.status !== 'pending' || typeof result.ticket !== 'string') throw new Error('配对请求未建立，请重试。'); ticket = result.ticket; pairDeadline = Date.now() + 120000; $('pair-code').value = ''; text('pair-submit', '等待批准'); text('pair-status', '请在两分钟内到电脑“设置 → iPad 伴随屏”选择共享内容并批准此设备。'); connection('等待电脑批准', false); pairTimer = setTimeout(pollPair, 2000); }
     catch (error) { pairingFailed(error); if (!error.cancelled && error.code === 'pair_code') $('pair-code').value = code; }
   };
 
@@ -785,7 +804,7 @@
   window.addEventListener('pagehide', clearPrivate);
   window.addEventListener('pageshow', function () { if (!document.hidden) schedule(0); });
   window.addEventListener('online', function () { if (!document.hidden) schedule(0); });
-  window.addEventListener('offline', function () { clearPrivate(true); connection('网络已断开', false); text('pair-hint', '网络恢复后会重新连接，未完成操作不会自动重试。'); });
+  window.addEventListener('offline', function () { clearPrivate(true); connection('网络已断开', false); text('pair-heading', '网络已断开'); visible('pair-retry', true); text('pair-hint', '网络恢复后会重新连接，未完成操作不会自动重试。'); });
   window.addEventListener('beforeunload', function (event) { if (noteDirty || $('task-text').value.trim()) { event.preventDefault(); event.returnValue = ''; } });
   function sizeViewport() { document.body.style.setProperty('--viewport-height', (window.visualViewport ? window.visualViewport.height : window.innerHeight) + 'px'); }
   window.addEventListener('resize', sizeViewport); if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeViewport);

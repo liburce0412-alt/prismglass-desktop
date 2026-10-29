@@ -10,7 +10,7 @@ using System.Web.Script.Serialization;
 internal sealed class CompanionBridge {
  readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;readonly SharedDesktopData shared;readonly DockLyrics lyrics;readonly CompanionContent content;readonly LyricsStyleStore lyricsStyle;
  static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","hiddenCards","hiddenLeftCards"};
- static readonly string[] RightCards={"quota","desktop","notes","tasks","countdown","links","calculator"},LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
+ static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"},LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  readonly Func<Func<object>,object> onDesktop;readonly Func<bool> locked;readonly Func<string> streamAddress;readonly object gate=new object();readonly CompanionContext context;readonly CompanionControls controls;
  sealed class Assets {public Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();public string coverId="";public byte[] cover;}
  volatile Assets assetSnapshot=new Assets();
@@ -71,7 +71,7 @@ internal sealed class CompanionBridge {
   object music=new{available=false};if(grant.music){var state=Map(Desktop(grant,()=>lyrics.CompanionSnapshot(DateTime.UtcNow)));state["cover"]=Cover(state);music=state;}
   var focus=Value(widgets,"focus") as Dictionary<string,object>;if(focus==null||!Object.Equals(Value(focus,"available"),true)||!FocusAvailable())focus=new Dictionary<string,object>{{"available",false},{"reason",focus==null||Text(focus,"reason")==""?"专注采集尚未运行，请在电脑端重新开启伴随屏。":Text(focus,"reason")}};
   return new{protocol=1,serverTime=Now(),locked=false,theme=Value(settings,"theme"),settings=settings,lyricsSettings=grant.music?ReadContent(()=>lyricsStyle.Read(grant.control)):new{available=false},permissions=new{apps=grant.apps,tasks=grant.tasks,notes=grant.notes,music=grant.music,control=grant.control,pointer=grant.pointer,power=grant.power,screen=grant.screen,keyboard=grant.keyboard},controls=controls.Snapshot(grant),
-   weather=Section(widgets,"weather","widget-Weather.json",true,"temp","code","high","low","sunrise","sunset"),system=Section(widgets,"system","widget-System.json",false,"cpu","ram","down","up"),volume=Section(widgets,"volume","widget-Music.json",false,"value"),music=music,
+   weather=Section(widgets,"weather","widget-Weather.json",true,"temp","feelsLike","code","high","low","sunrise","sunset","location","source","kind","stale","reason","updatedAt","fetchedAt","timezone","utcOffsetSeconds"),system=Section(widgets,"system","widget-System.json",false,"cpu","ram","down","up"),volume=Section(widgets,"volume","widget-Music.json",false,"value"),music=music,
    disk=Pick(Map(Value(widgets,"disk")),"available","free","total","usedPercent","updatedAt","reason"),context=grant.control?context.Snapshot():new{available=false},focus=focus,tasks=grant.tasks?ReadContent(content.ReadTasks):new{available=false},notes=grant.notes?ReadContent(content.ReadNotes):new{available=false}};
  }
  object Apps(){

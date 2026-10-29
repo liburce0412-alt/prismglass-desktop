@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -7,6 +7,8 @@ using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -38,17 +40,25 @@ internal sealed class WorkspaceWindow : Form {
  CancellationTokenSource releaseCheck;ReleaseUpdateState releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion};
  bool ready,closed,reading,interacting,picker,runtimePaused;int generation;string page="apps",widgetKey="",preferenceKey="";Screen display;Rectangle dockAnchor;object runtime;
  public event Action SettingsChanged;
- public event Action CompanionRequested;
+ CompanionHost companion;
+ public CompanionHost Companion {get{return companion;}set{if(companion!=null)companion.ManagementChanged-=OnCompanionChanged;companion=value;if(companion!=null)companion.ManagementChanged+=OnCompanionChanged;}}
+ void OnCompanionChanged(){if(IsOpen&&companionVisible)PublishCompanion();}
+ readonly System.Windows.Forms.Timer dismissal=new System.Windows.Forms.Timer{Interval=100};
+ Rectangle settingsBounds;bool placing,companionVisible;string companionKey="";
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetClassName(IntPtr h,StringBuilder value,int length);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,StringBuilder value,int length);
+ static bool DockActive(){var h=GetForegroundWindow();var name=new StringBuilder(256);var title=new StringBuilder(1024);GetClassName(h,name,name.Capacity);GetWindowText(h,title,title.Capacity);return DockBackend.IsPrismDock(name.ToString(),title.ToString());}
  public SharedDesktopData SharedData {get;set;}
- public bool IsOpen {get{return Visible&&!closed;}}
+ public bool IsOpen {get{return Visible&&!closed&&WindowState!=FormWindowState.Minimized;}}
  public bool IsInteracting {get{return interacting||picker;}}
  public WorkspaceWindow(string directory,AppLibrary apps,DesktopPreferences settings){
   root=directory;library=apps;preferences=settings;widgets=new WidgetBackend(root);pixels=new WebViewPixelScale(view,()=>PublishLayout());Text="PrismGlass · 应用与设置";
-  FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=true;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(23,37,57);MinimumSize=new Size(560,420);
-  view.Dock=DockStyle.Fill;Controls.Add(view);display=Screen.PrimaryScreen;Place();
+  FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=true;TopMost=true;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(23,37,57);MinimumSize=new Size(560,420);
+  view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);display=Screen.PrimaryScreen;Place();
   Shown+=async(s,e)=>{if(ready)return;try{
    await view.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,"runtime-data")));pixels.Sync();
-   view.CoreWebView2.Settings.AreDefaultContextMenusEnabled=false;view.CoreWebView2.Settings.AreDevToolsEnabled=false;view.CoreWebView2.Settings.IsZoomControlEnabled=false;view.CoreWebView2.Settings.IsStatusBarEnabled=false;
+   view.CoreWebView2.Settings.AreDefaultContextMenusEnabled=false;view.CoreWebView2.Settings.AreDevToolsEnabled=false;view.CoreWebView2.Settings.IsZoomControlEnabled=false;view.CoreWebView2.Settings.IsStatusBarEnabled=false;view.CoreWebView2.Settings.IsNonClientRegionSupportEnabled=true;
    view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-workspace.local",root,CoreWebView2HostResourceAccessKind.DenyCors);
    view.CoreWebView2.NavigationStarting+=(sender,a)=>{if(a.Uri!="https://prism-workspace.local/workspace.html")a.Cancel=true;};
    view.CoreWebView2.NewWindowRequested+=(sender,a)=>a.Handled=true;
@@ -56,15 +66,20 @@ internal sealed class WorkspaceWindow : Form {
    view.CoreWebView2.ProcessFailed+=(sender,a)=>{ready=false;Hide();File.WriteAllText(Path.Combine(root,"workspace-error.txt"),a.ProcessFailedKind.ToString());Dispose();};
    view.Source=new Uri("https://prism-workspace.local/workspace.html");
   }catch(Exception ex){File.WriteAllText(Path.Combine(root,"workspace-error.txt"),ex.ToString());Hide();}};
-  Deactivate+=(s,e)=>{if(page=="apps"&&!IsInteracting&&Control.MouseButtons!=MouseButtons.None&&!Bounds.Contains(Cursor.Position))Send(new{type="dismiss"});};
+  Deactivate+=(s,e)=>{if(page=="apps"&&!IsInteracting){if(DockActive()||dockAnchor.Contains(Cursor.Position))dismissal.Start();else Hide();}};
+  Activated+=(s,e)=>dismissal.Stop();
+  dismissal.Tick+=(s,e)=>{if(!Visible||page!="apps"||ContainsFocus){dismissal.Stop();return;}if(!IsInteracting&&!DockActive()){dismissal.Stop();Hide();}};
   VisibleChanged+=(s,e)=>{if(!Visible){generation++;interacting=false;CancelWeatherSearch();Send(new{type="visibility",visible=false});}else if(ready){Send(new{type="visibility",visible=true});Publish();}};
   FormClosing+=(s,e)=>{if(!closed&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();}};
-  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();PublishLyrics();}};timer.Start();
-  Resize+=(s,e)=>{Shape();if(ready)PublishLayout();};
+  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(page=="settings"){PublishLyrics();PublishCompanion();}}};timer.Start();
+  Resize+=(s,e)=>{view.Visible=Visible&&WindowState!=FormWindowState.Minimized;Shape();if(ready){Send(new{type="visibility",visible=IsOpen});PublishLayout();}};
+  Move+=(s,e)=>{if(!placing&&Visible){display=Screen.FromControl(this);if(page=="settings")settingsBounds=Bounds;if(ready)PublishLayout();}};
  }
+ protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=WindowState!=FormWindowState.Minimized;}
  void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){const int d=48;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=new Region(path);if(old!=null)old.Dispose();}}
- void Place(){var bounds=WorkspacePlacement.Calculate(display.WorkingArea,display.Bounds,dockAnchor,page=="apps");MinimumSize=new Size(Math.Min(560,bounds.Width),Math.Min(420,bounds.Height));Bounds=bounds;Shape();pixels.Sync();}
- public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="welcome"||next=="weather"||next=="updates"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
+ void Place(){placing=true;try{var bounds=WorkspacePlacement.Calculate(display.WorkingArea,display.Bounds,dockAnchor,page=="apps");if(page=="settings"&&!settingsBounds.IsEmpty){display=Screen.FromRectangle(settingsBounds);var area=display.WorkingArea;bounds=new Rectangle(Math.Max(area.Left,Math.Min(settingsBounds.Left,area.Right-bounds.Width)),Math.Max(area.Top,Math.Min(settingsBounds.Top,area.Bottom-bounds.Height)),Math.Min(bounds.Width,area.Width),Math.Min(bounds.Height,area.Height));}MinimumSize=new Size(Math.Min(560,bounds.Width),Math.Min(420,bounds.Height));Bounds=bounds;Shape();pixels.Sync();}finally{placing=false;}}
+ public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;if(next=="toggle-apps"&&IsOpen&&page=="apps"){Hide();return;}if(next=="toggle-apps")next="apps";dismissal.Stop();display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="welcome"||next=="weather"||next=="updates"||next=="companion"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
+ void PublishCompanion(){if(Companion==null||!IsOpen||!companionVisible)return;string key=json.Serialize(Companion.ManagementSnapshot());if(key!=companionKey){companionKey=key;Send(new{type="companion",value=json.DeserializeObject(key)});}}
  public void PublishRuntime(object value,bool motionPaused=false){runtime=value;runtimePaused=motionPaused;if(IsOpen){Send(new{type="runtime",value=runtime});PublishLayout();}}
  void Send(object message){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));}
  void PublishLayout(){var b=display.Bounds;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks});}
@@ -96,12 +111,13 @@ internal sealed class WorkspaceWindow : Form {
   if(String.IsNullOrEmpty(text)||text.Length>65536)return;
   var message=json.Deserialize<Dictionary<string,object>>(text);string action=Value(message,"action");
   if(action=="close"){Hide();return;}if(action=="interaction"){interacting=Value(message,"active").Equals("true",StringComparison.OrdinalIgnoreCase);return;}
-  if(action=="page"){string next=Value(message,"page")=="apps"?"apps":"settings";if(page!=next){page=next;Place();PublishLayout();}return;}
+  if(action=="section"){companionVisible=Value(message,"section")=="companion";return;}
+  if(action=="page"){companionVisible=Value(message,"page")=="settings"&&Value(message,"section")=="companion";string next=Value(message,"page")=="apps"?"apps":"settings";if(page!=next){page=next;Place();PublishLayout();}return;}
   if(action=="settings"){
    object patch,revision;if(!message.TryGetValue("changes",out patch)||!(patch is Dictionary<string,object>)||!message.TryGetValue("revision",out revision))throw new ArgumentException("设置内容不完整，请重新打开。");
    preferences.Apply((Dictionary<string,object>)patch,Convert.ToInt64(revision));PublishSettings(true);Send(new{type="saved",scope="settings",message="已保存"});var handler=SettingsChanged;if(handler!=null)handler();return;
   }
-  if(action=="companion"){var handler=CompanionRequested;if(handler!=null)handler();return;}
+  if(action=="companion"){if(Companion!=null){Companion.DialogOwner=this;companionVisible=true;Companion.Manage(message);PublishCompanion();}return;}
   if(action=="updates-check"){CheckUpdates();return;}
   if(action=="updates-open"){string address=releaseUpdate.state=="error"?ReleaseUpdates.LatestPage:releaseUpdate.state=="available"&&ReleaseUpdates.IsReleaseUrl(releaseUpdate.url,releaseUpdate.tag)?releaseUpdate.url:null;if(address==null)throw new InvalidOperationException("请先检查更新，取得有效的官方发布地址。");try{Process.Start(new ProcessStartInfo(address){UseShellExecute=true});}catch{releaseUpdate.state="error";releaseUpdate.message="无法打开浏览器，请检查默认浏览器后重试。";PublishUpdates();}return;}
   if(action=="startup-read"){PublishStartup();return;}
@@ -143,5 +159,5 @@ internal sealed class WorkspaceWindow : Form {
   case "explorer":Process.Start(new ProcessStartInfo("explorer.exe"){UseShellExecute=true});break;
   default:throw new ArgumentException("无法识别的系统操作。");
  }}
- protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;generation++;CancelWeatherSearch();if(releaseCheck!=null)releaseCheck.Cancel();timer.Stop();timer.Dispose();view.Dispose();}base.Dispose(disposing);}
+ protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;Companion=null;generation++;CancelWeatherSearch();if(releaseCheck!=null)releaseCheck.Cancel();timer.Stop();timer.Dispose();dismissal.Dispose();view.Dispose();}base.Dispose(disposing);}
 }

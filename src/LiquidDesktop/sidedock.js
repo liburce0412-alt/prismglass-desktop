@@ -116,13 +116,26 @@ function networkData(n){
  [...$('signal-bars').children].forEach((bar,i)=>bar.classList.toggle('on',i<strength));
  text('network-adapter',n.adapter||'');$('wifi-trigger').style.color=n.connected?'#e8f7ff':'#8ca2b2';
 }
-let widgetFocus=null,cpuHistory=[];
+let widgetFocus=null,cpuHistory=[],weatherViewKey='';
+function weatherName(code){if(!Number.isFinite(code))return '天气状况未提供';if(code===0)return '晴';if(code===1)return '晴间少云';if(code===2)return '多云';if(code===3)return '阴';if(code===45||code===48)return '雾';if(code>=51&&code<=67)return '雨';if(code>=71&&code<=77||code===85||code===86)return '雪';if(code>=80&&code<=82)return '阵雨';if(code>=95&&code<=99)return '雷雨';return '天气状况未提供';}
+function weatherTime(value){if(!Number.isFinite(value)||value<=0)return '数据时间未提供';const date=new Date(value),today=date.toDateString()===new Date().toDateString();return date.toLocaleString('zh-CN',{month:today?undefined:'2-digit',day:today?undefined:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})+' 数据';}
+function weatherData(w,status,valid){
+ const key=JSON.stringify([valid,w,status?.reason,new Date().toDateString()]);if(key===weatherViewKey)return;weatherViewKey=key;
+ const stale=valid&&w.stale===true,reason=status?.reason||w?.reason||'',degrees=value=>valid&&Number.isFinite(value)?Math.round(value)+'°':'—';
+ text('weather-city',w?.location||'天气位置未提供');text('weather-temp',degrees(w?.temp));text('weather-high',degrees(w?.high));text('weather-low',degrees(w?.low));
+ text('weather-condition',valid?weatherName(w.code):'天气暂不可用');text('weather-feels',valid&&Number.isFinite(w.feelsLike)?'体感 '+Math.round(w.feelsLike)+'°':'');$('weather-feels').hidden=!valid||!Number.isFinite(w.feelsLike);
+ text('weather-stamp',valid?(stale?'上次天气 · ':'')+weatherTime(w.updatedAt):'等待有效数据');
+ const source=[w?.source,w?.kind==='model'?'数值预报':w?.kind==='observation'?'观测数据':''].filter(Boolean).join(' · ');text('weather-source',source);$('weather-source').hidden=!source;
+ text('weather-status',!valid?reason||'请在天气设置中检查位置与网络。':stale?reason||'正在等待新的天气数据。':'');$('weather-status').hidden=valid&&!stale;
+ const page=document.querySelector('[data-widget-page=weather]');page.dataset.state=!valid?'unavailable':stale?'stale':'ready';
+ requestAnimationFrame(fitContent);
+}
 function focusClock(){if(!widgetFocus)return;const f=widgetFocus,n=f.deadline>0?Math.max(0,f.deadline-Math.floor(Date.now()/1000)):f.remaining,t=Math.floor(n/60).toString().padStart(2,'0')+':'+Math.floor(n%60).toString().padStart(2,'0');text('rail-focus',f.available?t:'—');if(mode!=='focus')return;text('widget-focus-time',f.available?t:'—');text('widget-focus-toggle',f.deadline>0?'暂停':n===0?'再来一轮':'开始');text('widget-focus-state',!f.available?'计时器暂不可用':f.deadline>0?'专注于眼前这一件事':n===0?'时间到了，活动一下吧':'给自己一段不被打扰的时间');$('widget-focus-progress').value=1-n/Math.max(1,f.total);}
 function widgetData(m,sample=true){
- latestWidgets=m;const w=m.weather,valid=w&&w.ready,s=m.system;
- text('rail-weather',valid?Math.round(w.temp)+'°':'—°');text('rail-system',s?Math.round(s.cpu)+'%':'—');text('rail-music',m.music.title==='网易云音乐'||m.music.title==='等待播放'?'待播放':'当前曲目');widgetFocus=m.focus;focusClock();
+ latestWidgets=m;const w=m.weather,weatherStatus=m.sourceStatus?.weather,valid=w?.ready===true&&weatherStatus?.available===true&&Number.isFinite(w.temp),s=m.system;
+ text('rail-weather',valid?Math.round(w.temp)+'°':'—');document.querySelector('[data-widget=weather]').setAttribute('aria-label',valid?(w.stale?'上次天气，':'天气，')+Math.round(w.temp)+'度，'+weatherName(w.code):'天气暂不可用');text('rail-system',s?Math.round(s.cpu)+'%':'—');text('rail-music',m.music.title==='网易云音乐'||m.music.title==='等待播放'?'待播放':'当前曲目');widgetFocus=m.focus;focusClock();
  if(s&&sample){cpuHistory.push(s.cpu);if(cpuHistory.length>60)cpuHistory.shift();}
- if(mode==='weather'){text('weather-city',w?.location||'已配置位置');text('weather-temp',valid?Math.round(w.temp)+'°':'—°');text('weather-high',valid?Math.round(w.high)+'°':'—');text('weather-low',valid?Math.round(w.low)+'°':'—');const c=w?.code;text('weather-condition',!valid?'天气暂不可用':c===0?'晴':c<=3?'多云':c<=48?'雾':c<=67?'有雨':c<=77?'有雪':c<=82?'阵雨':c<=86?'阵雪':'雷雨');}
+ if(mode==='weather')weatherData(w,weatherStatus,valid);
  if(mode==='system'){text('system-cpu',s?Math.round(s.cpu)+'%':'—');text('system-ram',s?Math.round(s.ram)+'%':'—');$('cpu-progress').value=s?.cpu||0;$('ram-progress').value=s?.ram||0;const rate=n=>n>1048576?(n/1048576).toFixed(1)+' MB/s':(n/1024).toFixed(1)+' KB/s';text('system-network',s?'↓ '+rate(s.down)+'　↑ '+rate(s.up):'性能数据暂不可用');$('cpu-history').querySelector('polyline').setAttribute('points',cpuHistory.map((v,i)=>(i*320/59)+','+(68-v*.65)).join(' '));}
  if(mode==='music'){text('music-title',m.music.title);text('music-artist',m.music.artist);text('music-volume',m.volume?'音量 '+Math.round(m.volume.value)+'%':'音量 —');const img=$('music-cover');if(m.music.cover&&img.getAttribute('src')!==m.music.cover)img.src=m.music.cover;img.hidden=!m.music.cover;$('music-symbol').hidden=!!m.music.cover;}
  if(m.lyrics){for(const [id,on] of [['lyrics-toggle',m.lyrics.enabled],['lyrics-online',m.lyrics.online]]){text(id,on?'开启':'关闭');$(id).setAttribute('aria-checked',String(on));}text('lyrics-status',m.lyrics.status);const offset=m.lyrics.offsetMs; text('lyrics-offset',(offset===0?'0.0 秒':(offset>0?'提前 ':'延后 ')+(Math.abs(offset)/1000).toFixed(1)+' 秒')+' · 重置');}

@@ -190,3 +190,34 @@ body[data-screen-expanded=true] .topbar,body[data-screen-expanded=true] .touch-b
 #pointer-surface[data-screen=true]{padding:0;min-height:230px;border-radius:20px;overflow:hidden}#pointer-surface[data-screen=true]>:not(video){visibility:hidden}#pointer-surface[data-screen=true]:before{display:none}
 @media(min-width:701px) and (max-height:800px){#pointer-page{padding:4px 2%;gap:8px}.pointer-heading h1{font-size:25px}.pointer-heading p{margin:3px 0}.pointer-workspace{min-height:0;flex:1}#pointer-surface{min-height:210px}.pointer-preferences{margin:0}.pointer-actions button{padding:8px 16px}.screen-toolbar select{padding:7px 9px}.screen-toolbar>button{padding:8px 12px}}
 @media(max-width:700px){.screen-toolbar>label{margin-bottom:7px}.screen-toolbar select{max-width:180px}.screen-toolbar>button{margin-bottom:4px}.pointer-heading{align-items:flex-start;flex-wrap:wrap}.pointer-heading h1{font-size:25px}.pointer-heading .button-row{margin-top:3px}#pointer-surface[data-screen=true]{min-height:220px}}
+
+/* The portrait music card spans both columns, so its following row must be explicit. */
+.weather{align-items:flex-start;max-width:390px}.weather>div{min-width:0}.weather strong,.weather small{display:block;overflow-wrap:anywhere}.weather strong{font-size:20px;line-height:1.35}.weather small{line-height:1.5;margin-top:4px}.weather #weather-location{font-size:12px;margin:0 0 4px}.weather #weather-stamp{font-size:11px}.weather #weather-status{font-size:12px}.weather [hidden]{display:none}.weather[data-state=unavailable] strong{font-size:17px}.weather-mark{line-height:1.4}
+#widget-gallery .widget-weather-location{font-size:13px;line-height:1.5;margin:6px 0 0;overflow-wrap:anywhere}#widget-gallery .widget-weather .widget-caption{display:none}#widget-gallery .widget-weather .widget-number{margin:8px 0}#widget-gallery .widget-weather .widget-status{padding-top:8px;margin-top:auto}#widget-gallery .widget-weather-reason{font-size:12px;line-height:1.6;margin:0;overflow-wrap:anywhere}.widget-weather [hidden]{display:none}
+@media(min-width:701px) and (max-width:850px){
+ body:not([data-presentation=true]) .atmosphere{grid-template-rows:auto auto auto;gap:24px 20px}
+ body:not([data-presentation=true]) .clock-panel{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,270px);column-gap:24px}
+ body:not([data-presentation=true]) .date-line,body:not([data-presentation=true]) .day-caption,body:not([data-presentation=true]) .home-context,body:not([data-presentation=true]) .home-tools{grid-column:1/-1}
+ body:not([data-presentation=true]) .clock{grid-column:1;grid-row:2;font-size:112px}
+ body:not([data-presentation=true]) .weather{grid-column:2;grid-row:2;margin:0;align-self:center}
+ body:not([data-presentation=true]) .home-tools{max-width:none;margin-top:17px}
+ body:not([data-presentation=true]) .music-panel{padding:24px}.music-art{height:112px}
+ body:not([data-presentation=true]) #home-focus{grid-column:1;grid-row:3;min-width:0;width:100%;padding-right:14px}
+ .home-brief{grid-column:2;grid-row:3;align-self:center}
+ .pair-panel{grid-column:1/-1}
+}
+/* Keep the touch surface beside its controls in both iPad orientations. */
+@media(min-width:701px){
+ body:not([data-screen-expanded=true]) #pointer-page{display:grid;grid-template-columns:280px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);height:100%;min-height:420px;gap:14px;padding:4px 2%}
+ body:not([data-screen-expanded=true]) .pointer-heading{grid-column:1/-1;margin:0}
+ body:not([data-screen-expanded=true]) #screen-tools{grid-column:1;grid-row:2;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:16px;scrollbar-width:thin}
+ body:not([data-screen-expanded=true]) .pointer-workspace{grid-column:2;grid-row:2;grid-template-columns:minmax(0,1fr) 52px;gap:10px;min-height:0}
+ body:not([data-screen-expanded=true]) #pointer-surface{min-height:240px;padding:18px}
+ body:not([data-screen-expanded=true]) .screen-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+ body:not([data-screen-expanded=true]) .screen-toolbar>label{display:block;margin:0;font-size:12px;min-width:0}
+ body:not([data-screen-expanded=true]) .screen-toolbar select{display:block;width:100%;max-width:100%;margin:5px 0 0;padding:9px 6px;font-size:13px}
+ body:not([data-screen-expanded=true]) .screen-toolbar>button{margin:0;font-size:12px;padding:9px 5px}
+}
+.pair-scan small{color:inherit;opacity:.85}
+.pair-recovery{display:flex;flex-wrap:wrap;margin-top:16px}.pair-recovery>button{margin-right:8px;margin-bottom:6px}
+.connection-settings button:focus,.connection-settings summary:focus{outline:2px solid var(--accent);outline-offset:3px}

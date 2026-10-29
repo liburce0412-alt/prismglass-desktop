@@ -43,7 +43,7 @@ test('forms begin disabled and never save before authoritative state', () => {
 });
 test('desktop form exposes the complete permitted contract and loads exact values', () => {
   const f = fixture(); f.render(); for (const key of desktopFields.filter(key => !key.startsWith('hidden'))) assert(f.ids['desktop-' + key], key);
-  assert.equal(f.ids['desktop-glassOpacity'].value, '90'); assert.equal(f.ids['desktop-manualPaused'].checked, false); assert.equal(f.card('额度').checked, false); assert.equal(f.card('桌面入口').checked, true);
+  assert.equal(f.ids['desktop-glassOpacity'].value, '90'); assert.equal(f.ids['desktop-manualPaused'].checked, false); assert.equal(f.card('额度').checked, false); assert(!f.nodes.some(node => node.attrs['aria-label'] === '显示桌面入口'));
   f.edit('desktop-theme', 'Astro'); assert.equal(f.writes.length, 0); assert.match(f.ids['desktop-appearance-status'].textContent, /尚未保存/); f.submit('desktop');
   const call = f.writes[0]; assert.equal(call.key, 'settings'); assert.equal(call.url, '/api/settings'); assert.equal(call.payload.expectedRevision, initial.settings.revision); assert.deepEqual(Object.keys(call.payload.changes).sort(), desktopFields.slice().sort()); assert.equal(call.payload.changes.theme, 'Astro'); assert.equal(call.payload.changes.textScale, 105); assert.equal(typeof call.payload.changes.showLabels, 'boolean');
 });

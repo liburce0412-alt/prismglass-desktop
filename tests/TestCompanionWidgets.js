@@ -42,6 +42,15 @@ function fixture(options = {}) {
 }
 const sample = { weather: { available: true, updatedAt: Date.parse('2026-10-26T00:00:00Z'), data: { temp: 21.4, code: 3, low: 18, high: 24 } }, tasks: { available: true, revision: 'opaque-1', items: [{ id: 'a', text: '<script>私人待办</script>', done: false }, { id: 'b', text: '已完成不显示', done: true }, { id: 'c', text: '第二件事', done: false }] } };
 function test(name, fn) { fn(); groups++; console.log('PASS ' + name); }
+
+test('weather keeps real time, missing fields, stale reasons and source identity distinct', () => {
+  const f = fixture(), weather = { available: true, updatedAt: Date.parse('2026-10-25T00:00:00Z'), data: { temp: 0, code: null, feelsLike: null, high: null, low: null, location: '杭州 · 浙江 · 中国', source: 'CMA GRAPES · Open-Meteo', kind: 'model', fetchedAt: Date.parse('2026-10-26T00:00:00Z') } };
+  f.api.render({ weather }, {}); assert.equal(f.all['widget-weather-temp'].textContent, '0°'); assert.equal(f.all['widget-weather-summary'].textContent, '天气状况未提供'); assert.equal(f.all['widget-weather-location'].textContent, '杭州 · 浙江 · 中国'); assert.match(f.all['widget-weather-status'].textContent, /10\/25/); assert.match(f.all['widget-weather-status'].textContent, /CMA GRAPES · Open-Meteo · 数值预报/);
+  weather.data.feelsLike = -2; weather.data.stale = true; weather.reason = '天气更新失败，保留上次数据。'; f.api.render({ weather }, {}); assert.match(f.all['widget-weather-summary'].textContent, /体感 -2°/); assert.match(f.all['widget-weather-status'].textContent, /^上次天气/); assert.equal(f.all['widget-weather-reason'].textContent, weather.reason);
+  weather.data.code = 1; f.api.render({ weather }, {}); assert.match(f.all['widget-weather-summary'].textContent, /^晴间少云/);
+  weather.available = false; weather.data = null; weather.reason = '天气数据已过期，请检查电脑网络。'; f.api.render({ weather }, {}); assert.equal(f.all['widget-weather-temp'].textContent, '—'); assert.equal(f.all['widget-weather-summary'].textContent, weather.reason); assert.equal(f.all['widget-weather-location'].textContent, '电脑天气位置');
+  f.api.clear(); assert.equal(f.all['widget-weather-location'].textContent, '电脑天气位置'); assert.equal(f.all['widget-weather-reason'].textContent, ''); assert.equal(f.all['widget-weather-status'].textContent, '尚未连接');
+});
 test('nine useful local-first cards initialize without transport and settings are strictly normalized', () => {
   const f = fixture({ page: 'home', saved: { version: 1, order: ['world', 'world', 'untrusted'], visible: ['world', 'tasks', 'untrusted'], duration: 9, zone: 'not/a/zone', secret: 'never retain this' } });
   assert.equal(Object.keys(f.all).filter(id => id.startsWith('widget-card-')).length, 9); assert.equal(f.gallery.children[0].id, 'widget-card-world'); assert.equal(f.all['widget-card-timer'].hidden, true); assert.equal(f.all['widget-card-world'].hidden, false); assert.equal(f.all['widget-timer-minutes'].value, '3'); assert.equal(f.all['widget-zone'].value, 'Asia/Shanghai'); assert.equal(f.intervals.size, 0); assert.equal(f.storageWrites.length, 0);

@@ -15,7 +15,7 @@
     ['fontSize','桌面字号',18,32], ['widthMode','桌面宽度模式',{adaptive:'自适应',fixed:'固定宽度'}], ['width','桌面固定宽度',420,1200,10], ['weight','字重',400,900,50], ['spacing','字距',-2,12], ['intensity','动效强度',0,100], ['speed','动效速度',50,180], ['glow','辉光',0,100], ['secondaryOpacity','次行透明度',30,100],
     ['backgroundTheme','歌词背景',{transparent:'透明',album:'跟随专辑',wallpaper:'跟随桌面',ocean:'海洋',pine:'松林',sand:'暖沙',violet:'紫雾'}], ['backgroundOpacity','背景浓度',0,100], ['backgroundMotion','背景缓动']
   ];
-  var cards = { hiddenCards:{quota:'额度',desktop:'桌面入口',notes:'随手记',tasks:'待办',countdown:'倒计时',links:'链接',calculator:'计算器'}, hiddenLeftCards:{network:'网络',Weather:'天气',Music:'音乐',Focus:'专注',Folders:'文件夹',System:'系统状态',Tools:'工具',Life:'生活'} };
+  var cards = { hiddenCards:{quota:'额度',notes:'随手记',tasks:'待办',countdown:'倒计时',links:'链接',calculator:'计算器'}, hiddenLeftCards:{network:'网络',Weather:'天气',Music:'音乐',Focus:'专注',Folders:'文件夹',System:'系统状态',Tools:'工具',Life:'生活'} };
   function create(tag, label) { var node = document.createElement(tag); if (label) node.textContent = label; return node; }
   function addField(model, field) {
     var key = field[0], label = create('label'), caption = create('span', field[1]), input, output;

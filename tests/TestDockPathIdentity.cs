@@ -31,6 +31,12 @@ internal static class TestDockPathIdentity {
    Check(pin.path==redirected&&pin.arguments=="--unchanged","matching preserves the exact saved launch target and arguments");
    Shortcut(shortcut,redirected);
    Check(DockBackend.Matches(new DockPin{path=shortcut},window),"a shell shortcut through a migrated directory resolves to the running executable");
+   string pinned=DockBackend.Pin(root,redirected,"--profile one","App",Path.Combine(root,"dock-icons","run-0.png"));
+   Check(DockBackend.Pin(root,executable,"--profile one","App","")==pinned&&DockBackend.Pin(root,shortcut,"--profile one","App","")!=pinned,"physical aliases reuse a pin while shortcut arguments remain distinct");
+   Check(DockBackend.Pin(root,executable,"--profile two","App","")!=pinned&&DockBackend.Pin(root,other,"--profile one","Other","")!=pinned,"different launch arguments and unrelated executables remain separate pins");
+   Check(DockBackend.ReadPins(root).Find(p=>"p"+p.id==pinned).icon=="","pinning a running app never persists its reusable icon slot");
+   Check(DockBackend.PersistentIcon(root+Path.DirectorySeparatorChar,Path.Combine(root,"dock-icons","run-4.png"))=="","legacy running-slot icons are ignored with the real trailing-root form");
+   string custom=Path.Combine(root,"custom","run-0.png");Check(DockBackend.PersistentIcon(root,custom)==custom&&DockBackend.PersistentIcon(root,Path.Combine(root,"dock-icons","custom.png"))==Path.Combine(root,"dock-icons","custom.png"),"custom icons are preserved outside the running cache namespace");
    string missing=Path.Combine(root,"missing.exe");
    Check(DockBackend.Matches(new DockPin{path=missing},new DockWindow{path=missing}),"unknown identical paths retain the previous exact-match behavior");
    Check(!DockBackend.Matches(new DockPin{path=missing},window),"an unresolved different target never matches by basename");
