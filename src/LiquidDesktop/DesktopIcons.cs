@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
 using Microsoft.Win32;
 
 // Keep Explorer's saved view ordinary; beautification hides only its current HWND.
@@ -61,6 +62,20 @@ public static class DesktopIcons {
  public static uint CurrentFlags(){return WithView(view=>{uint flags;view.GetCurrentFolderFlags(out flags);return flags;});}
  public static int SavedFlags(){using(var key=Registry.CurrentUser.OpenSubKey(DesktopKey)){return key==null?0:Convert.ToInt32(key.GetValue("FFlags",0));}}
  public static bool Visible(){bool visible=false;EnumWindows((window,p)=>{var view=FindWindowEx(window,IntPtr.Zero,"SHELLDLL_DefView",null);if(view==IntPtr.Zero)return true;var list=FindWindowEx(view,IntPtr.Zero,"SysListView32",null);visible=list!=IntPtr.Zero&&IsWindowVisible(view)&&IsWindowVisible(list);return false;},IntPtr.Zero);return visible;}
+ [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SHGetNameFromIDList(IntPtr item,uint kind,out IntPtr name);
+ internal sealed class Position {public string path;public int x,y;}
+ static string ItemName(IntPtr item){IntPtr name=IntPtr.Zero;try{Marshal.ThrowExceptionForHR(SHGetNameFromIDList(item,0x80028000,out name));return Marshal.PtrToStringUni(name);}finally{if(name!=IntPtr.Zero)Marshal.FreeCoTaskMem(name);}}
+ internal static Position[] CapturePositions(){return WithView(view=>{int count;view.ItemCount(2,out count);var result=new List<Position>();for(int i=0;i<count;i++){IntPtr item=IntPtr.Zero;try{view.Item(i,out item);Point point;view.GetItemPosition(item,out point);result.Add(new Position{path=ItemName(item),x=point.X,y=point.Y});}finally{if(item!=IntPtr.Zero)Marshal.FreeCoTaskMem(item);}}return result.ToArray();});}
+ internal static void RestorePositions(Position[] positions){WithView(view=>{
+  if(view.GetAutoArrange()==0)return true;
+  var wanted=new Dictionary<string,Position>(StringComparer.OrdinalIgnoreCase);foreach(var position in positions)if(position!=null&&!String.IsNullOrEmpty(position.path))wanted[position.path]=position;
+  int count;view.ItemCount(2,out count);var items=new List<IntPtr>();var points=new List<Point>();IntPtr itemArray=IntPtr.Zero,pointArray=IntPtr.Zero;
+  try{for(int i=0;i<count;i++){IntPtr item=IntPtr.Zero;try{view.Item(i,out item);Position position;if(!wanted.TryGetValue(ItemName(item),out position))continue;Point current;view.GetItemPosition(item,out current);if(current.X==position.x&&current.Y==position.y)continue;items.Add(item);item=IntPtr.Zero;points.Add(new Point{X=position.x,Y=position.y});}finally{if(item!=IntPtr.Zero)Marshal.FreeCoTaskMem(item);}}
+   if(items.Count==0)return true;itemArray=Marshal.AllocHGlobal(items.Count*IntPtr.Size);pointArray=Marshal.AllocHGlobal(items.Count*8);
+   for(int i=0;i<items.Count;i++){Marshal.WriteIntPtr(itemArray,i*IntPtr.Size,items[i]);Marshal.StructureToPtr(points[i],IntPtr.Add(pointArray,i*8),false);}
+   view.SelectAndPositionItems((uint)items.Count,itemArray,pointArray,0x80000080);return true;
+  }finally{foreach(var item in items)Marshal.FreeCoTaskMem(item);if(itemArray!=IntPtr.Zero)Marshal.FreeHGlobal(itemArray);if(pointArray!=IntPtr.Zero)Marshal.FreeHGlobal(pointArray);}
+ });}
  static void OrdinaryPreference(){
   // Updating only Advanced\HideIcons leaves FWF_NOICONS cached in the desktop
   // view and in Bags\1\Desktop. Explorer can load that stale flag next login.

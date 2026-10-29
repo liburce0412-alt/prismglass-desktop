@@ -18,6 +18,7 @@ foreach($case in @(@('TestDesktopVisibility','DesktopVisibilityPolicy'),@('Verif
 }
 foreach($script in @('TestCompanionServer.ps1','TestCompanionDiscovery.ps1','TestCompanionAddressDiscovery.ps1','TestCompanionConnection.ps1','TestCompanionContent.ps1','TestCompanionBridge.ps1','TestCompanionHost.ps1','TestCompanionContext.ps1','TestCompanionControls.ps1','TestWidgetSources.ps1')){& (Join-Path $PSScriptRoot $script)}
 & (Join-Path $repo 'tests/TestCompanionNetworkSetup.ps1')
+& (Join-Path $repo 'tests/TestCompanionVideoNetwork.ps1')
 & (Join-Path $repo 'tests/TestSetupIntegration.ps1')
 & (Join-Path $repo 'tests/TestDesktopModeFailure.ps1')
 & $csc /nologo ("/out:"+(Join-Path $out 'TestWallpaperRefresh.exe')) (Join-Path $repo 'tests/TestWallpaperRefresh.cs') (Join-Path $repo 'src/LiquidDesktop/WallpaperRefresh.cs')
@@ -30,6 +31,8 @@ if($LASTEXITCODE -ne 0){throw 'Windows PowerShell 5.1 compatibility checks faile
 & node (Join-Path $repo 'tests/TestCompanionWeb.js');if($LASTEXITCODE -ne 0){throw 'Companion web behavior checks failed'}
 & node (Join-Path $repo 'tests/TestCompanionGlass.js');if($LASTEXITCODE -ne 0){throw 'Companion optical glass checks failed'}
 & (Join-Path $PSScriptRoot 'TestCompanionStream.ps1')
+& (Join-Path $PSScriptRoot 'TestCompanionVirtualDisplay.ps1')
+& (Join-Path $PSScriptRoot 'TestReleaseUpdates.ps1')
 & node (Join-Path $repo 'tests/TestCompanionScreen.js');if($LASTEXITCODE -ne 0){throw 'Companion screen checks failed'}
 foreach($test in @('TestCompanionInstall.js','TestCompanionScan.js','TestCompanionLyrics.js','TestCompanionSettings.js','TestCompanionWidgets.js')){& node (Join-Path $repo ('tests/'+$test));if($LASTEXITCODE -ne 0){throw "$test failed"}}
 & node (Join-Path $repo 'tests/TestGlassOutlineMessages.js');if($LASTEXITCODE -ne 0){throw 'Glass outline message checks failed'}

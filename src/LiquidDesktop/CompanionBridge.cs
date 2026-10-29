@@ -11,14 +11,15 @@ internal sealed class CompanionBridge {
  readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;readonly SharedDesktopData shared;readonly DockLyrics lyrics;readonly CompanionContent content;readonly LyricsStyleStore lyricsStyle;
  static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","hiddenCards","hiddenLeftCards"};
  static readonly string[] RightCards={"quota","desktop","notes","tasks","countdown","links","calculator"},LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
- readonly Func<Func<object>,object> onDesktop;readonly Func<bool> locked;readonly object gate=new object();readonly CompanionContext context;readonly CompanionControls controls;
+ readonly Func<Func<object>,object> onDesktop;readonly Func<bool> locked;readonly Func<string> streamAddress;readonly object gate=new object();readonly CompanionContext context;readonly CompanionControls controls;
  sealed class Assets {public Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();public string coverId="";public byte[] cover;}
  volatile Assets assetSnapshot=new Assets();
  readonly JavaScriptSerializer json=new JavaScriptSerializer{MaxJsonLength=4194304};
  readonly Dictionary<string,string> remote=new Dictionary<string,string>(),allowed=new Dictionary<string,string>();
  readonly Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();string appsRevision=Guid.NewGuid().ToString("N"),appsSource="",coverId="",coverSource="";byte[] cover;
- public CompanionBridge(string path,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics dockLyrics,Func<Func<object>,object> dispatch,Func<bool> isLocked,CompanionContext foreground=null,CompanionControls remoteControls=null){root=path;library=apps;preferences=settings;shared=data;lyrics=dockLyrics;content=new CompanionContent(path);lyricsStyle=new LyricsStyleStore(path);onDesktop=dispatch;locked=isLocked;context=foreground??new CompanionContext();controls=remoteControls??new CompanionControls(isLocked);}
+ public CompanionBridge(string path,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics dockLyrics,Func<Func<object>,object> dispatch,Func<bool> isLocked,CompanionContext foreground=null,CompanionControls remoteControls=null,Func<string> streamAddress=null){root=path;library=apps;preferences=settings;shared=data;lyrics=dockLyrics;content=new CompanionContent(path);lyricsStyle=new LyricsStyleStore(path);onDesktop=dispatch;locked=isLocked;this.streamAddress=streamAddress;context=foreground??new CompanionContext();controls=remoteControls??new CompanionControls(isLocked);}
  CompanionStream screenStream;
+ internal bool ScreenActive {get {lock(gate)return screenStream!=null&&screenStream.IsActive;}}
  public void StopControls(){controls.CancelAll();if(screenStream!=null)screenStream.Stop();}
  public void Dispose(){controls.Dispose();if(screenStream!=null)screenStream.Dispose();}
  internal static string EntrySignature(AppLibraryEntry entry){return entry.kind+"\n"+entry.path+"\n"+entry.arguments+"\n"+entry.target;}
@@ -32,7 +33,7 @@ internal sealed class CompanionBridge {
  bool Permitted(AppLibraryEntry entry){string signature;return entry!=null&&entry.kind!="action"&&allowed.TryGetValue(entry.id,out signature)&&signature==EntrySignature(entry);}
  object Desktop(CompanionGrant grant,Func<object> operation){return onDesktop(()=>{if(!grant.Active||locked())throw new UnauthorizedAccessException();return operation();});}
  public CompanionReply Handle(string path,Dictionary<string,object> request,CompanionGrant grant){
-  if(path=="/api/screen"||path.StartsWith("/api/screen/",StringComparison.Ordinal)){CompanionStream stream;lock(gate){if(screenStream==null)screenStream=new CompanionStream(root,locked);stream=screenStream;}return stream.Handle(path,request,grant);}
+  if(path=="/api/screen"||path.StartsWith("/api/screen/",StringComparison.Ordinal)){CompanionStream stream;lock(gate){if(screenStream==null)screenStream=new CompanionStream(root,locked,streamAddress);stream=screenStream;}return stream.Handle(path,request,grant);}
   if(path=="/api/pointer"||path.StartsWith("/api/pointer/",StringComparison.Ordinal))return controls.Pointer(path,request,grant);
   if(path.StartsWith("/api/power/",StringComparison.Ordinal))return controls.Power(path,request,grant);
   if(path.StartsWith("/api/assets/",StringComparison.Ordinal)){if(!grant.Active||locked())return CompanionReply.Json(423,new{error="locked"});string id=path.Substring(12);byte[] bytes;var snapshot=assetSnapshot;if(grant.apps&&snapshot.icons.TryGetValue(id,out bytes))return CompanionReply.Asset(bytes,"image/png");if(grant.music&&id==snapshot.coverId&&snapshot.cover!=null)return CompanionReply.Asset(snapshot.cover,"image/jpeg");return CompanionReply.Json(404,new{error="not_found"});}

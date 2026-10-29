@@ -42,7 +42,7 @@ Copy-Item "$repo/assets/Cursors" $out -Recurse -Force
 Copy-Item "$repo/LICENSE","$repo/THIRD-PARTY-NOTICES.md","$repo/README.md" $out
 Copy-Item "$repo/docs/COMPANION.md","$repo/docs/COMPANION-SCREEN.md" $out
 Copy-Item "$repo/docs/PRIVACY.md" $out
-Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1" $out
+Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1","$repo/scripts/RepairCompanionVideo.ps1" $out
 # Windows PowerShell 5.1 needs a BOM to read Chinese scripts independently of the system locale.
 foreach($script in Get-ChildItem -LiteralPath $out -Filter '*.ps1' -File -Recurse){[IO.File]::WriteAllText($script.FullName,[IO.File]::ReadAllText($script.FullName),[Text.UTF8Encoding]::new($true))}
 Get-ChildItem $package -File | Where-Object {$_.Name -match 'license|notice'} | Copy-Item -Destination "$out/licenses"

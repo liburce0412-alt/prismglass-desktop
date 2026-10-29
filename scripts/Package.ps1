@@ -1,7 +1,7 @@
 param(
  [string]$BundleRoot=(Join-Path $PSScriptRoot '../dist/PrismGlass'),
  [string]$OutputRoot=(Join-Path $PSScriptRoot '../artifacts/release'),
- [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='0.9.1',
+ [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='0.9.2',
  [Alias('CompilerPath')][string]$Compiler
 )
 $ErrorActionPreference='Stop'
@@ -22,7 +22,7 @@ if(!$Compiler -or !(Test-Path -LiteralPath $Compiler -PathType Leaf)){throw 'Ins
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
 $entries=[Collections.Generic.List[string]]::new()
 $preserve=@('LiquidDesktop\pins.json','LiquidDesktop\theme.txt','LiquidDesktop\paused.txt','LiquidDesktop\wallpaper.png','Glass-Wallpaper-Sample.png')
-$retain=@('ConfigureCompanion.ps1','RepairCompanion.ps1','COMPANION.md')
+$retain=@('ConfigureCompanion.ps1','RepairCompanion.ps1','RepairCompanionVideo.ps1','COMPANION.md')
 foreach($file in Get-ChildItem -LiteralPath $BundleRoot -File -Recurse){
  $relative=[IO.Path]::GetRelativePath($BundleRoot,$file.FullName)
  if(Test-PrivateBundlePath $relative){throw "Refusing runtime/private data in bundle: $relative"}

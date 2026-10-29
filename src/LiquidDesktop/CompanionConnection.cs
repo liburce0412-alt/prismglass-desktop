@@ -64,7 +64,10 @@ internal static class CompanionConnection {
   if(!String.IsNullOrEmpty(existingRecord))args+=" -ExistingSetupRecord "+Quote(Path.GetFullPath(existingRecord));if(initialize)args+=" -Initialize";if(trust)args+=" -TrustNetwork";if(apply)args+=" -Apply";return args;
  }
  public static async Task<Dictionary<string,object>> Check(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool initialize=false){
-  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,false,initialize)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+  return await CheckArguments(root,Arguments(root,choice,hostName,port,existingRecord,trust,false,initialize));
+ }
+ static async Task<Dictionary<string,object>> CheckArguments(string root,string arguments){
+  var start=new ProcessStartInfo(PowerShell(root),arguments){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
   using(var process=Process.Start(start)){
    Task<string> output=process.StandardOutput.ReadToEndAsync(),error=process.StandardError.ReadToEndAsync();var wait=Task.Run(()=>process.WaitForExit(30000));
    if(!await wait){try{process.Kill();}catch{}throw new TimeoutException("连接检查超时，请稍后重试。");}string text=await output,details=await error;
@@ -73,7 +76,17 @@ internal static class CompanionConnection {
   }
  }
  public static async Task Apply(string root,CompanionNetworkChoice choice,string hostName,int port,string existingRecord,bool trust,bool initialize=false){
-  var start=new ProcessStartInfo(PowerShell(root),Arguments(root,choice,hostName,port,existingRecord,trust,true,initialize)){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
+  await ApplyArguments(root,Arguments(root,choice,hostName,port,existingRecord,trust,true,initialize));
+ }
+ static async Task ApplyArguments(string root,string arguments){
+  var start=new ProcessStartInfo(PowerShell(root),arguments){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
   using(var process=Process.Start(start)){await Task.Run(()=>process.WaitForExit());if(process.ExitCode!=0)throw new InvalidOperationException("系统配置未完成或已取消。原连接配置保留，请再次检查。");}
  }
+ internal static string VideoArguments(string root,string address,string peer,bool apply){
+  CompanionServer.Endpoint(address,31890);CompanionServer.Endpoint(peer,31890);
+  string script=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(root)),"RepairCompanionVideo.ps1");if(!File.Exists(script))throw new InvalidOperationException("投屏连接修复工具尚未安装，请更新 PrismGlass。");
+  return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)+" -AppRoot "+Quote(root)+" -Address "+Quote(address)+" -PeerAddress "+Quote(peer)+(apply?" -Apply":"");
+ }
+ public static Task<Dictionary<string,object>> CheckVideo(string root,string address,string peer){return CheckArguments(root,VideoArguments(root,address,peer,false));}
+ public static Task ApplyVideo(string root,string address,string peer){return ApplyArguments(root,VideoArguments(root,address,peer,true));}
 }

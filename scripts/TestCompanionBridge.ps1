@@ -17,7 +17,7 @@ try{
   [IO.File]::AppendAllText($helper,"`n"+$lyrics.Substring($first,$last-$first))
  }
  $binary=Join-Path $out 'TestCompanionBridge.exe'
- $sources=@('tests/TestCompanionBridge.cs','src/LiquidDesktop/CompanionBridge.cs','src/LiquidDesktop/CompanionContext.cs', 'src/LiquidDesktop/CompanionControls.cs','src/LiquidDesktop/CompanionStream.cs','src/LiquidDesktop/CompanionContent.cs','src/LiquidDesktop/CompanionServer.cs','src/LiquidDesktop/LyricBackgroundPalette.cs')|ForEach-Object {Join-Path $repo $_}
+ $sources=@('tests/TestCompanionBridge.cs','src/LiquidDesktop/CompanionBridge.cs','src/LiquidDesktop/CompanionContext.cs', 'src/LiquidDesktop/CompanionControls.cs','src/LiquidDesktop/CompanionStream.cs','src/LiquidDesktop/CompanionVirtualDisplay.cs','src/LiquidDesktop/DesktopIcons.cs','src/LiquidDesktop/CompanionContent.cs','src/LiquidDesktop/CompanionServer.cs','src/LiquidDesktop/LyricBackgroundPalette.cs')|ForEach-Object {Join-Path $repo $_}
  & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo /nowarn:0649 "/out:$binary" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.Security.dll @sources $helper
  if($LASTEXITCODE -ne 0){throw 'Companion bridge tests did not compile.'}
  & $binary (Join-Path $fixture 'app')

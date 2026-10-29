@@ -252,6 +252,7 @@ class TestCompanionServer {
  }
  static void ScreenRouteChecks(string fixture){
   int calls=0;bool locked=false;using(var server=new CompanionServer(Path.Combine(fixture,"screen-security"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>locked)){
+   int networkChecks=0;string observedPeer="";bool networkReady=false;server.BeforeScreen=(peer,grant)=>{networkChecks++;observedPeer=peer;return networkReady?null:CompanionReply.Error(409,"screen_network_pending","pending");};
    Check(Call(server,"/api/screen","GET",null,null,null).Status==401&&calls==0,"screen metadata requires pairing");
    string cookie=Pair(server,new CompanionGrant{pointer=true});string csrf=Device(server).csrf;
    Check(Call(server,"/api/screen","GET",null,cookie,null).Status==403&&calls==0,"pointer permission does not grant screen access");
@@ -261,7 +262,14 @@ class TestCompanionServer {
    Check(Call(server,"/api/screen/begin","POST",offer,cookie,null).Status==403&&calls==1,"screen signaling requires CSRF");
    var cross=Request("/api/screen/begin","POST",offer,cookie,csrf);cross.Origin="https://evil.example";Check(server.Dispatch(cross,Origin).Status==403&&calls==1,"foreign origin cannot open a video stream");
    Check(Call(server,"/api/screen/begin","GET",null,cookie,null).Status==403&&calls==1,"image-style GET cannot open capture");
+   Check(networkChecks==0,"unpaired, ungranted, CSRF and foreign-origin requests cannot trigger network repair");
+   Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==409&&calls==1&&observedPeer=="192.168.1.21","pending repair uses the authenticated socket peer and blocks capture");
+   networkReady=true;
    Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==200&&calls==2&&Device(server).commands.Count==0,"ephemeral signaling does not cache video sessions in action history");
+   Check(networkChecks==2,"completed network repair resumes the ordinary capture handler");
+   locked=true;server.VideoApprovalPending=()=>true;int beforeApprovalCalls=calls;
+   var waitingApproval=Call(server,"/api/screen/begin","POST",offer,cookie,csrf);Check(waitingApproval.Status==503&&(string)Data(waitingApproval)["error"]=="screen_network_pending"&&calls==beforeApprovalCalls,"UAC secure desktop blocks capture while allowing the waiting client to retry");
+   Check(Call(server,"/api/state","GET",null,cookie,null).Status==503&&calls==beforeApprovalCalls,"UAC waiting never serves private state or invokes a control handler");server.VideoApprovalPending=null;locked=false;
    locked=true;Check(Call(server,"/api/screen/ping","POST",new{lease="test"},cookie,csrf).Status==423&&calls==2,"lock blocks stream heartbeats");locked=false;
    server.Revoke(Device(server).id);Check(Call(server,"/api/screen","GET",null,cookie,null).Status==401&&calls==2,"revoked viewer cannot access streaming routes");
   }

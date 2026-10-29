@@ -23,14 +23,20 @@ internal sealed class CompanionConfiguration {
 internal sealed class CompanionHost : IDisposable {
  readonly Control owner;readonly string root;readonly AppLibrary library;readonly CompanionServer server;readonly CompanionBridge bridge;readonly string file;readonly SharedDesktopData shared;readonly DockLyrics lyrics;
  readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly CompanionDiscovery discovery=new CompanionDiscovery();CompanionConfiguration config=new CompanionConfiguration();CompanionWindow window;volatile bool closed,sessionLocked;CompanionNetworkChoice activeNetwork;internal Func<CompanionNetworkChoice[]> ReadNetworks=CompanionConnection.Networks;
+ readonly object videoGate=new object();Task<CompanionReply> videoCheck;string videoKey="",videoPeer="";CompanionGrant videoGrant;DateTime videoCheckedAt;int videoRevision;volatile bool videoApplying;
+ internal Func<string,string,string,Task<Dictionary<string,object>>> ReadVideoPlan=CompanionConnection.CheckVideo;
+ internal Func<string,string,string,Task> ApplyVideoPlan=CompanionConnection.ApplyVideo;
+ internal Func<string,bool> ConfirmVideo;
  [DllImport("user32.dll",SetLastError=true)]static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
  [DllImport("user32.dll")]static extern bool CloseDesktop(IntPtr desktop);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr window,int command);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder value,int bytes,out int needed);
  public CompanionHost(Control desktop,string directory,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics lyrics){
   owner=desktop;root=directory;library=apps;shared=data;this.lyrics=lyrics;file=Path.Combine(root,"runtime-data","companion-settings.json");
+  ConfirmVideo=text=>{Show();return MessageBox.Show(window,text,"修复投屏连接",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;};
   if(File.Exists(file))try{if(new FileInfo(file).Length<1048576){var saved=json.Deserialize<CompanionConfiguration>(File.ReadAllText(file));if(saved!=null&&saved.apps!=null&&saved.apps.Count<=500)config=saved;}}catch{}
-  bridge=new CompanionBridge(root,apps,settings,data,lyrics,Dispatch,IsLocked);bridge.Allow(config.apps);server=new CompanionServer(root,bridge.Handle,IsLocked);
+  bridge=new CompanionBridge(root,apps,settings,data,lyrics,Dispatch,IsLocked,streamAddress:()=>server.LocalAddress);bridge.Allow(config.apps);server=new CompanionServer(root,bridge.Handle,IsLocked);server.BeforeScreen=PrepareVideo;
+  server.VideoApprovalPending=()=>videoApplying&&!sessionLocked&&!closed;
   SystemEvents.SessionSwitch+=SessionChanged;NetworkChange.NetworkAddressChanged+=NetworkChanged;
  }
  void NetworkChanged(object sender,EventArgs e){if(closed||activeNetwork==null||!owner.IsHandleCreated)return;try{owner.BeginInvoke(new Action(()=>{if(!closed&&window!=null&&!window.IsDisposed)window.RefreshNetwork();}));}catch(InvalidOperationException){}}
@@ -43,8 +49,38 @@ internal sealed class CompanionHost : IDisposable {
   if(!((IAsyncResult)result.Task).AsyncWaitHandle.WaitOne(5000)){Interlocked.Exchange(ref cancelled,1);throw new TimeoutException();}return result.Task.GetAwaiter().GetResult();
  }
  public void Show(Form parent=null){if(closed)return;if(window==null||window.IsDisposed)window=new CompanionWindow(this);if(parent!=null&&!parent.IsDisposed&&parent!=window)window.Owner=parent;if(window.WindowState==FormWindowState.Minimized)window.WindowState=FormWindowState.Normal;window.Show();ShowWindow(window.Handle,5);window.BringToFront();window.Activate();}
+ CompanionReply PrepareVideo(string peer,CompanionGrant grant){
+  string local=server.LocalAddress;IPAddress ip;if(!grant.Active||!grant.screen||IsLocked()||String.IsNullOrEmpty(local)||!IPAddress.TryParse(peer,out ip)||!CompanionConnection.Lan(ip))return CompanionReply.Error(403,"screen_network_denied","请在同一局域网重新连接已授权的 iPad。");
+  lock(videoGate){
+   if(videoGrant!=null&&(videoGrant!=grant||videoKey!=local+"|"+peer)&&bridge.ScreenActive)return CompanionReply.Error(409,"screen_busy","已有投屏正在使用，请先停止原来的画面。");
+   if(videoCheck!=null&&!videoCheck.IsCompleted)return CompanionReply.Error(409,"screen_network_pending","正在检查投屏连接，请留意电脑上的确认窗口…");
+   if(videoCheck!=null&&videoKey==local+"|"+peer&&videoGrant==grant&&DateTime.UtcNow-videoCheckedAt<TimeSpan.FromMinutes(2))return videoCheck.Result;
+   videoKey=local+"|"+peer;videoPeer=peer;videoGrant=grant;videoCheckedAt=DateTime.UtcNow;int revision=videoRevision;
+   var completion=new TaskCompletionSource<CompanionReply>();videoCheck=completion.Task;
+   try{owner.BeginInvoke(new Action(async()=>{try{completion.TrySetResult(await CheckVideo(local,peer,grant,revision));}catch{completion.TrySetResult(CompanionReply.Error(503,"screen_network_failed","投屏连接检查失败，请在电脑点“检查并连接”后重试。"));}}));}
+   catch{completion.TrySetResult(CompanionReply.Error(503,"screen_network_stopped","伴随屏已关闭。"));}
+   return CompanionReply.Error(409,"screen_network_pending","正在检查投屏连接，请留意电脑上的确认窗口…");
+  }
+ }
+ bool VideoCurrent(string local,CompanionGrant grant,int revision){return revision==videoRevision&&grant.Active&&grant.screen&&!IsLocked()&&server.LocalAddress==local;}
+ async Task<CompanionReply> CheckVideo(string local,string peer,CompanionGrant grant,int revision){
+  try{
+   var plan=await ReadVideoPlan(root,local,peer);
+   if(!VideoCurrent(local,grant,revision))throw new InvalidOperationException("连接或设备权限已变化，请重新开始投屏。");
+   if(CompanionConnection.Flag(plan,"needsApproval")){
+    string text="为当前已授权的 iPad 修复投屏连接：\n电脑 "+local+" → iPad "+peer+"\n网络："+CompanionConnection.Text(plan,"interfaceAlias")+"（专用）\n\n仅允许 MediaMTX 的 UDP 31890 视频通道访问这台 iPad。\n"+(CompanionConnection.Text(plan,"oldAddress").Length>0?"将替换原来的地址 "+CompanionConnection.Text(plan,"oldAddress")+" → "+CompanionConnection.Text(plan,"oldPeer")+"。\n":"将创建此设备专用的视频规则。\n")+"\n是否更新？确认后可能出现 Windows 管理员提示，iPad 会继续连接。";
+    if(!ConfirmVideo(text))return CompanionReply.Error(409,"screen_network_cancelled","电脑已取消投屏连接修复。需要时点“检查并连接”，再开始投屏。");
+    if(!VideoCurrent(local,grant,revision))throw new InvalidOperationException("连接或设备权限已变化，请重新开始投屏。");
+    videoApplying=true;try{await ApplyVideoPlan(root,local,peer);}finally{videoApplying=false;}plan=await ReadVideoPlan(root,local,peer);
+   }
+   if(!VideoCurrent(local,grant,revision)||!CompanionConnection.Flag(plan,"configured"))throw new InvalidOperationException("投屏连接尚未准备好，请在电脑重新检查连接。");
+   return null;
+  }catch(System.ComponentModel.Win32Exception){return CompanionReply.Error(409,"screen_network_cancelled","管理员确认已取消，请在电脑点“检查并连接”后重试。");}
+   catch(Exception ex){return CompanionReply.Error(503,"screen_network_failed",ex is InvalidOperationException||ex is TimeoutException?ex.Message:"投屏连接检查失败，请在电脑点“检查并连接”后重试。");}
+ }
+ void ResetVideo(){lock(videoGate){videoRevision++;videoKey="";videoPeer="";videoGrant=null;}}
  void StartSources(){lyrics.CompanionActive=true;shared.Widgets.EnsureCompanionSources();shared.Invalidate();}
- void Stop(){activeNetwork=null;lyrics.CompanionActive=false;discovery.Stop();server.Stop();bridge.StopControls();}
+ void Stop(){ResetVideo();activeNetwork=null;lyrics.CompanionActive=false;discovery.Stop();server.Stop();bridge.StopControls();}
  public void Dispose(){if(closed)return;closed=true;SystemEvents.SessionSwitch-=SessionChanged;NetworkChange.NetworkAddressChanged-=NetworkChanged;Stop();if(window!=null)window.Dispose();discovery.Dispose();server.Dispose();bridge.Dispose();}
  static bool Private(IPAddress address){byte[] a=address.GetAddressBytes();return a.Length==4&&(a[0]==10||a[0]==192&&a[1]==168||a[0]==172&&a[1]>=16&&a[1]<=31);}
  public static string[] Addresses(){return NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==OperationalStatus.Up).SelectMany(n=>n.GetIPProperties().UnicastAddresses).Select(a=>a.Address).Where(Private).Select(a=>a.ToString()).Distinct().ToArray();}
@@ -111,7 +147,7 @@ internal sealed class CompanionHost : IDisposable {
   internal async void RefreshNetwork(){if(readingNetwork||connecting||IsDisposed)return;readingNetwork=true;try{var next=await Task.Run(()=>host.ReadNetworks());if(IsDisposed||connecting)return;networks=next;if(host.activeNetwork!=null&&!next.Any(n=>CompanionConnection.SameNetwork(n,host.activeNetwork))){host.Stop();ClearPairing();notice.Text="网络已变化，连接已暂停。请点“检查并连接”，iPad 固定入口保持不变。";UpdateStatus();}RefreshAddresses();}catch{if(!IsDisposed)notice.Text="暂时无法读取当前网络，请点“检查并连接”重试。";}finally{readingNetwork=false;}}
   void RefreshAddresses(){string selected=address.SelectedItem as string;Dictionary<string,object> record=null;try{record=CompanionConnection.ReadRecord(host.root);}catch{}var choice=CompanionConnection.Select(networks,selected??host.config.address,CompanionConnection.Text(record,"interfaceId"));address.Items.Clear();foreach(var network in networks)address.Items.Add(network.address);if(choice!=null)address.SelectedItem=choice.address;}
   void ConnectionError(Exception ex){if(IsDisposed)return;notice.Text=ex is IOException?"连接设置未能保存，请检查磁盘空间和目录权限。":ex is UnauthorizedAccessException?"连接设置没有写入权限，请使用原来的电脑用户重试。":ex is System.ComponentModel.Win32Exception?"系统配置已取消。可再次点“检查并连接”。":ex is InvalidOperationException||ex is ArgumentException||ex is TimeoutException?ex.Message:"连接未完成，请检查当前网络和电脑端配置。";UpdateStatus();}
-  async void Connect(){try{if(!await EnsureConnected())return;DrawQr(host.server.Address+"/",true);code.Text="固定入口 · 已配对设备扫码直接打开";UpdateStatus();}catch(Exception ex){ConnectionError(ex);}}
+  async void Connect(){try{if(!await EnsureConnected())return;string peer;CompanionGrant grant;lock(host.videoGate){peer=host.videoPeer;grant=host.videoGrant;host.videoKey="";}if(grant!=null&&grant.Active&&peer.Length>0)host.PrepareVideo(peer,grant);DrawQr(host.server.Address+"/",true);code.Text="固定入口 · 已配对设备扫码直接打开";UpdateStatus();}catch(Exception ex){ConnectionError(ex);}}
   void ImportPreviousSetup(){if(connecting){notice.Text="连接检查正在进行，请稍后重试。";return;}if(CompanionConnection.ReadRecord(host.root)!=null){notice.Text="此安装已有连接配置，将继续沿用；无需再次导入。";return;}using(var choose=new OpenFileDialog{Title="选择旧版 setup-record.json，沿用 iPad 已信任的证书",Filter="连接配置记录|setup-record.json",CheckFileExists=true}){if(choose.ShowDialog(this)!=DialogResult.OK)return;legacySetup=choose.FileName;}Connect();}
   void ExportCertificate(){byte[] certificate=CompanionConnection.PublicCertificate(host.root);using(var save=new SaveFileDialog{Title="导出公开证书到你选择的位置，再发送给 iPad",FileName="PrismGlass-Companion-CA.cer",Filter="公开证书|*.cer",DefaultExt="cer",AddExtension=true,OverwritePrompt=true}){if(save.ShowDialog(this)!=DialogResult.OK)return;File.WriteAllBytes(save.FileName,certificate);}pages.SelectedIndex=2;notice.Text="公开证书已导出（不包含私钥）。请按连接步骤在 iPad 安装并启用信任，再扫码配对。";}
   async Task<bool> EnsureConnected(){if(connecting)return false;if(host.server.IsRunning&&host.activeNetwork==null){host.StartSources();UpdateStatus();return true;}int attempt=++connectionRevision;connecting=true;address.Enabled=false;port.Enabled=false;

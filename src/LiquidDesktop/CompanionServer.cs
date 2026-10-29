@@ -36,8 +36,12 @@ internal sealed class CompanionServer : IDisposable {
  readonly Dictionary<string,Rate> rates=new Dictionary<string,Rate>(),assetRates=new Dictionary<string,Rate>();readonly SemaphoreSlim requests=new SemaphoreSlim(CoreConcurrency,CoreConcurrency),assetRequests=new SemaphoreSlim(AssetConcurrency,AssetConcurrency);
  readonly Dictionary<string,Rate> pointerRates=new Dictionary<string,Rate>(),powerRates=new Dictionary<string,Rate>(),cancelRates=new Dictionary<string,Rate>();readonly SemaphoreSlim pointerRequests=new SemaphoreSlim(PointerConcurrency,PointerConcurrency),powerRequests=new SemaphoreSlim(PowerConcurrency,PowerConcurrency),cancelRequests=new SemaphoreSlim(1,1);
  readonly Dictionary<string,Rejection> rejections=new Dictionary<string,Rejection>();
- HttpListener listener;string pairingCode="",loadError="";DateTime pairingExpires=DateTime.MinValue;int pairingAttempts,generation;bool disposed;
+ HttpListener listener;string localAddress="",pairingCode="",loadError="";DateTime pairingExpires=DateTime.MinValue;int pairingAttempts,generation;bool disposed;
  public bool IsRunning {get {lock(gate)return listener!=null;}}
+ internal Func<string,CompanionGrant,CompanionReply> BeforeScreen;
+ internal Func<bool> VideoApprovalPending;
+ CompanionReply LockedReply(){return VideoApprovalPending!=null&&VideoApprovalPending()?CompanionReply.Error(503,"screen_network_pending","请完成电脑上的 Windows 管理员确认，连接会随后继续。"):CompanionReply.Error(423,"locked","电脑已锁定，私人内容和控制已暂停。");}
+ public string LocalAddress {get {lock(gate)return listener==null?"":localAddress;}}
  public string Address {get;private set;}
  public sealed class Device {public string id,name,tokenHash,csrf;public DateTime expiresAt;public CompanionGrant grants;[ScriptIgnore]public Dictionary<string,Command> commands=new Dictionary<string,Command>();[ScriptIgnore]public int cachedBytes;}
  public sealed class Command {public string signature;public CompanionReply reply;}
@@ -71,7 +75,7 @@ internal sealed class CompanionServer : IDisposable {
   if(!local)throw new ArgumentException("该地址不属于当前电脑，请重新选择网络地址。");
   lock(gate){if(disposed)throw new ObjectDisposedException("CompanionServer");if(listener!=null)throw new InvalidOperationException("伴随屏已开启。");if(loadError.Length>0)throw new InvalidOperationException(loadError);
    var next=new HttpListener();next.Prefixes.Add(origin+"/");try{next.TimeoutManager.EntityBody=TimeSpan.FromSeconds(8);next.TimeoutManager.HeaderWait=TimeSpan.FromSeconds(8);next.TimeoutManager.IdleConnection=TimeSpan.FromSeconds(15);next.Start();RenewSessionCsrf();}catch{next.Close();throw new InvalidOperationException("无法开启 HTTPS。请检查证书绑定、URL ACL、端口、所选网络地址和运行目录权限。");}
-   Address=origin;listener=next;generation++;foreach(var device in devices){device.grants=Copy(device.grants);device.grants.Active=device.expiresAt>Now;}int current=generation;Task.Run(()=>Listen(next,current,origin,address,port));
+   Address=origin;localAddress=address;listener=next;generation++;foreach(var device in devices){device.grants=Copy(device.grants);device.grants.Active=device.expiresAt>Now;}int current=generation;Task.Run(()=>Listen(next,current,origin,address,port));
   }
  }
  public void Stop(){HttpListener previous;lock(gate){previous=listener;listener=null;generation++;pairingCode="";pairingExpires=DateTime.MinValue;pending.Clear();foreach(var device in devices)device.grants.Active=false;}if(previous!=null){previous.Stop();previous.Close();}}
@@ -148,7 +152,7 @@ internal sealed class CompanionServer : IDisposable {
    else {if(!String.IsNullOrEmpty(request.Origin)&&request.Origin!=origin)return CompanionReply.Error(403,"origin_denied","请求来源不受允许。");body=new Dictionary<string,object>();}
    if(!request.Path.StartsWith("/api/",StringComparison.Ordinal)){if(write)return CompanionReply.Error(405,"method_not_allowed","请求方式不受支持。");return Static(request.Path);}
    lock(gate){
-    if(disposed||(expectedGeneration>=0&&expectedGeneration!=generation))return CompanionReply.Error(503,"stopped","伴随屏已关闭。");Prune();bool asset=AssetPath(request.Path),pointer=PointerPath(request.Path),power=PowerPath(request.Path),cancel=request.Path=="/api/power/cancel";string category=RouteCategory(request.Path);var bucket=asset?assetRates:pointer?pointerRates:cancel?cancelRates:power?powerRates:rates;int wait=RateWait(bucket,"ip:"+(request.RemoteAddress??""),pointer?PointerIpPerMinute:cancel?60:power?30:720,60);if(wait==0&&pointer)wait=RateWait(bucket,"ip-second:"+(request.RemoteAddress??""),PointerIpPerSecond,1);if(wait>0)return Reject(429,"rate_limited","请求过于频繁，请稍后重试。",category,"ip",wait);if(Locked())return CompanionReply.Error(423,"locked","电脑已锁定，私人内容和控制已暂停。");
+    if(disposed||(expectedGeneration>=0&&expectedGeneration!=generation))return CompanionReply.Error(503,"stopped","伴随屏已关闭。");Prune();bool asset=AssetPath(request.Path),pointer=PointerPath(request.Path),power=PowerPath(request.Path),cancel=request.Path=="/api/power/cancel";string category=RouteCategory(request.Path);var bucket=asset?assetRates:pointer?pointerRates:cancel?cancelRates:power?powerRates:rates;int wait=RateWait(bucket,"ip:"+(request.RemoteAddress??""),pointer?PointerIpPerMinute:cancel?60:power?30:720,60);if(wait==0&&pointer)wait=RateWait(bucket,"ip-second:"+(request.RemoteAddress??""),PointerIpPerSecond,1);if(wait>0)return Reject(429,"rate_limited","请求过于频繁，请稍后重试。",category,"ip",wait);if(Locked())return LockedReply();
     if(request.Path=="/api/pair"){if(!write)return CompanionReply.Error(405,"method_not_allowed","请使用配对表单。");return Pair(body,request.RemoteAddress??"");}
     if(!Opaque(request.Cookie))return CompanionReply.Error(401,"unpaired","请在电脑确认配对。");string digest=Hash(request.Cookie);device=devices.Find(d=>d.expiresAt>Now&&d.grants.Active&&Equal(d.tokenHash,digest));if(device==null)return CompanionReply.Error(401,"unpaired","设备配对已失效，请重新配对。");grant=device.grants;
     // One library may contain 500 icons. Allow one complete load plus covers and shortcuts; repeated loads remain bounded independently of state/control.
@@ -169,8 +173,11 @@ internal sealed class CompanionServer : IDisposable {
      if(request.Path=="/api/logout"){Revoke(device.id);var loggedOut=CompanionReply.Json(200,new{ok=true});loggedOut.Headers["Set-Cookie"]=CookieName+"=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0";return loggedOut;}
     }
    }
-   CompanionReply response;try{response=handler(request.Path,body,grant)??CompanionReply.Error(500,"unavailable","操作未能完成。");}catch{response=CompanionReply.Error(500,"operation_failed","操作未能确认完成，请查看电脑端。不会自动重复执行。");}
-   lock(gate){if(command!=null)response=CacheCommand(device,command,response);if(Locked()||!grant.Active)return CompanionReply.Error(423,"unavailable","电脑已锁定或设备授权已撤销。");}return response;
+   CompanionReply response;try{
+    response=request.Path=="/api/screen/begin"&&BeforeScreen!=null?BeforeScreen(request.RemoteAddress,grant):null;
+    if(response==null)response=handler(request.Path,body,grant)??CompanionReply.Error(500,"unavailable","操作未能完成。");
+   }catch{response=CompanionReply.Error(500,"operation_failed","操作未能确认完成，请查看电脑端。不会自动重复执行。");}
+   lock(gate){if(command!=null)response=CacheCommand(device,command,response);if(!grant.Active)return CompanionReply.Error(423,"unavailable","设备授权已撤销。");if(Locked())return LockedReply();}return response;
   }catch{var failure=CompanionReply.Error(500,"operation_failed","操作未能确认完成，请查看电脑端。不会自动重复执行。");lock(gate)if(command!=null)failure=CacheCommand(device,command,failure);return failure;}
  }
  static bool Route(string path,bool write,CompanionGrant grant){

@@ -16,7 +16,7 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 
 ## 下载与安装
 
-免费开源，MIT 许可。普通用户从 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases) 下载 `PrismGlass-Setup-0.9.1-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。本版变化见 [0.9.1 更新说明](docs/RELEASE-0.9.1.md)。
+免费开源，MIT 许可。普通用户从 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases) 下载 `PrismGlass-Setup-0.9.2-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。本版变化见 [0.9.2 更新说明](docs/RELEASE-0.9.2.md)。
 
 1. 运行中文安装向导，组件页自动检查 Rainmeter、WebView2 Runtime 和 .NET Framework 4.8。缺少时点击“一键补齐缺失组件”，按提示下载、校验并调用官方安装程序；失败可重试，也可选择已有程序或从官网离线安装。使用系统自带 Windows PowerShell 5.1，无需另装 PowerShell 7、Git、Node.js 或开发工具。
 2. 许可页默认接受协议，默认创建一个名为 **PrismGlass** 的桌面图标，完成页默认勾选“启动 PrismGlass”。这些选择可在向导中修改；不创建开机启动项。
@@ -31,6 +31,14 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 天气搜索会同时显示完整所属地区；同名的居民点会标注“居民点”，请核对后选择。桌面天气入口统一打开本程序的天气城市设置，不再跳转到与所选坐标无关的外部地区页面。
 
 **设置 → 启动与退出 → 开机自启** 默认关闭。开启后仅为当前 Windows 账户创建 PrismGlass 启动快捷方式，下次登录时执行完整美化启动流程；关闭会移除它。若被 Windows 禁用，设置会明确提示，并提供系统启动应用入口。退出 PrismGlass 会恢复普通桌面，不取消已经开启的自启。
+
+## 0.9.2 更新
+
+新增 **检查更新**：在设置页或托盘手动检查 GitHub 最新正式版本；发现新版后可打开官方发布页下载安装。匿名 API 限流时使用官方发布页的安全跳转作为后备，不需要 GitHub 登录，不自动安装。
+
+伴随屏新增 **投屏 / 独立副屏** 两种模式。投屏仅列出主屏或其他有线物理屏；点击 **打开副屏** 才启用 iPad 虚拟屏，停止或断线超时后关闭。切换时保留实体屏原来的复制/扩展关系，并保存、恢复普通桌面图标位置。独立副屏仍需用户另行安装受支持的 Virtual Display Driver；缺少时明确显示不可用，不自动安装驱动。详见 [投屏与副屏说明](docs/COMPANION-SCREEN.md)。
+
+视频通道跟随当前伴随屏连接地址。换 Wi-Fi 后，电脑点 **检查并连接**，iPad 再点 **开始投屏 / 打开副屏**；程序从已授权设备的真实连接读取地址，自动检查视频规则。需要修复时电脑显示新旧地址及范围，确认并通过 Windows 管理员提示后自动更新，iPad 等待后继续连接，无需手动修改 IP。已有规则正常时不弹确认；取消后可重新检查。规则仍只允许 MediaMTX、专用网卡、UDP 31890 和这一台 iPad，不扩大到整个局域网。
 
 ## 应用中心与统一设置
 

@@ -35,6 +35,7 @@ internal sealed class WorkspaceWindow : Form {
  readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly JavaScriptSerializer json=new JavaScriptSerializer{MaxJsonLength=16777216};
  readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();readonly WidgetBackend widgets;
  CancellationTokenSource weatherSearch;List<WeatherPlace> weatherResults=new List<WeatherPlace>();string weatherObserved;int weatherRequest;string requestedSection="";
+ CancellationTokenSource releaseCheck;ReleaseUpdateState releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion};
  bool ready,closed,reading,interacting,picker,runtimePaused;int generation;string page="apps",widgetKey="",preferenceKey="";Screen display;Rectangle dockAnchor;object runtime;
  public event Action SettingsChanged;
  public event Action CompanionRequested;
@@ -63,12 +64,19 @@ internal sealed class WorkspaceWindow : Form {
  }
  void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){const int d=48;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=new Region(path);if(old!=null)old.Dispose();}}
  void Place(){var bounds=WorkspacePlacement.Calculate(display.WorkingArea,display.Bounds,dockAnchor,page=="apps");MinimumSize=new Size(Math.Min(560,bounds.Width),Math.Min(420,bounds.Height));Bounds=bounds;Shape();pixels.Sync();}
- public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="welcome"||next=="weather"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}}
+ public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="welcome"||next=="weather"||next=="updates"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
  public void PublishRuntime(object value,bool motionPaused=false){runtime=value;runtimePaused=motionPaused;if(IsOpen){Send(new{type="runtime",value=runtime});PublishLayout();}}
  void Send(object message){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));}
  void PublishLayout(){var b=display.Bounds;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks});}
- void Publish(){PublishLayout();PublishSettings(true);PublishLyrics(true);PublishWeather();PublishStartup();Send(new{type="page",page=page,section=requestedSection});requestedSection="";Send(new{type="apps",snapshot=library.GetSnapshot()});if(runtime!=null)Send(new{type="runtime",value=runtime});}
+ void Publish(){PublishLayout();PublishSettings(true);PublishLyrics(true);PublishWeather();PublishStartup();PublishUpdates();Send(new{type="page",page=page,section=requestedSection});requestedSection="";Send(new{type="apps",snapshot=library.GetSnapshot()});if(runtime!=null)Send(new{type="runtime",value=runtime});}
  void PublishStartup(){Send(new{type="startup",value=LoginStartup.Read(root)});}
+ void PublishUpdates(){Send(new{type="updates",value=releaseUpdate});}
+ async void CheckUpdates(){
+  if(releaseCheck!=null)return;var operation=new CancellationTokenSource();releaseCheck=operation;
+  releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion,state="checking",message="正在检查最新正式版本…"};PublishUpdates();
+  try{var result=await ReleaseUpdates.Check(Application.ProductVersion,operation.Token);if(!closed){releaseUpdate=result;PublishUpdates();}}
+  catch(OperationCanceledException){}finally{if(releaseCheck==operation)releaseCheck=null;operation.Dispose();}
+ }
  void PublishWeather(){try{weatherObserved=WeatherLocation.ReadText(root);Send(new{type="weather-location",place=WeatherLocation.ParseSaved(weatherObserved),error=""});}catch(Exception ex){Send(new{type="weather-location",place=(WeatherPlace)null,error=ex.Message});}}
  void CancelWeatherSearch(){weatherRequest++;weatherResults.Clear();if(weatherSearch!=null){weatherSearch.Cancel();weatherSearch=null;}}
  async void SearchWeather(string query,int request){CancelWeatherSearch();weatherRequest=request;var operation=new CancellationTokenSource();weatherSearch=operation;try{var results=await WeatherLocation.Search(query,operation.Token);if(!closed&&IsOpen&&weatherSearch==operation){weatherResults=results;Send(new{type="weather-results",request=request,places=results,error=""});}}
@@ -94,6 +102,8 @@ internal sealed class WorkspaceWindow : Form {
    preferences.Apply((Dictionary<string,object>)patch,Convert.ToInt64(revision));PublishSettings(true);Send(new{type="saved",scope="settings",message="已保存"});var handler=SettingsChanged;if(handler!=null)handler();return;
   }
   if(action=="companion"){var handler=CompanionRequested;if(handler!=null)handler();return;}
+  if(action=="updates-check"){CheckUpdates();return;}
+  if(action=="updates-open"){string address=releaseUpdate.state=="error"?ReleaseUpdates.LatestPage:releaseUpdate.state=="available"&&ReleaseUpdates.IsReleaseUrl(releaseUpdate.url,releaseUpdate.tag)?releaseUpdate.url:null;if(address==null)throw new InvalidOperationException("请先检查更新，取得有效的官方发布地址。");try{Process.Start(new ProcessStartInfo(address){UseShellExecute=true});}catch{releaseUpdate.state="error";releaseUpdate.message="无法打开浏览器，请检查默认浏览器后重试。";PublishUpdates();}return;}
   if(action=="startup-read"){PublishStartup();return;}
   if(action=="startup"){object value;if(!message.TryGetValue("enabled",out value)||!(value is bool))throw new ArgumentException("自启设置无效。");try{var state=LoginStartup.Set(root,(bool)value);Send(new{type="startup",value=state});if(state.error.Length>0)throw new IOException(state.error);Send(new{type="saved",message=state.enabled?"已开启：下次登录 Windows 时启动 PrismGlass":"已关闭开机自启"});}catch{PublishStartup();throw;}return;}
   if(action=="weather-cancel"){CancelWeatherSearch();return;}
@@ -133,5 +143,5 @@ internal sealed class WorkspaceWindow : Form {
   case "explorer":Process.Start(new ProcessStartInfo("explorer.exe"){UseShellExecute=true});break;
   default:throw new ArgumentException("无法识别的系统操作。");
  }}
- protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;generation++;CancelWeatherSearch();timer.Stop();timer.Dispose();view.Dispose();}base.Dispose(disposing);}
+ protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;generation++;CancelWeatherSearch();if(releaseCheck!=null)releaseCheck.Cancel();timer.Stop();timer.Dispose();view.Dispose();}base.Dispose(disposing);}
 }
