@@ -1,6 +1,6 @@
 # PrismGlass Desktop 1.0.0 正式版
 
-发布日期：2026-10-29。Windows 10/11 x64 正式版（非预发布），下载 [PrismGlass-Setup-1.0.0-x64.exe](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v1.0.0)。
+发布日期：2026-10-30。Windows 10/11 x64 正式版（非预发布），下载 [PrismGlass-Setup-1.0.0-x64.exe](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v1.0.0)。
 
 ## 日常操作
 
