@@ -21,7 +21,17 @@
     return monitorCount ? '选择主屏幕或其他有线屏幕，再轻点“开始投屏”。' : '没有可投屏的主屏幕或有线屏幕，请检查电脑显示器连接。';
   }
   function tools(value) { document.body.dataset.screenTools = String(value); $('screen-tools-toggle').setAttribute('aria-expanded', String(value)); $('screen-tools-toggle').setAttribute('aria-label', value ? '收起投屏控制面板' : '展开投屏控制面板'); }
-  function expand(value) { document.body.dataset.screenExpanded = String(value); $('screen-expand').textContent = value ? '退出全屏' : '铺满屏幕'; $('screen-expand').setAttribute('aria-pressed', String(value)); tools(!value); if (window.PrismGlassOptics) window.PrismGlassOptics.invalidate(); }
+  function layout() {
+    var body = document.body, keyboard = body.dataset.screenKeyboard === 'true', active = body.dataset.screenExpanded === 'true' || keyboard;
+    var viewport = window.visualViewport, width = viewport ? viewport.width : window.innerWidth, height = viewport ? viewport.height : window.innerHeight;
+    var ratio = !video.hidden && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 0, gap = ratio ? width - height * ratio : 0;
+    var side = active && keyboard && gap >= 260;
+    body.dataset.screenLayout = String(active); body.dataset.screenInput = side ? 'side' : 'bottom';
+    body.style.setProperty('--screen-input-width', (side ? Math.min(gap, 360) : 0) + 'px');
+    body.dataset.screenControls = active && mode === 'mirror' && !keyboard && ratio && height - Math.min(height, width / ratio) >= 60 ? 'bottom' : 'top';
+    if (window.PrismGlassOptics) window.PrismGlassOptics.invalidate();
+  }
+  function expand(value) { document.body.dataset.screenExpanded = String(value); $('screen-expand').textContent = value ? '退出全屏' : '铺满屏幕'; $('screen-expand').setAttribute('aria-pressed', String(value)); tools(!value); layout(); }
   function end(id, token) {
     if (!id) return Promise.resolve('');
     return new Promise(function (resolve) {
@@ -125,6 +135,7 @@
       busy = false; buttons();
     } catch (error) { if (version === generation) stop(error.message || '投屏启动失败，请重试。'); }
   }
+  video.onloadedmetadata = video.onresize = layout;
   video.onplaying = function () { if (!peer) return; clearTimeout(timeout); if (!viewOpened) { viewOpened = true; expand(true); } status((mode === 'extend' ? '副屏已打开 · ' : '正在投屏 · ') + (video.videoWidth || '—') + ' × ' + (video.videoHeight || '—') + ' · 局域网 · 无声音'); };
   $('screen-start').onclick = start; $('screen-stop').onclick = function () { stop(); };
   $('screen-mode-mirror').onclick = function () { return changeMode('mirror'); }; $('screen-mode-extend').onclick = function () { return changeMode('extend'); };
@@ -133,6 +144,8 @@
   $('screen-tools-close').onclick = function () { tools(false); $('screen-tools-toggle').focus(); };
   $('screen-home').onclick = function () { $('home-tab').click(); };
   window.PrismCompanionScreen = {
+    layout: layout,
+    closeTools: function () { tools(false); },
     render: function (grants, token, visible) {
       var next = !!(grants && grants.screen), refresh = next && visible && (!allowed || !activePage || csrf !== token); activePage = visible;
       if ((!next || !visible || csrf && csrf !== token) && (peer || busy)) stop();
@@ -147,5 +160,5 @@
   document.addEventListener('visibilitychange', function () { if (document.hidden) stop(); });
   window.addEventListener('pagehide', function () { stop(); });
   window.addEventListener('offline', function () { stop('网络已断开，投屏已停止。'); });
-  buttons();
+  tools(true); buttons();
 }());

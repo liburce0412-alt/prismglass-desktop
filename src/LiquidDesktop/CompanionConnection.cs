@@ -80,7 +80,7 @@ internal static class CompanionConnection {
  }
  static async Task ApplyArguments(string root,string arguments){
   var start=new ProcessStartInfo(PowerShell(root),arguments){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
-  using(var process=Process.Start(start)){await Task.Run(()=>process.WaitForExit());if(process.ExitCode!=0)throw new InvalidOperationException("系统配置未完成或已取消。原连接配置保留，请再次检查。");}
+  using(var process=Process.Start(start)){await Task.Run(()=>process.WaitForExit());if(process.ExitCode!=0)throw new InvalidOperationException("系统配置未完成，管理员进程未返回具体原因。请在电脑重新检查连接后重试。");}
  }
  internal static string VideoArguments(string root,string address,string peer,bool apply){
   CompanionServer.Endpoint(address,31890);CompanionServer.Endpoint(peer,31890);

@@ -38,12 +38,13 @@ internal sealed class CompanionServer : IDisposable {
  readonly Dictionary<string,Rejection> rejections=new Dictionary<string,Rejection>();
  HttpListener listener;string localAddress="",pairingCode="",loadError="";DateTime pairingExpires=DateTime.MinValue;int pairingAttempts,generation;bool disposed;
  public bool IsRunning {get {lock(gate)return listener!=null;}}
- internal Func<string,CompanionGrant,CompanionReply> BeforeScreen;
+ internal int ActiveDeviceCount {get{lock(gate){if(disposed||listener==null||Locked())return 0;var now=Now;return devices.FindAll(d=>d.grants.Active&&d.expiresAt>now&&d.lastSeen<=now&&now-d.lastSeen<TimeSpan.FromSeconds(12)).Count;}}}
+ internal Func<string,CompanionGrant,string,CompanionReply> BeforeScreen;
  internal Func<bool> VideoApprovalPending;
  CompanionReply LockedReply(){return VideoApprovalPending!=null&&VideoApprovalPending()?CompanionReply.Error(503,"screen_network_pending","请完成电脑上的 Windows 管理员确认，连接会随后继续。"):CompanionReply.Error(423,"locked","电脑已锁定，私人内容和控制已暂停。");}
  public string LocalAddress {get {lock(gate)return listener==null?"":localAddress;}}
  public string Address {get;private set;}
- public sealed class Device {public string id,name,tokenHash,csrf;public DateTime expiresAt;public CompanionGrant grants;[ScriptIgnore]public Dictionary<string,Command> commands=new Dictionary<string,Command>();[ScriptIgnore]public int cachedBytes;}
+ public sealed class Device {public string id,name,tokenHash,csrf;public DateTime expiresAt;public CompanionGrant grants;[ScriptIgnore]public Dictionary<string,Command> commands=new Dictionary<string,Command>();[ScriptIgnore]public int cachedBytes;[ScriptIgnore]public DateTime lastSeen;}
  public sealed class Command {public string signature;public CompanionReply reply;}
  sealed class Pending {public string id,ticket,name,token,deviceId;public DateTime expiresAt;}
  sealed class Rate {public DateTime until;public int count;}
@@ -75,10 +76,10 @@ internal sealed class CompanionServer : IDisposable {
   if(!local)throw new ArgumentException("该地址不属于当前电脑，请重新选择网络地址。");
   lock(gate){if(disposed)throw new ObjectDisposedException("CompanionServer");if(listener!=null)throw new InvalidOperationException("伴随屏已开启。");if(loadError.Length>0)throw new InvalidOperationException(loadError);
    var next=new HttpListener();next.Prefixes.Add(origin+"/");try{next.TimeoutManager.EntityBody=TimeSpan.FromSeconds(8);next.TimeoutManager.HeaderWait=TimeSpan.FromSeconds(8);next.TimeoutManager.IdleConnection=TimeSpan.FromSeconds(15);next.Start();RenewSessionCsrf();}catch{next.Close();throw new InvalidOperationException("无法开启 HTTPS。请检查证书绑定、URL ACL、端口、所选网络地址和运行目录权限。");}
-   Address=origin;localAddress=address;listener=next;generation++;foreach(var device in devices){device.grants=Copy(device.grants);device.grants.Active=device.expiresAt>Now;}int current=generation;Task.Run(()=>Listen(next,current,origin,address,port));
+   Address=origin;localAddress=address;listener=next;generation++;foreach(var device in devices){device.grants=Copy(device.grants);device.grants.Active=device.expiresAt>Now;device.lastSeen=DateTime.MinValue;}int current=generation;Task.Run(()=>Listen(next,current,origin,address,port));
   }
  }
- public void Stop(){HttpListener previous;lock(gate){previous=listener;listener=null;generation++;pairingCode="";pairingExpires=DateTime.MinValue;pending.Clear();foreach(var device in devices)device.grants.Active=false;}if(previous!=null){previous.Stop();previous.Close();}}
+ public void Stop(){HttpListener previous;lock(gate){previous=listener;listener=null;generation++;pairingCode="";pairingExpires=DateTime.MinValue;pending.Clear();foreach(var device in devices){device.grants.Active=false;device.lastSeen=DateTime.MinValue;}}if(previous!=null){previous.Stop();previous.Close();}}
  async Task Listen(HttpListener active,int current,string origin,string address,int port){
   while(active.IsListening){HttpListenerContext context;try{context=await active.GetContextAsync().ConfigureAwait(false);}catch(HttpListenerException){break;}catch(ObjectDisposedException){break;}
    SemaphoreSlim slots;var rejected=Enter(context.Request.RawUrl,out slots);if(rejected!=null){Send(context,rejected);continue;}
@@ -159,6 +160,7 @@ internal sealed class CompanionServer : IDisposable {
     wait=RateWait(bucket,"device:"+device.id,asset?600:pointer?PointerDevicePerMinute:cancel?30:power?12:180,60);if(wait==0&&pointer)wait=RateWait(bucket,"device-second:"+device.id,PointerDevicePerSecond,1);if(wait>0)return Reject(429,"rate_limited","请求过于频繁，请稍后重试。",category,"device",wait);
     if(request.Path=="/api/session"){
      if(write)return CompanionReply.Error(405,"method_not_allowed","请求方式不受支持。");
+     device.lastSeen=Now;
      DateTime previous=device.expiresAt;
      // Remember active devices, with at most one protected-store update per day.
      if(previous<Now.AddDays(29)){device.expiresAt=Now.AddDays(30);try{Save();}catch{device.expiresAt=previous;throw;}}
@@ -166,6 +168,7 @@ internal sealed class CompanionServer : IDisposable {
     }
     if(!Route(request.Path,write,grant))return CompanionReply.Error(403,"not_allowed","该操作未获此设备的共享授权。");
     if(write&&!Equal(request.Csrf,device.csrf))return CompanionReply.Error(403,"csrf_denied","会话校验失败，请重新载入页面。");
+    device.lastSeen=Now;
     if(write&&!pointer&&!cancel&&!ScreenWritePath(request.Path)){string id=Text(body,"requestId");if(!Opaque(id))return CompanionReply.Error(400,"request_id_required","请提供有效的唯一请求编号。");string signature=Hash(request.Path+"\n"+request.Body);
      if(device.commands.TryGetValue(id,out command)){if(command.signature!=signature)return CompanionReply.Error(409,"request_id_reused","同一个请求编号不能用于不同操作。");return command.reply??CompanionReply.Error(409,"request_pending","操作仍在执行，结果待确认。请勿重复操作。");}
      // shortcut: retain every accepted ID for this process session; re-pair after 4096 writes instead of forgetting and replaying an old command.
@@ -174,7 +177,7 @@ internal sealed class CompanionServer : IDisposable {
     }
    }
    CompanionReply response;try{
-    response=request.Path=="/api/screen/begin"&&BeforeScreen!=null?BeforeScreen(request.RemoteAddress,grant):null;
+    response=request.Path=="/api/screen/begin"&&BeforeScreen!=null?BeforeScreen(request.RemoteAddress,grant,Text(body,"offer")):null;
     if(response==null)response=handler(request.Path,body,grant)??CompanionReply.Error(500,"unavailable","操作未能完成。");
    }catch{response=CompanionReply.Error(500,"operation_failed","操作未能确认完成，请查看电脑端。不会自动重复执行。");}
    lock(gate){if(command!=null)response=CacheCommand(device,command,response);if(!grant.Active)return CompanionReply.Error(423,"unavailable","设备授权已撤销。");if(Locked())return LockedReply();}return response;

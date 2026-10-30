@@ -2,8 +2,8 @@
 <canvas id="glass" aria-hidden="true"></canvas><main id="workspace">
 <header class="workspace-header"><div class="workspace-brand" title="拖动标题栏移动窗口"><span aria-hidden="true">◈</span> PrismGlass</div><nav aria-label="工作台"><button id="show-apps" aria-pressed="true">应用中心</button><button id="show-settings" aria-pressed="false">设置</button></nav><button id="close-workspace" title="关闭 · Esc" aria-label="关闭">×</button></header>
 <section id="apps-page" aria-label="应用中心"></section>
-<section id="settings-page" hidden aria-label="PrismGlass 设置"><nav id="settings-nav" aria-label="设置分类"></nav><div class="settings-scroll"><header class="settings-heading"><div><h1 id="settings-title">外观</h1><p id="settings-subtitle">属于你的玻璃桌面</p></div><button id="reset-page" class="quiet">恢复本页默认</button></header><div id="settings-fields"></div><section id="settings-companion" hidden aria-label="iPad 伴随屏管理"></section><section id="settings-lyrics" hidden><section class="dock-lyrics-settings" aria-label="Dock 歌词">
-<div class="lyrics-setting-row"><span>让歌词留在 Dock</span><button id="lyrics-toggle" data-action="lyrics-toggle" role="switch" aria-checked="false">关闭</button></div>
+<section id="settings-page" hidden aria-label="PrismGlass 设置"><nav id="settings-nav" aria-label="设置分类"></nav><div class="settings-scroll"><header class="settings-heading"><div><h1 id="settings-title">外观</h1><p id="settings-subtitle" hidden></p></div><button id="reset-page" class="quiet">恢复本页默认</button></header><div id="settings-fields"></div><section id="settings-companion" hidden aria-label="iPad 伴随屏管理"></section><section id="settings-lyrics" hidden><section class="dock-lyrics-settings" aria-label="Dock 歌词">
+<div class="lyrics-setting-row"><span>显示 Dock 歌词</span><button id="lyrics-toggle" data-action="lyrics-toggle" role="switch" aria-checked="false">关闭</button></div>
 <p id="lyrics-status" class="life-note" role="status">Dock 歌词已关闭</p>
 <div class="lyrics-setting-row"><span>在线匹配歌词</span><button id="lyrics-online" data-action="lyrics-online" role="switch" aria-checked="false" aria-describedby="lyrics-network-note">关闭</button></div>
 <p id="lyrics-network-note" class="life-note">向 LRCLIB 发送歌名、歌手、专辑和时长；网易云曲目也可按本机歌曲编号查询。不需要账号。</p>
@@ -13,17 +13,17 @@
 <section id="lyrics-studio" aria-label="歌词外观">
  <div class="lyrics-studio-heading"><h3>歌词外观</h3><span id="lyrics-save-state" role="status">自动保存</span></div>
  <div class="lyrics-preview-stage">
-  <div id="lyrics-preview" class="lyric-copy"><div class="lyric-window current-window"><span class="lyric-main">让光停在歌声里</span></div><div class="lyric-window next-window"><span class="lyric-secondary">下一句 · 风从身边经过</span></div></div>
+  <div id="lyrics-preview" class="lyric-copy"><div class="lyric-window current-window"><span class="lyric-main">当前歌词预览</span></div><div class="lyric-window next-window"><span class="lyric-secondary">下一句歌词预览</span></div></div>
   <div class="lyrics-preview-caption"><span>效果预览</span><button id="lyrics-replay" type="button">重播动效 ↻</button></div>
  </div>
- <details open><summary>背景配色 <small>保留液态玻璃材质</small></summary>
+ <details open><summary>背景配色</summary>
   <label class="lyrics-field">主题<select data-lyric-field="backgroundTheme" aria-label="歌词背景主题"><option value="album">专辑流光</option><option value="wallpaper">跟随壁纸</option><option value="transparent">透明配色</option><option value="ocean">深海</option><option value="pine">松林</option><option value="sand">暖沙</option><option value="violet">夜紫</option></select></label>
   <label class="lyrics-field">配色强度 <output data-lyric-output="backgroundOpacity"></output><input data-lyric-field="backgroundOpacity" type="range" min="0" max="100" step="1"></label>
   <label class="lyrics-field">背景颜色流动<input data-lyric-field="backgroundMotion" type="checkbox" aria-label="背景颜色流动"></label>
   <p id="lyrics-background-status" class="life-note" role="status">等待背景配色</p>
  </details>
- <details open><summary>风格预设 <small>8 种搭配</small></summary><div id="lyrics-presets" class="lyrics-preset-grid"></div></details>
- <details><summary>颜色与字体 <small>自由搭配</small></summary>
+ <details open><summary>风格预设</summary><div id="lyrics-presets" class="lyrics-preset-grid"></div></details>
+ <details><summary>颜色与字体</summary>
   <div class="lyrics-color-row"><label>主歌词<input type="color" data-lyric-field="color" aria-label="主歌词颜色"></label><label>下一句<input type="color" data-lyric-field="secondary" aria-label="下一句颜色"></label><label>光泽色<input type="color" data-lyric-field="accent" aria-label="歌词光泽颜色"></label></div>
   <label class="lyrics-field">字体<select data-lyric-field="font" aria-label="歌词字体"></select></label>
   <label class="lyrics-field">字号 <output data-lyric-output="fontSize"></output><input data-lyric-field="fontSize" type="range" min="18" max="32" step="1"></label>
@@ -31,13 +31,13 @@
   <label class="lyrics-field">字距 <output data-lyric-output="spacing"></output><input data-lyric-field="spacing" type="range" min="-2" max="12" step="1"></label>
   <label class="lyrics-field">下一句亮度 <output data-lyric-output="secondaryOpacity"></output><input data-lyric-field="secondaryOpacity" type="range" min="30" max="100" step="5"></label>
  </details>
- <details><summary>歌词排布 <small>4 种布局</small></summary>
+ <details><summary>歌词排布</summary>
   <label class="lyrics-field">排布<select data-lyric-field="layout"><option value="duo">上下双行</option><option value="single">专注单行</option><option value="split">左右并排</option><option value="stack">下一句在上</option></select></label>
   <label class="lyrics-field">对齐<select data-lyric-field="align"><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option></select></label>
   <label class="lyrics-field">宽度变化<select data-lyric-field="widthMode"><option value="adaptive">随歌词收缩</option><option value="fixed">固定宽度</option></select></label>
   <label class="lyrics-field">歌词栏宽度 <output data-lyric-output="width"></output><input data-lyric-field="width" type="range" min="420" max="1200" step="20"></label>
  </details>
- <details open><summary>光效与入场 <small>可以组合</small></summary>
+ <details open><summary>光效与入场</summary>
   <label class="lyrics-field">文字光效<select data-lyric-field="texture" aria-label="歌词文字光效"></select></label>
   <label class="lyrics-field">换句动效<select data-lyric-field="effect" aria-label="歌词换句动效"></select></label>
   <label class="lyrics-field">动效强度 <output data-lyric-output="intensity"></output><input data-lyric-field="intensity" type="range" min="0" max="100" step="5"></label>

@@ -1,7 +1,7 @@
 ﻿param(
  [string]$BundleRoot=(Join-Path $PSScriptRoot '../dist/PrismGlass'),
  [string]$OutputRoot=(Join-Path $PSScriptRoot '../artifacts/release'),
- [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='1.0.0',
+ [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='1.0.1',
  [Alias('CompilerPath')][string]$Compiler
 )
 $ErrorActionPreference='Stop'

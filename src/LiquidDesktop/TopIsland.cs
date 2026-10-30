@@ -11,8 +11,9 @@ using Microsoft.Web.WebView2.WinForms;
 
 internal sealed class TopIsland : Form {
  readonly string root;readonly bool preview;readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly WidgetBackend widgets;readonly SharedDesktopData shared;readonly string instance;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly Timer timer=new Timer();
- bool ready,painted,closed,dragging,paused,outlineReady,readyNotified,refreshingWallpaper;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="";Rectangle screen;float scale=1;int ticks,regionUpdates;object pendingPreferences;
+ bool ready,painted,closed,dragging,paused,outlineReady,readyNotified,refreshingWallpaper;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="",companionState="";Rectangle screen;float scale=1;int ticks,regionUpdates;object pendingPreferences,pendingCompanion;
  public event Action Ready;public event Action<string> Failed;
+ public event Action CompanionStopRequested;
  public bool IsPainted {get{return painted;}}
  public Rectangle OcclusionBounds {get{int width=mode=="bar"?Width-8:(int)Math.Min(Width-8,272*scale);return new Rectangle(Left+(Width-width)/2,Top+12,width,(int)((mode=="bar"?42:48)*scale));}}
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
@@ -50,11 +51,12 @@ internal sealed class TopIsland : Form {
  void Publish(){if(!ready)return;string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();string key=theme+Bounds.ToString()+screen.ToString()+paused+stamp;if(key==layout)return;layout=key;var scene=Screen.FromRectangle(screen).Bounds;Send(new{type="layout",theme=theme,paused=paused,scale=scale,x=Left-scene.Left,y=Top-scene.Top,width=scene.Width,height=scene.Height,wallpaper=stamp});}
  void Send(object value){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  public void ApplyPreferences(object snapshot){pendingPreferences=snapshot;Send(new{type="preferences",snapshot=snapshot});}
+ public void ApplyCompanionState(object snapshot){pendingCompanion=snapshot;string next=json.Serialize(snapshot);if(!ready||next==companionState)return;companionState=next;Send(new{type="companion",state=snapshot});}
  public void DismissTransient(){if(!dragging)Send(new{type="dismiss"});}
  string Diagnostic(string name){return Path.Combine(root,instance=="primary"?name:Path.GetFileNameWithoutExtension(name)+"-"+instance+Path.GetExtension(name));}
  void Fail(string error){if(closed)return;try{File.WriteAllText(Path.Combine(root,preview?"island-preview-error.txt":"island-error.txt"),error);}catch{}var handler=Failed;if(handler!=null)handler(error);Close();}
  void Receive(string text){try{
-  if(text=="ready"){ready=true;Place();Publish();if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);Tick(true);}
+  if(text=="ready"){ready=true;Place();Publish();if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);if(pendingCompanion!=null)ApplyCompanionState(pendingCompanion);Tick(true);}
   else if(text=="painted"&&!painted){painted=true;NotifyReady();}
   else if(text.StartsWith("outline:",StringComparison.Ordinal)){var outlines=json.Deserialize<float[][][]>(text.Substring(8));if(outlines.Length==1&&outlines[0].Length>=4){using(var path=new GraphicsPath()){var points=new PointF[outlines[0].Length];for(int i=0;i<points.Length;i++){if(outlines[0][i].Length!=2)return;float x=outlines[0][i][0],y=outlines[0][i][1];if(float.IsNaN(x)||float.IsNaN(y)||float.IsInfinity(x)||float.IsInfinity(y)||Math.Abs(x)>Width+100||Math.Abs(y)>Height+100)return;points[i]=new PointF((float)(Math.Round(x*4)/4),(float)(Math.Round(y*4)/4));}string key=json.Serialize(points);if(key!=outlineKey){path.AddPolygon(points);ReplaceRegion(new Region(path));outlineKey=key;regionUpdates++;}outlineReady=true;NotifyReady();}}}
   else if(text=="drag:true")dragging=true;
@@ -89,6 +91,9 @@ internal sealed class TopIsland : Form {
   case "refresh":RefreshWallpaper();break;
   case "game":Script("DesktopMode.ps1","-Mode Game -ShowErrors");break;
   case "settings":File.WriteAllText(Path.Combine(root,"workspace.request"),"settings");break;
+  case "companion":File.WriteAllText(Path.Combine(root,"workspace.request"),"companion");break;
+  case "companion-stop":var stop=CompanionStopRequested;if(stop!=null)stop();break;
+  case "weather":File.WriteAllText(Path.Combine(root,"workspace.request"),"weather");break;
   case "apps":File.WriteAllText(Path.Combine(root,"workspace.request"),"apps");break;
   case "windows-settings":Launch("ms-settings:","");break;
   case "bluetooth":Launch("ms-settings:bluetooth","");break;
@@ -97,7 +102,7 @@ internal sealed class TopIsland : Form {
   case "disk":Launch("explorer.exe","C:\\");break;
   case "calendar":File.WriteAllText(Path.Combine(root,"panel.request"),"calendar");break;
   case "media-prev":Media(0xB1,root);break;case "media-toggle":Media(0xB3,root);break;case "media-next":Media(0xB0,root);break;
-  case "focus-toggle":case "focus-reset":case "focus-25":case "focus-5":widgets.Action(id);if(shared!=null)shared.Invalidate();break;
+  case "focus-toggle":case "focus-reset":case "focus-25":case "focus-5":case "focus-again":case "focus-break":widgets.Action(id);if(shared!=null)shared.Invalidate();break;
   default:throw new ArgumentException("Unknown island action");
  }}
  internal static void Media(byte code,string directory){

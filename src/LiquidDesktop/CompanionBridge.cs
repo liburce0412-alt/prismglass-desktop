@@ -20,6 +20,7 @@ internal sealed class CompanionBridge {
  public CompanionBridge(string path,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics dockLyrics,Func<Func<object>,object> dispatch,Func<bool> isLocked,CompanionContext foreground=null,CompanionControls remoteControls=null,Func<string> streamAddress=null){root=path;library=apps;preferences=settings;shared=data;lyrics=dockLyrics;content=new CompanionContent(path);lyricsStyle=new LyricsStyleStore(path);onDesktop=dispatch;locked=isLocked;this.streamAddress=streamAddress;context=foreground??new CompanionContext();controls=remoteControls??new CompanionControls(isLocked);}
  CompanionStream screenStream;
  internal bool ScreenActive {get {lock(gate)return screenStream!=null&&screenStream.IsActive;}}
+ internal bool PointerActive {get{return controls.IsActive;}}
  public void StopControls(){controls.CancelAll();if(screenStream!=null)screenStream.Stop();}
  public void Dispose(){controls.Dispose();if(screenStream!=null)screenStream.Dispose();}
  internal static string EntrySignature(AppLibraryEntry entry){return entry.kind+"\n"+entry.path+"\n"+entry.arguments+"\n"+entry.target;}

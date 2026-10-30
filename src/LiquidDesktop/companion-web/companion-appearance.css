@@ -142,6 +142,7 @@ body[data-reduced=true] .widget-breath-orb{animation:none!important;transform:no
 #widget-gallery .widget-caption{margin-top:6px;font-size:11px;line-height:1.6}
 #widget-gallery .widget-number{font-size:44px;line-height:1.2;margin:14px 0 10px;letter-spacing:-.035em}
 #widget-gallery .widget-status{margin:8px 0 9px;line-height:1.6}
+.widget-caption:empty,.widget-status:empty{display:none}
 #widget-gallery .widget-controls{padding-top:6px;gap:7px}
 #widget-gallery .widget-controls button{padding:9px 12px}
 #widget-gallery .widget-timer{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto 1fr auto auto;column-gap:9px;align-content:start}
@@ -184,9 +185,41 @@ body[data-reduced=true] button:active{transform:none!important}
 /* A video frame doubles as the existing relative touchpad, without a second input path. */
 .screen-modes{display:flex;flex-wrap:wrap;margin-bottom:7px}.screen-modes button{min-height:44px;margin-right:8px}.screen-modes button[aria-pressed=true]{background:rgba(178,217,253,.17);border-color:rgba(219,242,255,.65)}.screen-toolbar>[hidden],body[data-screen-expanded=true] .screen-toolbar>[hidden]{display:none}
 .screen-toolbar{display:flex;align-items:center;flex-wrap:wrap;margin:-3px 0 0}.screen-toolbar>label{display:flex;align-items:center;font-size:12px;margin-right:12px}.screen-toolbar select{margin-left:7px;max-width:230px}.screen-toolbar>button{margin-right:8px}.screen-status{font-size:12px;margin:0;min-height:18px}
-#screen-video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;border-radius:inherit;background:#080d17}
+#screen-video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;object-position:left top;pointer-events:none;border-radius:inherit;background:#080d17}
 .screen-tools{padding:18px 20px;border:1px solid var(--edge);border-radius:24px;min-width:0}.screen-panel-top{display:none;align-items:center;justify-content:space-between;margin-bottom:10px}.screen-panel-top strong{font-size:15px}.screen-tools>p{font-size:12px;line-height:1.5;margin:9px 0}.screen-input-actions{display:flex;flex-wrap:wrap;margin-top:12px}.screen-input-actions button{margin-right:8px;margin-bottom:4px}.screen-tools .pointer-actions{justify-content:flex-start;margin:8px 0;gap:8px}.screen-tools .pointer-actions button{min-width:72px}.screen-tools .pointer-actions>span{font-size:11px}.pointer-options{font-size:12px;margin-top:10px}.pointer-options summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--muted)}.pointer-options p{font-size:11px;margin:5px 0}.pointer-options .pointer-preferences{display:flex;padding:0}.screen-text-row{display:flex;margin:6px 0 10px}.screen-text-row input{flex:1;min-width:0;font-size:16px;padding:10px}.screen-text-row button{margin-left:8px}#screen-text-form>label{font-size:12px;color:var(--muted)}.screen-keys{display:grid;grid-template-columns:repeat(4,minmax(44px,1fr));gap:7px}.screen-keys button{font-size:12px;padding:8px 4px}.screen-keys .screen-enter{grid-column:span 4}.screen-tools-toggle{display:none;width:48px;height:48px;padding:12px;border-radius:50%;color:#f4f8ff;background:rgba(18,35,56,.85);border:1px solid rgba(214,235,255,.35);box-shadow:0 4px 18px rgba(0,0,0,.22)}.screen-tools-toggle svg{width:22px;height:22px}
-body[data-screen-expanded=true] .topbar,body[data-screen-expanded=true] .touch-bar,body[data-screen-expanded=true] .pointer-heading{display:none}body[data-screen-expanded=true] .shell{padding:0;gap:0}body[data-screen-expanded=true] #pointer-page{position:fixed;z-index:100;top:0;left:0;width:100%;height:var(--viewport-height,100vh);min-height:0;padding:0;display:block;background:#080d17;overflow:hidden}body[data-screen-expanded=true] .pointer-workspace{position:absolute;top:0;left:0;width:100%;height:100%;display:block;margin:0}body[data-screen-expanded=true] #pointer-surface{width:100%;height:100%;min-height:0;padding:0;border:0;border-radius:0;box-shadow:none}body[data-screen-expanded=true] #screen-video{border-radius:0}body[data-screen-expanded=true] .wheel-panel{display:none}body[data-screen-expanded=true] .screen-tools-toggle{display:block;position:absolute;z-index:3;right:calc(12px + env(safe-area-inset-right));top:calc(12px + env(safe-area-inset-top))}body[data-screen-expanded=true] #screen-tools{position:absolute;z-index:4;top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));width:min(390px,calc(100% - 24px));max-height:calc(var(--viewport-height,100vh) - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow:auto;-webkit-overflow-scrolling:touch;background:rgba(12,28,47,.96);box-shadow:0 16px 56px rgba(0,0,0,.3);padding:14px 16px}body[data-screen-expanded=true][data-screen-tools=false] #screen-tools{display:none}body[data-screen-expanded=true] .screen-panel-top{display:flex}body[data-screen-expanded=true] .screen-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}body[data-screen-expanded=true] .screen-toolbar>label{display:block;margin:0;font-size:11px}body[data-screen-expanded=true] .screen-toolbar select{display:block;width:100%;max-width:100%;margin:5px 0 0;font-size:13px}body[data-screen-expanded=true] .screen-toolbar>button{margin:0;font-size:12px;padding:8px}body[data-screen-expanded=true] .pointer-actions{margin:8px 0}
+.screen-controls{display:flex;flex-direction:column;min-width:0;min-height:0}
+.screen-shortcuts{display:flex;justify-content:flex-end;flex:none}.screen-shortcuts>button{min-width:48px;min-height:44px;margin-top:0;margin-bottom:0}.screen-shortcuts>button+button{margin-left:8px}.screen-shortcuts+.screen-tools{margin-top:8px}
+.screen-keyboard-bar{grid-column:1/-1;grid-row:2;padding:5px max(8px,env(safe-area-inset-right)) max(5px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-top:1px solid var(--edge);background:rgba(12,28,47,.98);min-width:0}
+.screen-keyboard-bar .screen-text-row{margin:0}.screen-keyboard-bar #screen-text{height:44px;min-height:44px;padding:9px 10px;line-height:24px}.screen-keyboard-bar #screen-text:focus{outline:2px solid var(--accent);outline-offset:-2px}.screen-keyboard-bar button{min-width:52px;min-height:44px;margin-top:0;margin-bottom:0;padding:8px 12px}.screen-keyboard-bar #keyboard-status{font-size:11px;line-height:1.4;margin:4px 0 0}
+.screen-keyboard-bar #keyboard-status:not([data-notice=true]){position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);margin:0;padding:0;white-space:nowrap}
+.screen-keyboard-bar #screen-text-form>label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+body[data-screen-layout=true] .topbar,body[data-screen-layout=true] .touch-bar,body[data-screen-layout=true] .pointer-heading{display:none}
+body[data-screen-layout=true] .shell{padding:0;gap:0}
+/* Safari can pan its visual viewport while the native keyboard is open. */
+body[data-screen-layout=true] #pointer-page{position:fixed;z-index:100;top:var(--viewport-top,0px);left:var(--viewport-left,0px);width:var(--viewport-width,100vw);height:var(--viewport-height,100vh);min-height:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:0;background:#080d17;overflow:hidden}
+body[data-screen-layout=true] .pointer-workspace{grid-column:1;grid-row:1;min-width:0;min-height:0;display:block;margin:0}
+body[data-screen-layout=true] #pointer-surface{width:100%;height:100%;min-height:0;padding:0;border:0;border-radius:0;box-shadow:none}
+body[data-screen-layout=true] #screen-video{border-radius:0}
+body[data-screen-keyboard=true] #screen-video{object-position:left bottom}
+body[data-screen-layout=true] .wheel-panel{display:none}
+body[data-screen-layout=true] .screen-controls{grid-column:1;grid-row:1;justify-self:end;align-self:stretch;width:300px;max-width:100%;z-index:1;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) 8px 8px;overflow:hidden;pointer-events:none}
+body[data-screen-layout=true] .screen-shortcuts>button{font-size:12px;padding:6px;min-width:48px;max-width:100%;pointer-events:auto}
+body[data-screen-layout=true] .screen-tools-toggle{display:block;width:48px;height:44px;padding:10px;border-radius:14px}
+body[data-screen-layout=true] #screen-tools{min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;background:rgba(12,28,47,.96);padding:12px;border-radius:18px;pointer-events:auto}
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-controls{flex-direction:column-reverse}
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-shortcuts+.screen-tools{margin-top:0;margin-bottom:8px}
+body[data-screen-layout=true][data-screen-input=side] #pointer-page{grid-template-columns:minmax(0,1fr) var(--screen-input-width)}
+body[data-screen-layout=true][data-screen-input=side] .pointer-workspace{grid-column:1;grid-row:1/-1}
+body[data-screen-layout=true][data-screen-input=side] .screen-controls{grid-column:2;grid-row:1;width:100%;max-width:300px}
+body[data-screen-layout=true][data-screen-input=side] .screen-keyboard-bar{grid-column:2;grid-row:2}
+body[data-screen-layout=true][data-screen-tools=false] #screen-tools{display:none}
+body[data-screen-layout=true] .screen-panel-top{display:flex}
+body[data-screen-layout=true] .screen-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}
+body[data-screen-layout=true] .screen-toolbar>label{display:block;margin:0;font-size:11px;min-width:0}
+body[data-screen-layout=true] .screen-toolbar select{display:block;width:100%;max-width:100%;margin:5px 0 0;font-size:13px;padding:8px 5px}
+body[data-screen-layout=true] .screen-toolbar>button{margin:0;font-size:12px;padding:8px}
+body[data-screen-layout=true] .pointer-actions{margin:8px 0}
+@media(max-width:700px){body[data-screen-layout=true] .screen-keys{grid-template-columns:repeat(2,minmax(44px,1fr))}body[data-screen-layout=true] .screen-keys .screen-enter{grid-column:span 2}}
 #pointer-surface[data-screen=true]{padding:0;min-height:230px;border-radius:20px;overflow:hidden}#pointer-surface[data-screen=true]>:not(video){visibility:hidden}#pointer-surface[data-screen=true]:before{display:none}
 @media(min-width:701px) and (max-height:800px){#pointer-page{padding:4px 2%;gap:8px}.pointer-heading h1{font-size:25px}.pointer-heading p{margin:3px 0}.pointer-workspace{min-height:0;flex:1}#pointer-surface{min-height:210px}.pointer-preferences{margin:0}.pointer-actions button{padding:8px 16px}.screen-toolbar select{padding:7px 9px}.screen-toolbar>button{padding:8px 12px}}
 @media(max-width:700px){.screen-toolbar>label{margin-bottom:7px}.screen-toolbar select{max-width:180px}.screen-toolbar>button{margin-bottom:4px}.pointer-heading{align-items:flex-start;flex-wrap:wrap}.pointer-heading h1{font-size:25px}.pointer-heading .button-row{margin-top:3px}#pointer-surface[data-screen=true]{min-height:220px}}
@@ -208,15 +241,16 @@ body[data-screen-expanded=true] .topbar,body[data-screen-expanded=true] .touch-b
 }
 /* Keep the touch surface beside its controls in both iPad orientations. */
 @media(min-width:701px){
- body:not([data-screen-expanded=true]) #pointer-page{display:grid;grid-template-columns:280px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);height:100%;min-height:420px;gap:14px;padding:4px 2%}
- body:not([data-screen-expanded=true]) .pointer-heading{grid-column:1/-1;margin:0}
- body:not([data-screen-expanded=true]) #screen-tools{grid-column:1;grid-row:2;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:16px;scrollbar-width:thin}
- body:not([data-screen-expanded=true]) .pointer-workspace{grid-column:2;grid-row:2;grid-template-columns:minmax(0,1fr) 52px;gap:10px;min-height:0}
- body:not([data-screen-expanded=true]) #pointer-surface{min-height:240px;padding:18px}
- body:not([data-screen-expanded=true]) .screen-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
- body:not([data-screen-expanded=true]) .screen-toolbar>label{display:block;margin:0;font-size:12px;min-width:0}
- body:not([data-screen-expanded=true]) .screen-toolbar select{display:block;width:100%;max-width:100%;margin:5px 0 0;padding:9px 6px;font-size:13px}
- body:not([data-screen-expanded=true]) .screen-toolbar>button{margin:0;font-size:12px;padding:9px 5px}
+ body:not([data-screen-layout=true]) #pointer-page{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:auto minmax(0,1fr);height:100%;min-height:420px;gap:14px;padding:4px 2%}
+ body:not([data-screen-layout=true]) .pointer-heading{grid-column:1/-1;margin:0}
+ body:not([data-screen-layout=true]) .screen-controls{grid-column:2;grid-row:2}
+ body:not([data-screen-layout=true]) #screen-tools{min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:16px;scrollbar-width:thin}
+ body:not([data-screen-layout=true]) .pointer-workspace{grid-column:1;grid-row:2;grid-template-columns:minmax(0,1fr) 52px;gap:10px;min-height:0}
+ body:not([data-screen-layout=true]) #pointer-surface{min-height:240px;padding:18px}
+ body:not([data-screen-layout=true]) .screen-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+ body:not([data-screen-layout=true]) .screen-toolbar>label{display:block;margin:0;font-size:12px;min-width:0}
+ body:not([data-screen-layout=true]) .screen-toolbar select{display:block;width:100%;max-width:100%;margin:5px 0 0;padding:9px 6px;font-size:13px}
+ body:not([data-screen-layout=true]) .screen-toolbar>button{margin:0;font-size:12px;padding:9px 5px}
 }
 .pair-scan small{color:inherit;opacity:.85}
 .pair-recovery{display:flex;flex-wrap:wrap;margin-top:16px}.pair-recovery>button{margin-right:8px;margin-bottom:6px}

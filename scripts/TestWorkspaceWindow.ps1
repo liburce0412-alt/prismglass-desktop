@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot)
+param([Parameter(Mandatory=$true)][string]$AppRoot,[switch]$GeometryOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $source=(Resolve-Path -LiteralPath $AppRoot).Path
@@ -11,8 +11,9 @@ try {
  $test=Join-Path $out 'TestWorkspaceWindow.exe'
  & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo /target:exe /platform:x64 "/out:$test" /r:System.Drawing.dll /r:System.Windows.Forms.dll "/r:$out/Microsoft.Web.WebView2.Core.dll" "/r:$out/Microsoft.Web.WebView2.WinForms.dll" (Join-Path $repo 'tests/TestWorkspaceWindow.cs')
  if($LASTEXITCODE -ne 0){throw 'Native workspace harness compilation failed'}
- $log=Join-Path $out 'native-checks.txt'
+ $log=Join-Path $out $(if($GeometryOnly){'native-alignment-checks.txt'}else{'native-checks.txt'})
  $arguments='"'+(Join-Path $source 'LiquidDesktop.exe')+'" "'+$fixture+'" "'+$log+'"'
+ if($GeometryOnly){$arguments+=' --geometry'}
  $process=Start-Process -FilePath $test -ArgumentList $arguments -WindowStyle Hidden -PassThru
  if(!$process.WaitForExit(60000)){throw 'Native workspace checks timed out'}
  Get-Content -LiteralPath $log

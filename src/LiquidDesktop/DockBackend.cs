@@ -11,6 +11,7 @@ using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using System.Xml;
 
 internal sealed class DockPin {public string id,name,path,arguments,icon;public bool exists;}
 internal sealed class DockWindow {public long handle;public uint pid;public string title,path,appId;}
@@ -74,14 +75,66 @@ internal sealed class DockBackend {
  }
  string IconFor(string path,string custom,string key){
   custom=PersistentIcon(root,custom);
+   path=PackageTarget(path);bool packageDesktop=false;string packageIcon;lock(packageTargets)if(packageIcons.TryGetValue(path,out packageIcon)){path=packageIcon;packageDesktop=true;}
   string saved;string cacheKey=path+"|"+custom;if(icons.TryGetValue(cacheKey,out saved))return saved;
   saved=Path.Combine(root,"dock-icons",key+".png");
   try{if(!String.IsNullOrEmpty(custom)&&File.Exists(custom)){using(var input=Image.FromFile(custom))input.Save(saved,ImageFormat.Png);}
+   else if(packageDesktop){using(var icon=Icon.ExtractAssociatedIcon(path))using(var bitmap=icon.ToBitmap())bitmap.Save(saved,ImageFormat.Png);}
    else {IImageFactory factory=null;IntPtr bitmap=IntPtr.Zero;try{var iid=typeof(IImageFactory).GUID;SHCreateItemFromParsingName(path,IntPtr.Zero,ref iid,out factory);if(factory.GetImage(new SIZE{x=128,y=128},5,out bitmap)!=0)throw new Exception("icon");SaveBitmap(bitmap,saved);}finally{if(bitmap!=IntPtr.Zero)DeleteObject(bitmap);if(factory!=null)Marshal.ReleaseComObject(factory);}}
   }catch{try{using(var ico=Icon.ExtractAssociatedIcon(path))using(var img=ico.ToBitmap())img.Save(saved,ImageFormat.Png);}catch{using(var img=SystemIcons.Application.ToBitmap())img.Save(saved,ImageFormat.Png);}}
   icons[cacheKey]=saved;return saved;
  }
  static readonly Dictionary<string,string[]> shortcutTargets=new Dictionary<string,string[]>(StringComparer.OrdinalIgnoreCase);
+  static readonly Dictionary<string,string> packageTargets=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase),packageIcons=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);static DateTime packageTargetsExpiry;
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]static extern int PackageFamilyNameFromFullName(string fullName,ref uint length,StringBuilder family);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]static extern int GetPackagesByPackageFamily(string family,ref uint count,[Out]IntPtr[] names,ref uint length,IntPtr buffer);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]static extern int GetPackagePathByFullName(string fullName,ref uint length,StringBuilder path);
+  internal static string[] PackageIdentity(string path){
+   if(String.IsNullOrEmpty(path)||!Path.IsPathRooted(path)||!path.EndsWith(".exe",StringComparison.OrdinalIgnoreCase))return null;
+   path=Path.GetFullPath(path);int start=path.IndexOf("\\WindowsApps\\",StringComparison.OrdinalIgnoreCase);if(start<0)return null;
+   string[] parts=path.Substring(start+13).Split(new[]{'\\'},2);if(parts.Length!=2)return null;
+   uint length=256;var family=new StringBuilder((int)length);if(PackageFamilyNameFromFullName(parts[0],ref length,family)!=0)return null;
+   return new[]{family.ToString(),parts[1]};
+  }
+  static XmlNodeList PackageApplications(string manifest){
+   var document=new XmlDocument{XmlResolver=null};using(var reader=XmlReader.Create(manifest,new XmlReaderSettings{DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=1048576}))document.Load(reader);
+   return document.SelectNodes("/*[local-name()='Package']/*[local-name()='Applications']/*[local-name()='Application']");
+  }
+  internal static string PackageApplication(string manifest,string executable){
+   string result="";foreach(XmlElement app in PackageApplications(manifest)){
+    if(!String.Equals(app.GetAttribute("Executable").Replace('/','\\'),executable.Replace('/','\\'),StringComparison.OrdinalIgnoreCase))continue;
+    string id=app.GetAttribute("Id");if(id.Length==0||id.IndexOfAny(new[]{'"','\r','\n','\0','\\','/','!'})>=0||result.Length>0)return "";result=id;
+   }return result;
+  }
+  internal static string PackageDesktopExecutable(string manifest,string application){
+   string result="";foreach(XmlElement app in PackageApplications(manifest)){
+    if(!String.Equals(app.GetAttribute("Id"),application,StringComparison.OrdinalIgnoreCase)||app.GetAttribute("EntryPoint")!="Windows.FullTrustApplication")continue;
+    string relative=app.GetAttribute("Executable").Replace('/','\\'),directory=Path.GetDirectoryName(Path.GetFullPath(manifest))+Path.DirectorySeparatorChar;
+    if(relative.Length==0||Path.IsPathRooted(relative)||result.Length>0)return "";string full=Path.GetFullPath(Path.Combine(directory,relative));
+    if(!full.StartsWith(directory,StringComparison.OrdinalIgnoreCase)||!full.EndsWith(".exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(full))return "";result=full;
+   }return result;
+  }
+  internal static string PackageTarget(string path){
+   if(String.IsNullOrEmpty(path))return path;bool packaged=path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase);if(!packaged&&path.IndexOf("WindowsApps",StringComparison.OrdinalIgnoreCase)<0)return path;
+   lock(packageTargets){
+    var now=DateTime.UtcNow;if(now>=packageTargetsExpiry||packageTargets.Count>=256){packageTargets.Clear();packageIcons.Clear();packageTargetsExpiry=now.AddSeconds(30);}string saved;if(packageTargets.TryGetValue(path,out saved))return saved;
+    string resolved=path;try{
+     var identity=packaged?path.Substring(17).Split(new[]{'!'},2):PackageIdentity(path);if(identity!=null&&identity.Length==2){
+      uint count=0,length=0;if(GetPackagesByPackageFamily(identity[0],ref count,null,ref length,IntPtr.Zero)==122&&count>0&&count<=256&&length>0&&length<=65536){
+       var names=new IntPtr[count];var buffer=Marshal.AllocHGlobal((int)length*2);var targets=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+       try{if(GetPackagesByPackageFamily(identity[0],ref count,names,ref length,buffer)==0)for(int i=0;i<count;i++){
+        uint size=32768;var directory=new StringBuilder((int)size);if(GetPackagePathByFullName(Marshal.PtrToStringUni(names[i]),ref size,directory)!=0)continue;
+        string manifest=Path.Combine(directory.ToString(),"AppxManifest.xml");if(!File.Exists(manifest))continue;
+        string app=packaged?identity[1]:PackageApplication(manifest,identity[1]);if(app.Length>0){string target="shell:AppsFolder\\"+identity[0]+"!"+app;targets.Add(target);string executable=PackageDesktopExecutable(manifest,app);if(executable.Length>0)packageIcons[target]=executable;}
+       }}finally{Marshal.FreeHGlobal(buffer);}
+       if(targets.Count==1)resolved=targets.Single();
+      }
+     }
+    }catch(IOException){}catch(UnauthorizedAccessException){}catch(XmlException){}catch(ArgumentException){}
+    // Store paths change after app updates; the manifest's exact application identity does not.
+    packageTargets[path]=resolved;return resolved;
+   }
+  }
  static readonly Dictionary<string,string> physicalPaths=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);static DateTime physicalPathsExpiry;
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern uint GetFinalPathNameByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file,StringBuilder path,uint size,uint flags);
@@ -96,14 +149,14 @@ internal sealed class DockBackend {
   }
  }
  static string[] LaunchIdentity(string path,string arguments){
-  if(!path.EndsWith(".lnk",StringComparison.OrdinalIgnoreCase))return new[]{path,arguments??""};
+   if(!path.EndsWith(".lnk",StringComparison.OrdinalIgnoreCase))return new[]{String.IsNullOrEmpty(arguments)?PackageTarget(path):path,arguments??""};
   string key=path+"|"+File.GetLastWriteTimeUtc(path).Ticks;string[] cached;lock(shortcutTargets){if(shortcutTargets.TryGetValue(key,out cached))return cached;}
   object shell=null,shortcut=null;var result=new[]{path,arguments??""};
   try{shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));shortcut=shell.GetType().InvokeMember("CreateShortcut",BindingFlags.InvokeMethod,null,shell,new object[]{path});string target=shortcut.GetType().InvokeMember("TargetPath",BindingFlags.GetProperty,null,shortcut,null) as string;if(!String.IsNullOrWhiteSpace(target))result=new[]{target,(shortcut.GetType().InvokeMember("Arguments",BindingFlags.GetProperty,null,shortcut,null) as string)??""};}catch(COMException){}catch(TargetInvocationException){}catch(ArgumentException){}finally{if(shortcut!=null)Marshal.FinalReleaseComObject(shortcut);if(shell!=null)Marshal.FinalReleaseComObject(shell);}
-  lock(shortcutTargets){if(shortcutTargets.Count>256)shortcutTargets.Clear();shortcutTargets[key]=result;}return result;
+   if(String.IsNullOrEmpty(result[1]))result[0]=PackageTarget(result[0]);lock(shortcutTargets){if(shortcutTargets.Count>256)shortcutTargets.Clear();shortcutTargets[key]=result;}return result;
  }
  static string ApplicationId(uint pid){var h=OpenProcess(0x1000,false,pid);if(h==IntPtr.Zero)return "";try{uint length=0;GetApplicationUserModelId(h,ref length,null);if(length==0||length>1024)return "";var value=new StringBuilder((int)length);return GetApplicationUserModelId(h,ref length,value)==0?value.ToString():"";}finally{CloseHandle(h);}}
- internal static bool Matches(DockPin pin,DockWindow window){if(pin.path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase))return String.Equals(pin.path.Substring(17),window.appId,StringComparison.OrdinalIgnoreCase);string target=LaunchIdentity(pin.path,pin.arguments)[0];return String.Equals(target,window.path,StringComparison.OrdinalIgnoreCase)||String.Equals(PhysicalPath(target),PhysicalPath(window.path),StringComparison.OrdinalIgnoreCase);}
+  internal static bool Matches(DockPin pin,DockWindow window){string target=LaunchIdentity(pin.path,pin.arguments)[0];if(target.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase))return String.Equals(target.Substring(17),window.appId,StringComparison.OrdinalIgnoreCase);return String.Equals(target,window.path,StringComparison.OrdinalIgnoreCase)||String.Equals(PhysicalPath(target),PhysicalPath(window.path),StringComparison.OrdinalIgnoreCase);}
  static List<DockWindow> ReadWindows(){
   var all=new List<DockWindow>();var paths=new Dictionary<uint,string>();var appIds=new Dictionary<uint,string>();
   EnumWindows((h,p)=>{
@@ -286,6 +339,7 @@ internal sealed class DockBackend {
  public static string Pin(string folder,string path,string arguments,string name,string icon,string beforeId){
   if(String.IsNullOrWhiteSpace(path)||path.IndexOfAny(new[]{'\r','\n','\0','"'})>=0)throw new ArgumentException("应用入口路径无效。");
   if(!path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase))path=Path.GetFullPath(path);
+   var identity=LaunchIdentity(path,arguments);if(identity[0].StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)&&String.IsNullOrEmpty(identity[1]))path=identity[0];
   icon=PersistentIcon(folder,icon);
   string result=null;ChangePins(folder,list=>{var pin=list.FirstOrDefault(p=>SameTarget(p,path,arguments));if(pin==null){pin=new DockPin{id=Guid.NewGuid().ToString("N"),path=path,arguments=arguments??"",name=String.IsNullOrWhiteSpace(name)?Path.GetFileNameWithoutExtension(path):name,icon=icon??"",exists=File.Exists(path)||Directory.Exists(path)||path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)};list.Add(pin);}if(beforeId!=null)Position(list,pin,beforeId);result="p"+pin.id;});return result;
  }
@@ -293,6 +347,7 @@ internal sealed class DockBackend {
  public static void Move(string folder,string id,string beforeId){ChangePins(folder,list=>{var pin=list.FirstOrDefault(p=>"p"+p.id==id);if(pin!=null)Position(list,pin,beforeId);});}
  static void MoveBy(string folder,string id,int delta){ChangePins(folder,list=>{int index=list.FindIndex(p=>"p"+p.id==id);if(index<0)return;var pin=list[index];list.RemoveAt(index);list.Insert(Math.Max(0,Math.Min(list.Count,index+delta)),pin);});}
  static void Launch(string path,string arguments){
+   var identity=LaunchIdentity(path,arguments);if(identity[0].StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)&&String.IsNullOrEmpty(identity[1]))path=identity[0];
   if(path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)&&path.IndexOfAny(new[]{'"','\r','\n','\0'})<0){Process.Start(new ProcessStartInfo("explorer.exe","\""+path+"\""){UseShellExecute=true});return;}
   if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("此入口已失效，请重新定位应用。",path);
   Process.Start(new ProcessStartInfo(path,arguments??""){UseShellExecute=true,WorkingDirectory=Directory.Exists(path)?path:Path.GetDirectoryName(path)});

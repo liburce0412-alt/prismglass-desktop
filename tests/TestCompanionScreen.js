@@ -13,8 +13,8 @@ function fixture(info = {}) {
     setRemoteDescription(value) { this.remoteDescription = value; return Promise.resolve(); }
     close() { this.closed = true; }
   }
-  const doc = { hidden: false, body: {dataset:{}}, getElementById: node, createElement: () => ({ value: '', textContent: '' }), addEventListener: (name, fn) => { events[name] = fn; } };
-  const win = { RTCPeerConnection: Peer, addEventListener: (name, fn) => { events[name] = fn; } };
+  const doc = { hidden: false, body: {dataset:{}, style:{values:{},setProperty(key,value){this.values[key]=value;}}}, getElementById: node, createElement: () => ({ value: '', textContent: '' }), addEventListener: (name, fn) => { events[name] = fn; } };
+  const win = { innerWidth:1024,innerHeight:768,visualViewport:{width:1024,height:768},RTCPeerConnection: Peer, addEventListener: (name, fn) => { events[name] = fn; } };
   const fetch = async (path, options) => {
     calls.push({ path, options });
     if (path === '/api/screen/begin' && beginReplies.length) return beginReplies.shift();
@@ -32,11 +32,21 @@ function fixture(info = {}) {
     return { ok: true, json: async () => data };
   };
   vm.runInNewContext(code, { window: win, document: doc, RTCPeerConnection: Peer, AbortController, fetch, setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, clearTimeout: id => timers.delete(id), MediaStream: class { constructor(tracks) { this.getTracks = () => tracks; } } });
-  return { ids, calls, events, timers, peers, doc, beginReplies, screen: win.PrismCompanionScreen, delay(value) { delayed = value; }, delayEnd(value) { delayedEnd = value; } };
+  return { ids, calls, events, timers, peers, doc, win, beginReplies, screen: win.PrismCompanionScreen, delay(value) { delayed = value; }, delayEnd(value) { delayedEnd = value; } };
 }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 (async () => {
   const f = fixture();
+  f.doc.body.dataset.screenKeyboard='true'; f.screen.layout(); assert.equal(f.doc.body.dataset.screenLayout,'true', 'Keyboard input gets a viewport layout even before fullscreen playback'); assert.equal(f.doc.body.dataset.screenTools,'true', 'Initial visible tools and their toggle agree');
+  f.doc.body.dataset.screenKeyboard='false'; f.screen.layout(); assert.equal(f.doc.body.dataset.screenLayout,'false', 'Closing keyboard restores the original non-fullscreen layout');
+  const layout = fixture(), picture = layout.ids['screen-video']; picture.hidden=false; picture.videoWidth=1280; picture.videoHeight=720; layout.doc.body.dataset.screenExpanded='true'; picture.onloadedmetadata();
+  assert.equal(layout.doc.body.dataset.screenControls,'bottom','Mirror shortcuts use the existing lower letterbox');
+  layout.doc.body.dataset.screenKeyboard='true'; layout.win.visualViewport.height=380; layout.screen.layout();
+  assert.equal(layout.doc.body.dataset.screenInput,'side','Landscape keyboard uses existing space beside the picture');
+  assert(Math.abs(parseFloat(layout.doc.body.style.values['--screen-input-width'])-(1024-380*16/9))<.01);
+  picture.videoWidth=1024; picture.videoHeight=768; picture.onresize(); assert.equal(layout.doc.body.style.values['--screen-input-width'],'360px','A wide natural gutter does not create an oversized input panel');
+  layout.win.visualViewport.width=768; layout.win.visualViewport.height=664; layout.screen.layout(); assert.equal(layout.doc.body.dataset.screenInput,'bottom','Portrait keeps a thin bottom input bar when the natural side space is insufficient');
+  layout.screen.closeTools(); assert.equal(layout.doc.body.dataset.screenTools,'false','Keyboard can close tools without moving input focus');
   const approval = fixture(); approval.screen.render({screen:true}, 'approval', true); await flush();
   const pendingRule = {ok:false, json:async()=>({error:'screen_network_pending',message:'请在电脑确认投屏连接'})};
   approval.beginReplies.push(pendingRule); const approvedStart = approval.ids['screen-start'].onclick(); await flush();
@@ -93,6 +103,7 @@ const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve()
   await modes.ids['screen-start'].onclick();
   assert.deepEqual(JSON.parse(modes.calls.filter(c => c.path === '/api/screen/begin')[1].options.body), { mode: 'extend', monitor: -1, quality: '720', offer: 'v=0\r\n' });
   modes.ids['screen-video'].onplaying(); assert.match(modes.ids['screen-status'].textContent, /副屏已打开/);
+  modes.ids['screen-video'].hidden=false; modes.ids['screen-video'].videoWidth=1280; modes.ids['screen-video'].videoHeight=720; modes.screen.layout(); assert.equal(modes.doc.body.dataset.screenControls,'top','Extension mode keeps its floating controls without manufacturing letterboxes');
   modes.events.offline(); await flush(); assert(modes.peers[1].closed); assert.equal(modes.ids['screen-video'].srcObject, null);
   const missing = fixture({ extensionAvailable: false, extensionMessage: '请先安装虚拟显示驱动。' });
   missing.screen.render({ screen: true }, 'missing', true); await flush(); await missing.ids['screen-mode-extend'].onclick();

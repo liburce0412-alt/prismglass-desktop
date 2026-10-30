@@ -104,12 +104,13 @@ internal sealed class LiquidDesktop : Form {
   if((show!=dockShown||show!=nativeShown)&&(show==nativeShown||monitorDock.SetVisible(show))){dockShown=show;UpdateVisibleRegion();dockPlate.Sync(Handle,show?dockWindow:IntPtr.Zero,dockRectangle,screen);}
  }
  void PreviewTick(Point cursor){
+  if(coordinator.WorkspaceOpen){if(preview!=null){preview.Dispose();preview=null;}hoverId="";hoverSince=DateTime.MinValue;return;}
   if(preview!=null&&!preview.IsDisposed&&preview.KeyboardMode)return;
   var at=new Point(cursor.X+screen.X,cursor.Y+screen.Y);var now=DateTime.UtcNow;
   if(preview!=null&&!preview.IsDisposed&&preview.Bounds.Contains(at)){previewLeave=now.AddMilliseconds(400);return;}
   string id=dockShown&&dockRectangle.Contains(at)?Read(instance=="primary"?"dock-hover.txt":"dock-hover-"+instance+".txt",""):"";
   if(id!=hoverId){hoverId=id;hoverSince=now;if(id.Length>0&&preview!=null&&preview.EntryId!=id){preview.Dispose();preview=null;}}
-  if(id.Length>0){previewLeave=now.AddMilliseconds(400);if((now-hoverSince).TotalMilliseconds>=400&&(preview==null||preview.IsDisposed||preview.EntryId!=id)){if(preview!=null)preview.Dispose();var entry=backend.Entry(id);if(entry!=null){preview=new DockPreview(entry,dockRectangle,theme=="Astro");preview.Show();}}}
+  if(id.Length>0){previewLeave=now.AddMilliseconds(400);if((now-hoverSince).TotalMilliseconds>=400&&(preview==null||preview.IsDisposed||preview.EntryId!=id)){if(preview!=null){preview.Dispose();preview=null;}var entry=backend.Entry(id);if(entry!=null&&!entry.system&&entry.windows.Count>0){preview=new DockPreview(entry,dockRectangle,theme=="Astro");preview.Show();}}}
   else if(now>previewLeave&&preview!=null){preview.Dispose();preview=null;}
  }
  protected override bool ShowWithoutActivation {get{return true;}}
@@ -253,7 +254,7 @@ internal sealed class LiquidDesktop : Form {
    sideDock=new SideDock(root,false,sharedData,instance);sideDock.FormClosed+=(s,e)=>ComponentFailed(0);sideDock.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);sideDock.ApplyPreferences(preferences.Snapshot());sideDock.Show();
   }
   if(top&&(topIsland==null||topIsland.IsDisposed)&&componentRecovery.CanStart(1,now)){
-   islandReady=false;topIsland=new TopIsland(root,false,sharedData,instance);topIsland.Ready+=()=>{islandReady=true;LegacyTopbar(true);topIsland.ApplyPreferences(preferences.Snapshot());};topIsland.FormClosed+=(s,e)=>ComponentFailed(1);topIsland.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);topIsland.Show();
+   islandReady=false;topIsland=new TopIsland(root,false,sharedData,instance);topIsland.Ready+=()=>{islandReady=true;LegacyTopbar(true);topIsland.ApplyPreferences(preferences.Snapshot());};topIsland.CompanionStopRequested+=async()=>{if(coordinator.companion!=null){await coordinator.companion.StopRemoteControls();coordinator.PublishCompanionState();}};topIsland.FormClosed+=(s,e)=>ComponentFailed(1);topIsland.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);topIsland.Show();
   }
   if(right&&(fileShelf==null||fileShelf.IsDisposed)&&componentRecovery.CanStart(2,now)){
    shelfReady=false;fileShelf=new FileShelf(root,false,sharedData,instance);fileShelf.Ready+=()=>{shelfReady=true;fileShelf.ApplyPreferences(preferences.Snapshot());if(legacyManagerOpen)fileShelf.OpenLegacyManager();};fileShelf.CursorSettingsChanged+=(settings,size)=>coordinator.cursorTrail.Configure(settings,size);fileShelf.FormClosed+=(s,e)=>ComponentFailed(2);fileShelf.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);fileShelf.Show();
@@ -298,10 +299,16 @@ internal sealed class LiquidDesktop : Form {
   foreach(var host in Hosts()){host.desktopWindows=windows;host.screenCovered=DesktopVisibilityPolicy.AnyCovered(windows,host.screen,host.monitor.Screen.WorkingArea);}
  }
  void SyncPixelScale(){pixels.Sync();}
+ bool readingCompanion;
+ async void PublishCompanionState(){
+  if(closing||readingCompanion||companion==null)return;readingCompanion=true;var source=companion;int revision=source.IslandRevision;
+  try{var state=await Task.Run(()=>source.IslandSnapshot());if(!closing&&source==companion&&revision==source.IslandRevision)foreach(var host in Hosts())if(host.topIsland!=null&&!host.topIsland.IsDisposed)host.topIsland.ApplyCompanionState(state);}catch{}finally{readingCompanion=false;}
+  if(!closing&&source==companion&&revision!=source.IslandRevision)PublishCompanionState();
+ }
  void Probe(){
   SyncPixelScale();
   SystemParametersInfo(0x1042,0,out systemAnimations,0);
-  if(primaryHost){preferences.Reload();if(runtime!=null)runtime.ReadPower();if(preferenceRevision!=preferences.Revision){PreferencesChanged();}backend.Refresh();}
+  if(primaryHost){preferences.Reload();if(runtime!=null)runtime.ReadPower();if(preferenceRevision!=preferences.Revision){PreferencesChanged();}backend.Refresh();PublishCompanionState();}
   if(legacyManagerOpen&&shelfReady&&fileShelf!=null&&!fileShelf.LegacyManagerOpen)legacyManagerOpen=false;
   if(painted)EnsureComponents();if(closing)return;IntPtr dockHandle=IntPtr.Zero;Rectangle dockBounds=Rectangle.Empty;
   var current=monitor.Screen.Bounds;if(current!=screen||Bounds!=current){screen=current;Bounds=screen;layoutKey="";}

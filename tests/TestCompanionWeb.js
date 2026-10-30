@@ -10,7 +10,7 @@ const css = fs.readFileSync(path.join(__dirname, '../src/LiquidDesktop/companion
 assert.match(css, /button\{min-width:44px;min-height:44px;/, 'All buttons need a 44 px touch target in both dimensions');
 
 class Node {
-  constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; this.dataset = {}; this.hidden = false; this.disabled = false; this.value = ''; this.checked = false; this._text = ''; this.style = { setProperty() {} }; this.parentNode = null; }
+  constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; this.dataset = {}; this.hidden = false; this.disabled = false; this.value = ''; this.checked = false; this._text = ''; this.style = { values: {}, setProperty(key, value) { this.values[key] = value; } }; this.parentNode = null; }
   set value(value) { this._value = String(value); this.selectionStart = this.selectionEnd = this._value.length; }
   get value() { return this._value; }
   set textContent(value) { this.textWrites = (this.textWrites || 0) + 1; this._text = String(value); this.children.forEach(child => { child.parentNode = null; }); this.children = []; }
@@ -64,14 +64,22 @@ function fixture(options = {}) {
   };
   const context = { document, crypto: webcrypto, AbortController, Uint8Array, Promise, Date: FixtureDate, isFinite, fetch, URL: { createObjectURL(blob) { assert(blob instanceof Blob); const url = 'blob:fixture-' + blobs.length; blobs.push(url); return url; }, revokeObjectURL(url) { revokedBlobs.push(url); } }, setTimeout: (fn, delay) => { const id = nextTimer++; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id), setInterval: () => 1, clearInterval: () => {}, console };
   const location = { hash: options.hash || '', pathname: '/', search: options.search || '' };
-  context.window = { innerHeight: 768, location, history: { replaceState: (state, title, url) => { historyChanges.push(url); location.hash = ''; } }, matchMedia: () => ({ matches: false }), addEventListener: (name, fn) => { windowListeners[name] = fn; } };
+  context.window = { innerWidth: 1024, innerHeight: 768, visualViewport: options.viewport, location, history: { replaceState: (state, title, url) => { historyChanges.push(url); location.hash = ''; } }, matchMedia: () => ({ matches: false }), addEventListener: (name, fn) => { windowListeners[name] = fn; } };
   vm.runInNewContext(source, context, { filename: 'companion.js' });
-  return { ids, all, document, calls, blobs, revokedBlobs, historyChanges, location, current, applications, listeners, windowListeners, imageCount: () => imagesCreated, advance: ms => { now += ms; }, handler: fn => { handler = fn; }, async timers(delay) { const ready = Array.from(timers.entries()).filter(([, item]) => item.delay === delay); ready.forEach(([id]) => timers.delete(id)); ready.forEach(([, item]) => item.fn()); await flush(); }, async boot() { await this.timers(0); }, async hide() { document.hidden = true; listeners.visibilitychange(); await flush(); }, async show() { document.hidden = false; listeners.visibilitychange(); await this.timers(0); } };
+  return { ids, all, document, calls, blobs, revokedBlobs, historyChanges, location, current, applications, listeners, windowListeners, time: () => now, timerDelays: () => Array.from(timers.values(), item => item.delay), imageCount: () => imagesCreated, advance: ms => { now += ms; }, handler: fn => { handler = fn; }, async timers(delay) { const ready = Array.from(timers.entries()).filter(([, item]) => item.delay === delay); ready.forEach(([id]) => timers.delete(id)); ready.forEach(([, item]) => item.fn()); await flush(); }, async boot() { await this.timers(0); }, async hide() { document.hidden = true; listeners.visibilitychange(); await flush(); }, async show() { document.hidden = false; listeners.visibilitychange(); await this.timers(0); } };
 }
 const click = (f, action) => (f.all.find(n => n.dataset.action === action) || f.ids['touch-actions'].children.find(n => n.dataset.touchId === action)).onclick();
 const submit = node => node.onsubmit({ preventDefault() {} });
 
 (async function () {
+  const viewportEvents = {}, viewport = { width: 1024, height: 400, offsetTop: 80, offsetLeft: 0, addEventListener(name, fn) { viewportEvents[name] = fn; } }, keyboardViewport = fixture({ viewport });
+  assert.equal(keyboardViewport.document.body.style.values['--viewport-height'], '400px');
+  assert.equal(keyboardViewport.document.body.style.values['--viewport-top'], '80px', 'Keyboard layout follows the visible Safari viewport offset');
+  viewport.offsetTop = 120; viewport.offsetLeft = 10; viewport.width = 1004; viewportEvents.scroll();
+  assert.equal(keyboardViewport.document.body.style.values['--viewport-top'], '120px'); assert.equal(keyboardViewport.document.body.style.values['--viewport-left'], '10px'); assert.equal(keyboardViewport.document.body.style.values['--viewport-width'], '1004px', 'Viewport panning updates position and width without waiting for a resize');
+  viewport.height = 768; viewport.offsetTop = viewport.offsetLeft = 0; viewport.width = 1024; viewportEvents.resize();
+  assert.equal(keyboardViewport.document.body.style.values['--viewport-height'], '768px', 'Dismissing the native keyboard restores the visible height');
+  const legacyViewport = fixture(); assert.equal(legacyViewport.document.body.style.values['--viewport-height'], '768px'); assert.equal(legacyViewport.document.body.style.values['--viewport-top'], '0px', 'Browsers without VisualViewport retain a complete layout fallback');
   const sourceTime = Date.UTC(2026, 0, 2, 1, 23), weather = fixture({ state: { ...sample, weather: { available: true, updatedAt: sourceTime, data: { temp: 0, code: null, low: null, high: null, feelsLike: null, location: '杭州 · 浙江 · 中国', source: 'CMA GRAPES · Open-Meteo', kind: 'model', fetchedAt: Date.now() } } } }); await weather.boot();
   assert.equal(weather.ids.weather.hidden, false); assert.equal(weather.ids['weather-main'].textContent, '0° · 天气状况未提供'); assert.equal(weather.ids['weather-detail'].hidden, true, 'Missing apparent temperature and range are not invented'); assert.equal(weather.ids['weather-location'].textContent, '杭州 · 浙江 · 中国'); assert.match(weather.ids['weather-stamp'].textContent, /01\/02/); assert.match(weather.ids['weather-stamp'].textContent, /CMA GRAPES · Open-Meteo · 数值预报/);
   weather.current.weather.data.feelsLike = -2; weather.current.weather.data.stale = true; weather.current.weather.reason = '天气更新失败，保留上次数据。'; await weather.timers(2000);
@@ -362,8 +370,8 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   controls.ids['pointer-surface'].onpointermove(pointerEvent(70, 30)); await pointerPulse(controls); assert.equal(pointerCount, 1, 'Pointer permits only one in-flight sample');
   controls.advance(250); releasePointer(response({ expiresAt: Date.now() + 20000 })); await flush(); await pointerPulse(controls); assert.equal(pointerCount, 1, 'Stale movement is dropped rather than replayed');
   controls.ids['pointer-surface'].onpointermove(pointerEvent(80, 40)); await pointerPulse(controls); assert.equal(pointerCount, 2); assert.equal(controls.calls.filter(c => c.url === '/api/pointer')[1].body.seq, 2);
-  releasePointer(response({ expiresAt: Date.now() + 20000 })); await flush(); controls.ids['home-tab'].onclick(); await flush(); assert.equal(controls.ids['pointer-surface'].dataset.active, 'false'); assert(controls.calls.some(c => c.url === '/api/pointer/end'));
-  controls.current.permissions.pointer = false; await controls.timers(2000); assert.equal(controls.ids['pointer-enable'].disabled, true);
+  releasePointer(response({ expiresAt: Date.now() + 20000 })); await flush(); controls.ids['home-tab'].onclick(); await flush(); assert.equal(controls.ids['pointer-surface'].dataset.active, 'true'); assert(!controls.calls.some(c => c.url === '/api/pointer/end'), 'In-page navigation preserves explicitly enabled touch');
+  controls.current.permissions.pointer = false; await controls.timers(2000); assert.equal(controls.ids['pointer-enable'].disabled, true); assert.equal(controls.ids['pointer-surface'].dataset.active, 'false');
 
   const slowScroll = fixture({ state: { ...sample, permissions: { ...grants, pointer: true } } });
   slowScroll.handler(c => c.url === '/api/pointer/begin' ? response({ leaseId: 'slow', expiresAt: Date.now() + 20000 }) : c.url === '/api/pointer' ? response({ expiresAt: Date.now() + 20000 }) : undefined);
@@ -386,7 +394,7 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   assert.equal(pointerPackets(strip)[0].kind, 'scroll'); assert.equal(pointerPackets(strip)[0].steps, 2, 'Dedicated wheel sends the same bounded scroll packets without mouse movement'); strip.ids['pointer-wheel'].onpointerup(pointerEvent(0, 148));
   strip.ids['wheel-down'].onclick(); await pointerPulse(strip); assert.equal(pointerPackets(strip).at(-1).steps, -1);
   strip.ids['pointer-wheel'].onkeydown({key:'PageUp',preventDefault(){}}); await pointerPulse(strip); assert.equal(pointerPackets(strip).at(-1).steps, 5);
-  strip.ids['pointer-wheel'].onpointerdown(pointerEvent(0, 0)); strip.ids['pointer-wheel'].onpointercancel(pointerEvent(0, 0)); await flush(); assert.equal(strip.ids['pointer-wheel'].dataset.active, 'false'); assert.equal(strip.ids['wheel-up'].disabled, true); assert(strip.calls.some(c=>c.url==='/api/pointer/end'));
+  strip.ids['pointer-wheel'].onpointerdown(pointerEvent(0, 0)); strip.ids['pointer-wheel'].onpointercancel(pointerEvent(0, 0)); await flush(); assert.equal(strip.ids['pointer-wheel'].dataset.active, 'true'); assert.equal(strip.ids['wheel-up'].disabled, false); assert(!strip.calls.some(c=>c.url==='/api/pointer/end'), 'Cancelling a wheel gesture keeps touch enabled');
   const smooth = await readyPointer(); smooth.ids['pointer-speed'].value = '50'; smooth.ids['pointer-speed'].oninput(); assert.equal(smooth.ids['pointer-speed-value'].textContent, '50%'); smooth.ids['pointer-surface'].onpointerdown(pointerEvent(0, 0));
   for (let i = 1; i <= 7; i++) { smooth.ids['pointer-surface'].onpointermove(pointerEvent(i * .2, 0)); await pointerPulse(smooth); }
   assert.equal(pointerPackets(smooth).reduce((sum, body) => sum + (body.dx || 0), 0), 1, 'Subpixel movement accumulates across samples instead of being rounded away');
@@ -401,18 +409,47 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   drag.ids['pointer-surface'].onpointermove(pointerEvent(12, 5)); await pointerPulse(drag); drag.ids['pointer-surface'].onpointerup(pointerEvent(12, 5)); await pointerPulse(drag); assert.equal(pointerPackets(drag).at(-1).phase, 'end', 'Lifting the dragging finger sends explicit mouse-up');
   const dragScroll = await readyPointer(); await startDrag(dragScroll); dragScroll.ids['pointer-surface'].onpointerdown(pointerEvent(20, 0, 2)); dragScroll.ids['pointer-surface'].onpointermove(pointerEvent(0, 48)); dragScroll.ids['pointer-surface'].onpointermove(pointerEvent(20, 48, 2)); await pointerPulse(dragScroll); await pointerPulse(dragScroll); assert.deepEqual(pointerPackets(dragScroll).slice(-2).map(body => [body.kind, body.phase || body.steps]), [['drag', 'end'], ['scroll', 2]], 'Adding a second finger releases a drag before sending scroll input');
   let mixedRelease; const mixed = await readyPointer(c => c.url === '/api/pointer' && !mixedRelease ? new Promise(resolve => { mixedRelease = resolve; }) : undefined); mixed.ids['pointer-surface'].onpointerdown(pointerEvent(0, 0)); mixed.ids['pointer-surface'].onpointermove(pointerEvent(10, 0)); await pointerPulse(mixed); mixed.ids['pointer-surface'].onpointermove(pointerEvent(20, 0)); mixed.advance(210); mixed.ids['pointer-surface'].onpointermove(pointerEvent(30, 0)); mixedRelease(response({ expiresAt: Date.now() + 120000 })); await flush(); await pointerPulse(mixed); assert.equal(pointerPackets(mixed).at(-1).dx, 15, 'Fresh input does not renew the age of older movement waiting behind a request');
-  for (const reset of ['hidden', 'pagehide', 'blur', 'cancel', 'capture', 'stop', 'leave', 'revoke', 'network']) {
+  for (const reset of ['hidden', 'pagehide', 'stop', 'revoke', 'network']) {
     const released = await readyPointer(); await startDrag(released);
     if (reset === 'hidden') await released.hide();
     else if (reset === 'pagehide') { released.windowListeners.pagehide({ type: 'pagehide' }); await flush(); }
-    else if (reset === 'blur') released.windowListeners.blur();
-    else if (reset === 'cancel') released.ids['pointer-surface'].onpointercancel(pointerEvent(0, 0));
-    else if (reset === 'capture') released.ids['pointer-surface'].onlostpointercapture(pointerEvent(0, 0));
     else if (reset === 'stop') released.ids['pointer-stop'].onclick();
-    else if (reset === 'leave') released.ids['home-tab'].onclick();
     else if (reset === 'revoke') { released.current.permissions.pointer = false; await released.timers(2000); }
     else { released.handler(c => c.url === '/api/pointer' ? Promise.reject(new TypeError('fixture offline')) : undefined); released.ids['pointer-surface'].onpointermove(pointerEvent(12, 0)); await pointerPulse(released); }
     await flush(); const ends = released.calls.filter(c => c.url === '/api/pointer/end'); assert.equal(released.ids['pointer-surface'].dataset.active, 'false'); assert(ends.length >= 1 && ends.every(c => c.request.keepalive && c.request.headers['X-CSRF-Token'] === 'test-csrf'), reset + ' attempts authenticated keepalive release even while private requests are aborted');
+  }
+  for (const reset of ['blur', 'cancel', 'capture', 'leave']) {
+    const held = await readyPointer(); await startDrag(held); const before = pointerPackets(held).length;
+    held.ids['pointer-surface'].onpointermove(pointerEvent(10, 0)); held.ids['pointer-left'].onclick();
+    if (reset === 'blur') held.windowListeners.blur();
+    else if (reset === 'cancel') held.ids['pointer-surface'].onpointercancel(pointerEvent(0, 0));
+    else if (reset === 'capture') held.ids['pointer-surface'].onlostpointercapture(pointerEvent(0, 0));
+    else held.ids['home-tab'].onclick();
+    await pointerPulse(held);
+    assert.equal(held.ids['pointer-surface'].dataset.active, 'true'); assert(!held.calls.some(c => c.url === '/api/pointer/end'));
+    assert.deepEqual(pointerPackets(held).slice(before).map(p => [p.kind, p.phase]), [['drag', 'end']], reset + ' releases only the held gesture and discards pending clicks and movement');
+    held.ids['pointer-tab'].onclick(); held.ids['pointer-surface'].onkeydown({ key: 'ArrowRight', preventDefault() {} }); await pointerPulse(held);
+    assert.equal(pointerPackets(held).at(-1).kind, 'move'); assert.equal(held.calls.filter(c => c.url === '/api/pointer/begin').length, 1, 'Returning after ' + reset + ' reuses the enabled lease');
+  }
+  const idle = fixture({ state: { ...sample, permissions: { ...grants, pointer: true } } });
+  idle.handler(c => c.url === '/api/pointer/begin' ? response({ leaseId: 'idle', expiresAt: idle.time() + 20000 }) : c.url === '/api/pointer' ? response({ expiresAt: idle.time() + 20000 }) : undefined);
+  await idle.boot(); idle.ids['pointer-tab'].onclick(); await idle.ids['pointer-enable'].onclick();
+  assert(!idle.timerDelays().includes(17) && idle.timerDelays().includes(5000), 'Idle touch uses a low-frequency keepalive rather than the movement timer');
+  idle.ids['home-tab'].onclick(); idle.ids['pointer-left'].onclick(); idle.ids['pointer-surface'].onkeydown({ key: 'ArrowRight', preventDefault() {} });
+  for (let i = 0; i < 13; i++) { idle.advance(5000); await idle.timers(5000); }
+  assert.equal(idle.ids['pointer-surface'].dataset.active, 'true'); assert.equal(pointerPackets(idle).length, 13); assert(pointerPackets(idle).every(p => p.kind === 'keepalive'), 'Healthy foreground idle and other pages preserve touch beyond a minute without sending input');
+  idle.ids['pointer-tab'].onclick(); idle.ids['pointer-surface'].onkeydown({ key: 'ArrowRight', preventDefault() {} }); await pointerPulse(idle);
+  assert.equal(pointerPackets(idle).at(-1).kind, 'move', 'Fresh movement immediately leaves idle scheduling');
+  idle.ids['pointer-stop'].onclick(); await flush(); const idleCount = pointerPackets(idle).length; idle.advance(5000); await idle.timers(5000);
+  assert.equal(pointerPackets(idle).length, idleCount); assert.equal(idle.ids['pointer-surface'].dataset.active, 'false', 'Explicit stop cancels future keepalives');
+  for (const leave of ['page', 'stop']) {
+    let finishBegin; const opening = fixture({ state: { ...sample, permissions: { ...grants, pointer: true } } });
+    opening.handler(c => c.url === '/api/pointer/begin' ? new Promise(resolve => { finishBegin = resolve; }) : c.url === '/api/pointer' ? response({ expiresAt: opening.time() + 20000 }) : undefined);
+    await opening.boot(); opening.ids['pointer-tab'].onclick(); const begin = opening.ids['pointer-enable'].onclick(); await flush();
+    opening.ids[leave === 'page' ? 'home-tab' : 'pointer-stop'].onclick(); finishBegin(response({ leaseId: 'late', expiresAt: opening.time() + 20000 })); await begin;
+    assert.equal(opening.ids['pointer-surface'].dataset.active, String(leave === 'page'));
+    assert.equal(opening.calls.some(c => c.url === '/api/pointer/end'), leave === 'stop', 'Pending enable respects a later ' + leave + ' without a stuck busy flag');
+    opening.ids['pointer-tab'].onclick(); assert.equal(opening.ids['pointer-enable'].disabled, leave === 'page');
   }
   let elapsed = 0; const wireTimes = [], pointerBudget = await readyPointer(c => { if (/^\/api\/pointer/.test(c.url)) wireTimes.push(elapsed); }); pointerBudget.ids['pointer-surface'].onpointerdown(pointerEvent(0, 0));
   for (let i = 1; i <= 3529; i++) { elapsed += 17; pointerBudget.ids['pointer-surface'].onpointermove(pointerEvent(i, 0)); await pointerPulse(pointerBudget); }
@@ -423,6 +460,7 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   keyboard.handler(keyboardHandler); await keyboard.boot(); keyboard.ids['pointer-tab'].onclick();
   assert.equal(keyboard.ids['screen-keyboard-toggle'].disabled, true, 'Keyboard also requires an active control lease');
   await keyboard.ids['pointer-enable'].onclick(); keyboard.ids['screen-keyboard-toggle'].onclick();
+  assert.equal(keyboard.ids['screen-keyboard-bar'].hidden, false, 'Text entry opens independently of the scrollable tools panel');
   const input = keyboard.ids['screen-text'], form = keyboard.ids['screen-text-form'];
   assert.equal(input.focused, true, 'The user tap synchronously focuses a native text input');
   input.oncompositionstart(); input.value = 'nihao'; await submit(form); assert.equal(pointerPackets(keyboard).length, 0, 'IME candidate composition never sends unfinished text');
@@ -433,8 +471,11 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   await submit(form); assert.equal(pointerPackets(keyboard).length, 2, 'Double submit cannot duplicate input');
   input.value = '下一句'; finishText(response({ expiresAt: Date.now() + 120000 })); await sending; assert.equal(input.value, '下一句', 'A late success preserves newly drafted text');
   keyboard.handler(keyboardHandler); const remoteBackspace = keyboard.all.find(n => n.getAttribute('data-remote-key') === 'backspace'); remoteBackspace.onclick(); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).at(-1).key, 'backspace');
+  keyboard.ids['screen-keyboard-close'].onclick(); assert(keyboard.ids['screen-keyboard-bar'].hidden && keyboard.ids['screen-keyboard-toggle'].focused && !input.focused); assert.equal(input.value, '下一句', 'Closing the keyboard preserves the unsent draft and returns focus');
+  keyboard.ids['screen-keyboard-toggle'].onclick(); assert.equal(input.value, '下一句', 'Reopening the quick keyboard never sends or discards a draft');
   keyboard.ids['screen-keyboard-toggle'].onclick(); assert.equal(input.focused, false, 'Closing the panel releases the native keyboard focus');
   keyboard.handler(c => c.url === '/api/pointer' ? response({ message: 'fixture rejected' }, 503) : keyboardHandler(c)); await submit(form); assert.equal(input.value, '下一句', 'An uncertain send retains the draft for inspection and never retries');
+  assert.equal(keyboard.ids['keyboard-status'].dataset.notice, 'true'); assert.match(keyboard.ids['keyboard-status'].textContent, /未确认发送/, 'Uncertain input remains visible when the tools are collapsed');
   assert.equal(keyboard.ids['screen-keyboard-toggle'].disabled, true); const rejectedCount = pointerPackets(keyboard).length; await keyboard.timers(2000); assert.equal(pointerPackets(keyboard).length, rejectedCount);
   keyboard.handler(keyboardHandler); await keyboard.ids['pointer-enable'].onclick(); keyboard.ids['screen-keyboard-toggle'].onclick(); input.value = '私人草稿';
   keyboard.current.permissions.keyboard = false; await keyboard.timers(2000); assert.equal(input.value, ''); assert.equal(keyboard.ids['screen-keyboard'].hidden, true); assert.equal(remoteBackspace.disabled, true);

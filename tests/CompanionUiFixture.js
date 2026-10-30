@@ -1,8 +1,13 @@
 /* Isolated UI data. No computer service, paired session, or native action is used. */
 window.__errors = [];
 window.addEventListener('error', function (event) { window.__errors.push(event.message); });
+// Only viewport geometry is simulated; the page and video layout use the real WebView engine.
+window.__viewport = new EventTarget();
+window.__viewportOverride = null;
+['width', 'height', 'offsetTop', 'offsetLeft'].forEach(function (name) { Object.defineProperty(window.__viewport, name, { get: function () { return window.__viewportOverride ? window.__viewportOverride[name] : name === 'width' ? innerWidth : name === 'height' ? innerHeight : 0; } }); });
+Object.defineProperty(window, 'visualViewport', { configurable: true, value: window.__viewport });
 window.__fixture = {
-  mode: 'connected', writes: [],
+  mode: 'connected', writes: [], stubPointer: false, extensionAvailable: false,
   grants: { apps: true, tasks: true, notes: true, music: true, control: true, pointer: true, screen: true, keyboard: true, power: false },
   state: {
     protocol: 1, theme: 'Sky', appsRevision: 'fixture-apps',
@@ -20,14 +25,14 @@ window.__fixture = {
 };
 window.fetch = async function (url, request) {
   var f = window.__fixture, status = 200, data;
-  if (request && request.method === 'POST') { f.writes.push({ url: url, body: request.body }); status = 403; data = { error: 'fixture_read_only', message: '界面验收不会执行电脑操作。' }; }
+  if (request && request.method === 'POST') { f.writes.push({ url: url, body: request.body }); if (f.stubPointer && url === '/api/pointer/begin') data = { leaseId: 'fixture-control', expiresAt: Date.now() + 60000 }; else if (f.stubPointer && (url === '/api/pointer' || url === '/api/pointer/end')) data = { ok: true, expiresAt: Date.now() + 60000 }; else { status = 403; data = { error: 'fixture_read_only', message: '界面验收不会执行电脑操作。' }; } }
   else if (f.mode === 'offline') throw new TypeError('Fixture disconnected');
   else if (f.mode === 'unpaired') { status = 401; data = { error: 'unpaired', message: '尚未配对。' }; }
   else if (f.mode === 'locked') { status = 423; data = { error: 'locked', message: '电脑已锁定，个人内容已隐藏。' }; }
   else if (url === '/api/session') data = { protocol: 1, csrf: 'fixture-only', grants: f.grants };
   else if (url === '/api/state') data = Object.assign({}, f.state, { serverTime: Date.now() });
   else if (url === '/api/apps') data = f.apps;
-  else if (url === '/api/screen') data = { available: true, extensionAvailable: false, extensionMessage: '此测试不启用虚拟显示器。', monitors: [{ id: 0, name: '主屏幕 · 1920 × 1080' }] };
+  else if (url === '/api/screen') data = { available: true, extensionAvailable: f.extensionAvailable, extensionMessage: '此测试不启用虚拟显示器。', monitors: [{ id: 0, name: '主屏幕 · 1920 × 1080' }] };
   else { status = 404; data = { message: '未配置的界面验收请求。' }; }
   return new Response(JSON.stringify(data), { status: status, headers: { 'Content-Type': 'application/json' } });
 };

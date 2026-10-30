@@ -13,7 +13,7 @@ internal static class TestCompanionHost {
  static readonly FieldInfo serverField=typeof(CompanionHost).GetField("server",BindingFlags.Instance|BindingFlags.NonPublic);
  static int checks,exitCode;
  sealed class ProbeException:Exception {public ProbeException():base("fixture callback failure") {}}
- sealed class VideoRuntime:ICompanionStreamRuntime {public object Describe(){return new{available=true};}public string Start(string mode,int monitor,string quality,string offer){return "v=0\r\n";}public bool Alive {get{return true;}}public void Stop(){}public void Dispose(){}}
+ sealed class VideoRuntime:ICompanionStreamRuntime {public Action onStop;public bool failStop,alive;public int stops,stopThread;public object Describe(){return new{available=true};}public string Start(string mode,int monitor,string quality,string offer){alive=true;return "v=0\r\n";}public bool Alive {get{return alive;}}public void Stop(){stops++;stopThread=Thread.CurrentThread.ManagedThreadId;if(onStop!=null)onStop();if(failStop)throw new IOException("fixture cleanup failure");alive=false;}public void Dispose(){}}
  static void Check(bool value,string name){if(!value)throw new Exception(name);checks++;Console.WriteLine("PASS "+name);}
  static object Call(CompanionHost host,Func<object> action){try{return dispatch.Invoke(host,new object[]{action});}catch(TargetInvocationException e){throw e.InnerException;}}
  static bool WaitBlocked(Thread thread){var end=DateTime.UtcNow.AddSeconds(2);while(DateTime.UtcNow<end&&thread.IsAlive){if((thread.ThreadState&ThreadState.WaitSleepJoin)!=0)return true;Thread.Sleep(1);}return false;}
@@ -63,22 +63,72 @@ internal static class TestCompanionHost {
   using(var host=Host(owner,root)){
    var server=(CompanionServer)serverField.GetValue(host);var listener=typeof(CompanionServer).GetField("listener",BindingFlags.Instance|BindingFlags.NonPublic);var address=typeof(CompanionServer).GetField("localAddress",BindingFlags.Instance|BindingFlags.NonPublic);var reset=typeof(CompanionHost).GetMethod("ResetVideo",BindingFlags.Instance|BindingFlags.NonPublic);
    var sentinel=(System.Net.HttpListener)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(System.Net.HttpListener));listener.SetValue(server,sentinel);address.SetValue(server,"192.168.1.50");
-   int prompts=0,applies=0,reads=0;bool configured=false;var grant=new CompanionGrant{Active=true,screen=true};
+   int prompts=0,applies=0,reads=0;bool configured=false;var grant=new CompanionGrant{Active=true,screen=true};const string offer="v=0\r\na=ice-ufrag:first\r\n",retry="v=0\r\na=ice-ufrag:retry\r\n";
    Func<Dictionary<string,object>> plan=()=>new Dictionary<string,object>{{"configured",configured},{"needsApproval",!configured},{"interfaceAlias","WLAN"},{"oldAddress","10.0.0.1"},{"oldPeer","10.0.0.2"}};
    host.ReadVideoPlan=(r,a,p)=>{reads++;return Task.FromResult(plan());};host.ApplyVideoPlan=(r,a,p)=>{applies++;configured=true;return Task.FromResult(0);};host.ConfirmVideo=text=>{prompts++;Check(text.Contains("192.168.1.50")&&text.Contains("192.168.1.90")&&text.Contains("31890"),"video confirmation explains exact addresses and port");return false;};
    try{
-    Check(server.BeforeScreen("8.8.8.8",grant).Status==403&&reads==0,"public peer cannot trigger video configuration");
-    Check(server.BeforeScreen("192.168.1.90",grant).Status==409,"video preflight returns pending without blocking transport");
-    await Task.Delay(25);var rejected=server.BeforeScreen("192.168.1.90",grant);Check(rejected!=null&&System.Text.Encoding.UTF8.GetString(rejected.Body).Contains("cancelled")&&prompts==1&&applies==0,"declined repair creates no rule and repeated signaling does not reprompt");
-    reset.Invoke(host,null);host.ConfirmVideo=text=>{prompts++;return true;};server.BeforeScreen("192.168.1.90",grant);await Task.Delay(25);
-    Check(server.BeforeScreen("192.168.1.90",grant)==null&&applies==1,"approved repair is read back before capture is permitted");int previousReads=reads;Check(server.BeforeScreen("192.168.1.90",grant)==null&&reads==previousReads,"unchanged signaling reuses a recent successful check");
+    Check(server.BeforeScreen("8.8.8.8",grant,offer).Status==403&&reads==0,"public peer cannot trigger video configuration");
+    Check(server.BeforeScreen("192.168.1.90",grant,null).Status==400&&server.BeforeScreen("192.168.1.90",grant,"bad").Status==400&&reads==0,"invalid signaling cannot prompt for network changes");
+    Check(server.BeforeScreen("192.168.1.90",grant,offer).Status==409,"video preflight returns pending without blocking transport");
+    await Task.Delay(25);var rejected=server.BeforeScreen("192.168.1.90",grant,offer);Check(rejected!=null&&System.Text.Encoding.UTF8.GetString(rejected.Body).Contains("cancelled")&&prompts==1&&applies==0,"declined repair creates no rule and repeated signaling does not reprompt");
+    Check((bool)Snapshot(host)["error"]&&!(bool)Snapshot(host)["busy"]&&((string)Snapshot(host)["notice"]).Contains("取消"),"desktop settings reports cancellation and leaves retry available");
+    var approval=new TaskCompletionSource<int>();host.ConfirmVideo=text=>{prompts++;return true;};host.ApplyVideoPlan=(r,a,p)=>{applies++;return approval.Task;};
+    server.BeforeScreen("192.168.1.90",grant,retry);await Task.Delay(25);
+    Check(applies==1&&prompts==2&&(bool)Snapshot(host)["busy"]&&((string)Snapshot(host)["notice"]).Contains("管理员确认"),"a fresh attempt retries immediately and displays administrator progress on the same network");
+    configured=true;approval.SetResult(0);await Task.Delay(25);
+    Check(server.BeforeScreen("192.168.1.90",grant,retry)==null&&applies==1,"approved repair is read back before capture is permitted");
+    Check(!(bool)Snapshot(host)["error"]&&!(bool)Snapshot(host)["busy"]&&((string)Snapshot(host)["notice"]).Contains("准备好"),"desktop settings displays verified completion after the approval window closes");
+    int previousReads=reads;Check(server.BeforeScreen("192.168.1.90",grant,offer)==null&&reads==previousReads,"a recent successful check is reusable across signaling attempts");
     var bridge=(CompanionBridge)typeof(CompanionHost).GetField("bridge",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(host);var streamField=typeof(CompanionBridge).GetField("screenStream",BindingFlags.Instance|BindingFlags.NonPublic);
-    using(var stream=new CompanionStream(new VideoRuntime(),()=>false,()=>DateTime.UtcNow,false)){streamField.SetValue(bridge,stream);stream.Handle("/api/screen/begin",new Dictionary<string,object>{{"mode","mirror"},{"monitor",0},{"quality","720"},{"offer","v=0\r\n"}},grant);int activeReads=reads;var other=server.BeforeScreen("192.168.1.91",new CompanionGrant{Active=true,screen=true});var moved=server.BeforeScreen("192.168.1.91",grant);Check(System.Text.Encoding.UTF8.GetString(other.Body).Contains("screen_busy")&&System.Text.Encoding.UTF8.GetString(moved.Body).Contains("screen_busy")&&reads==activeReads,"active capture prevents another device or peer address from replacing its firewall rule");streamField.SetValue(bridge,null);}
-    reset.Invoke(host,null);configured=false;host.ConfirmVideo=text=>{address.SetValue(server,"192.168.1.51");return true;};server.BeforeScreen("192.168.1.90",grant);await Task.Delay(25);Check(applies==1,"address change while confirming prevents applying the stale plan");
-    reset.Invoke(host,null);address.SetValue(server,"192.168.1.50");host.ConfirmVideo=text=>{grant.Active=false;return true;};server.BeforeScreen("192.168.1.90",grant);await Task.Delay(25);Check(applies==1,"revoked device cannot apply a previously displayed plan");grant.Active=true;
-    reset.Invoke(host,null);var deferred=new TaskCompletionSource<Dictionary<string,object>>();host.ReadVideoPlan=(r,a,p)=>deferred.Task;host.ConfirmVideo=text=>{prompts++;return true;};int oldPrompts=prompts;server.BeforeScreen("192.168.1.90",grant);await Task.Delay(10);reset.Invoke(host,null);deferred.SetResult(plan());await Task.Delay(25);Check(applies==1&&prompts==oldPrompts,"closing or reconnecting while checking invalidates the pending repair before prompting");
+    using(var stream=new CompanionStream(new VideoRuntime(),()=>false,()=>DateTime.UtcNow,false)){streamField.SetValue(bridge,stream);stream.Handle("/api/screen/begin",new Dictionary<string,object>{{"mode","mirror"},{"monitor",0},{"quality","720"},{"offer","v=0\r\n"}},grant);int activeReads=reads;var other=server.BeforeScreen("192.168.1.91",new CompanionGrant{Active=true,screen=true},offer);var moved=server.BeforeScreen("192.168.1.91",grant,offer);Check(System.Text.Encoding.UTF8.GetString(other.Body).Contains("screen_busy")&&System.Text.Encoding.UTF8.GetString(moved.Body).Contains("screen_busy")&&reads==activeReads,"active capture prevents another device or peer address from replacing its firewall rule");streamField.SetValue(bridge,null);}
+    reset.Invoke(host,null);configured=false;host.ApplyVideoPlan=(r,a,p)=>{applies++;throw new InvalidOperationException("fixture apply failure");};server.BeforeScreen("192.168.1.90",grant,offer);await Task.Delay(25);
+    rejected=server.BeforeScreen("192.168.1.90",grant,offer);Check(System.Text.Encoding.UTF8.GetString(rejected.Body).Contains("fixture apply failure")&&((string)Snapshot(host)["notice"]).Contains("fixture apply failure")&&!(bool)Snapshot(host)["busy"],"an apply failure is visible on both devices and releases the desktop busy state");
+    previousReads=reads;host.ApplyVideoPlan=(r,a,p)=>{applies++;throw new System.ComponentModel.Win32Exception(5);};server.BeforeScreen("192.168.1.90",grant,retry);await Task.Delay(25);
+    rejected=server.BeforeScreen("192.168.1.90",grant,retry);Check(reads>previousReads&&System.Text.Encoding.UTF8.GetString(rejected.Body).Contains("screen_network_failed")&&((string)Snapshot(host)["notice"]).Contains("Windows 错误 5"),"new offers retry failed checks without misreporting launch errors as user cancellation");
+    reset.Invoke(host,null);host.ApplyVideoPlan=(r,a,p)=>{applies++;throw new System.ComponentModel.Win32Exception(1223);};server.BeforeScreen("192.168.1.90",grant,offer);await Task.Delay(25);
+    Check(System.Text.Encoding.UTF8.GetString(server.BeforeScreen("192.168.1.90",grant,offer).Body).Contains("screen_network_cancelled"),"an actual cancelled administrator prompt retains the cancellation result");
+    int guardedApplies=applies;host.ApplyVideoPlan=(r,a,p)=>{applies++;return Task.FromResult(0);};
+    reset.Invoke(host,null);host.ConfirmVideo=text=>{address.SetValue(server,"192.168.1.51");return true;};server.BeforeScreen("192.168.1.90",grant,offer);await Task.Delay(25);Check(applies==guardedApplies,"address change while confirming prevents applying the stale plan");
+    reset.Invoke(host,null);address.SetValue(server,"192.168.1.50");host.ConfirmVideo=text=>{grant.Active=false;return true;};server.BeforeScreen("192.168.1.90",grant,offer);await Task.Delay(25);Check(applies==guardedApplies,"revoked device cannot apply a previously displayed plan");grant.Active=true;
+    reset.Invoke(host,null);var deferred=new TaskCompletionSource<Dictionary<string,object>>();host.ReadVideoPlan=(r,a,p)=>deferred.Task;host.ConfirmVideo=text=>{prompts++;return true;};int oldPrompts=prompts;server.BeforeScreen("192.168.1.90",grant,offer);await Task.Delay(10);
+    listener.SetValue(server,null);await Manage(host,"stop");string stopped=(string)Snapshot(host)["notice"];deferred.SetResult(plan());await Task.Delay(25);
+    Check(applies==guardedApplies&&prompts==oldPrompts&&!(bool)Snapshot(host)["busy"]&&(string)Snapshot(host)["notice"]==stopped,"stopping during a check prevents later prompts, mutations and stale completion notices");
     var applying=typeof(CompanionHost).GetField("videoApplying",BindingFlags.Instance|BindingFlags.NonPublic);var locked=typeof(CompanionHost).GetField("sessionLocked",BindingFlags.Instance|BindingFlags.NonPublic);applying.SetValue(host,true);Check(server.VideoApprovalPending(),"own administrator confirmation has an explicit waiting state");locked.SetValue(host,true);Check(!server.VideoApprovalPending(),"real session lock always takes precedence over administrator waiting");locked.SetValue(host,false);applying.SetValue(host,false);
    }finally{listener.SetValue(server,null);}
+  }
+ }
+ static async Task IslandChecks(Control owner,string root){
+  var json=new JavaScriptSerializer();string fixture=Path.Combine(Path.GetDirectoryName(root),"island-state");
+  using(var host=Host(owner,fixture))using(var entered=new ManualResetEventSlim(false))using(var release=new ManualResetEventSlim(false)){
+   var server=(CompanionServer)serverField.GetValue(host);var listener=typeof(CompanionServer).GetField("listener",BindingFlags.Instance|BindingFlags.NonPublic);
+   var bridge=(CompanionBridge)typeof(CompanionHost).GetField("bridge",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(host);var controlsField=typeof(CompanionBridge).GetField("controls",BindingFlags.Instance|BindingFlags.NonPublic);var streamField=typeof(CompanionBridge).GetField("screenStream",BindingFlags.Instance|BindingFlags.NonPublic);
+   ((CompanionControls)controlsField.GetValue(bridge)).Dispose();DateTime now=DateTime.UtcNow;int inputCalls=0,shows=0;bool acceptInput=true;host.ManagementRequested+=()=>shows++;
+   var grant=new CompanionGrant{Active=true,pointer=true,screen=true};var device=new CompanionServer.Device{id="private-fixture-id",name="Private fixture name",csrf="fixture-csrf",tokenHash="fixture-token-hash",expiresAt=now.AddDays(30),lastSeen=now,grants=grant};Known(server).Add(device);
+   var runtime=new VideoRuntime();var offer=new Dictionary<string,object>{{"mode","mirror"},{"monitor",0},{"quality","720"},{"offer","v=0\r\n"}};
+   using(var controls=new CompanionControls(()=>false,()=>now,command=>{inputCalls++;return acceptInput;},action=>null))using(var stream=new CompanionStream(runtime,()=>false,()=>now,false)){
+    controlsField.SetValue(bridge,controls);streamField.SetValue(bridge,stream);listener.SetValue(server,System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(System.Net.HttpListener)));
+    Func<Dictionary<string,object>> snapshot=()=>json.Deserialize<Dictionary<string,object>>(json.Serialize(host.IslandSnapshot()));
+    try{
+     var state=snapshot();Check((bool)state["running"]&&(int)state["connected"]==1&&!(bool)state["screen"]&&!(bool)state["pointer"]&&state.Count==4,"island exposes only running state, recent device count and active control flags");
+     controls.Pointer("/api/pointer/begin",new Dictionary<string,object>(),grant);stream.Handle("/api/screen/begin",offer,grant);state=snapshot();Check((bool)state["screen"]&&(bool)state["pointer"],"island screen and pointer flags follow actual owned runtime leases");
+     string identity=json.Serialize(device);int revision=host.IslandRevision,uiThread=Thread.CurrentThread.ManagedThreadId;runtime.onStop=()=>{entered.Set();release.Wait(3000);};var stopping=host.StopRemoteControls();
+     for(int i=0;i<100&&!entered.IsSet;i++)await Task.Delay(10);
+     Check(entered.IsSet&&!stopping.IsCompleted&&host.IslandRevision!=revision&&runtime.stopThread!=uiThread,"stop runs away from the UI and immediately invalidates an older pending snapshot");
+     await host.StopRemoteControls();Check(runtime.stops==1,"repeated stop clicks do not queue overlapping native cleanup");release.Set();await stopping;runtime.onStop=null;state=snapshot();
+     Check(!(bool)state["screen"]&&!(bool)state["pointer"]&&(bool)state["running"]&&(int)state["connected"]==1&&identity==json.Serialize(device)&&inputCalls==0,"stopping remote controls preserves service, pairing identity and granted permissions");
+     Check(host.IslandRevision>=revision+2&&!(bool)Snapshot(host)["error"],"completed stop invalidates snapshots captured during cleanup and reports success");
+     stream.Handle("/api/screen/begin",offer,grant);runtime.failStop=true;await host.StopRemoteControls();state=snapshot();
+     Check(shows==1&&(bool)Snapshot(host)["error"]&&((string)Snapshot(host)["notice"]).Contains("未能完全停止")&&(bool)state["screen"],"cleanup failure opens visible settings feedback and does not claim the screen has stopped");
+     runtime.failStop=false;stream.Sweep();Check(!(bool)snapshot()["screen"],"successful cleanup retry clears the active screen indicator");
+     var begin=controls.Pointer("/api/pointer/begin",new Dictionary<string,object>(),grant);var pointer=json.Deserialize<Dictionary<string,object>>(System.Text.Encoding.UTF8.GetString(begin.Body));
+     controls.Pointer("/api/pointer",new Dictionary<string,object>{{"leaseId",pointer["leaseId"]},{"seq",1},{"kind","drag"},{"phase","start"}},grant);acceptInput=false;await host.StopRemoteControls();
+     Check(shows==2&&(bool)Snapshot(host)["error"]&&(bool)snapshot()["pointer"],"unconfirmed mouse release keeps the pointer indicator active and reports stop failure");acceptInput=true;controls.Tick();Check(!(bool)snapshot()["pointer"],"pointer status clears only after mouse release succeeds");
+     revision=host.IslandRevision;typeof(CompanionHost).GetMethod("SessionChanged",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(host,new object[]{null,new Microsoft.Win32.SessionSwitchEventArgs(Microsoft.Win32.SessionSwitchReason.SessionLock)});state=snapshot();
+     Check(!(bool)state["running"]&&(int)state["connected"]==0&&!(bool)state["screen"]&&!(bool)state["pointer"]&&revision!=host.IslandRevision,"session lock clears all island activity and invalidates queued snapshots");
+     typeof(CompanionHost).GetMethod("SessionChanged",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(host,new object[]{null,new Microsoft.Win32.SessionSwitchEventArgs(Microsoft.Win32.SessionSwitchReason.SessionUnlock)});
+     revision=host.IslandRevision;listener.SetValue(server,null);await Manage(host,"stop");state=snapshot();Check(!(bool)state["running"]&&(int)state["connected"]==0&&revision!=host.IslandRevision,"stopping the service invalidates its pending island snapshot");
+    }finally{release.Set();runtime.failStop=false;runtime.onStop=null;listener.SetValue(server,null);streamField.SetValue(bridge,null);}
+   }
   }
  }
  static async Task Run(Control owner,string root){
@@ -122,6 +172,7 @@ internal static class TestCompanionHost {
   }
   await PairingChecks(owner,root);
   await VideoNetworkChecks(owner,root);
+  await IslandChecks(owner,root);
   ControlLifecycleChecks(owner,root);
   Console.WriteLine(checks+" companion host lifecycle checks passed.");
  }

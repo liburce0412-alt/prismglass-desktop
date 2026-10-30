@@ -20,14 +20,18 @@ function Hover(i) if not items[i] then i=0 end;if i~=hover then hoverStart=elaps
 function Press(i) local e=items[i];if not e then return end;tooltip(0);Approach();local f=io.open(root..'dock-drag-request-'..instance..'.txt','w');if f then f:write(os.time()..'|'..e.id);f:close() end end
 local function load()
  if dragActive then return end
- local f=io.open(root..'dock-state.txt','r');if not f then return end;local data=f:read('*a');f:close();if data==last then return end;local hoveredSlot,hoveredId=hover,items[hover] and items[hover].id;tooltip(0);last=data;items={};drawn={};dirty=true
+ local f=io.open(root..'dock-state.txt','r');if not f then return end;local data=f:read('*a');f:close();if data==last then return end;local hoveredSlot,hoveredId=hover,items[hover] and items[hover].id;tooltip(0);last=data
+ local previousSizes={};for i,e in ipairs(items) do previousSizes[e.id]=sizes[i] end
+ items={};sizes={};drawn={};dirty=true
  for id,name,icon,count,active,pinned,attention in data:gmatch('([%w_-]+)	([^	]+)	([^	]+)	(%d+)	([01])	([01])	([01])') do
   table.insert(items,{id=id,name=decode(name),icon=decode(icon),count=tonumber(count),active=active=='1',pinned=pinned=='1',attention=attention=='1'})
+  sizes[#items]=previousSizes[id]
   if attention=='1' and not attentionSeen[id] then bounce[id]=elapsed+2.4 end;attentionSeen[id]=attention=='1'
  end
  if #items==0 then Hover(0);return end
  local sw=tonumber(SKIN:GetVariable('SCREENAREAWIDTH'));local sh=tonumber(SKIN:GetVariable('SCREENAREAHEIGHT'))
- -- Match SideDock's physical right edge; Rainmeter coordinates follow Windows DPI.
+ -- Keep equal side margins so the Dock and its lyric capsule share the island's center.
+ -- Clear SideDock's physical right edge; Rainmeter coordinates follow Windows DPI.
  local physicalWidth,physicalHeight=sw,sh
  local layout=io.open(root..'layout.json','r')
  if layout then local content=layout:read('*a');layout:close();physicalWidth=tonumber(content:match('"width"%s*:%s*(%d+)')) or sw;physicalHeight=tonumber(content:match('"height"%s*:%s*(%d+)')) or sh end
@@ -41,7 +45,7 @@ local function load()
  local offset=(tonumber(SKIN:GetVariable('DockOffset')) or 18)/dpi
  local railScale=math.max(.5,math.min(1.25,(physicalHeight-240)/680,(physicalWidth-48)/852))
  local left=math.ceil((16+92*railScale)/dpi)
- local width=sw-left-math.ceil(24/dpi)
+ local width=sw-2*left
  cell=(width-52)/#items
  SKIN:Bang('!SetVariable','DockWidth',width);SKIN:Bang('!Move',monitorLeft+left,monitorTop+sh-104-offset)
  local diagnostic=io.open(root..'dock-layout'..suffix..'.json','w')

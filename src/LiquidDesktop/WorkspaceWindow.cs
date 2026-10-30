@@ -48,7 +48,7 @@ internal sealed class WorkspaceWindow : Form {
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetClassName(IntPtr h,StringBuilder value,int length);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,StringBuilder value,int length);
- static bool DockActive(){var h=GetForegroundWindow();var name=new StringBuilder(256);var title=new StringBuilder(1024);GetClassName(h,name,name.Capacity);GetWindowText(h,title,title.Capacity);return DockBackend.IsPrismDock(name.ToString(),title.ToString());}
+ static bool DockActive(IntPtr h){var name=new StringBuilder(256);var title=new StringBuilder(1024);GetClassName(h,name,name.Capacity);GetWindowText(h,title,title.Capacity);return DockBackend.IsPrismDock(name.ToString(),title.ToString());}
  public SharedDesktopData SharedData {get;set;}
  public bool IsOpen {get{return Visible&&!closed&&WindowState!=FormWindowState.Minimized;}}
  public bool IsInteracting {get{return interacting||picker;}}
@@ -66,14 +66,15 @@ internal sealed class WorkspaceWindow : Form {
    view.CoreWebView2.ProcessFailed+=(sender,a)=>{ready=false;Hide();File.WriteAllText(Path.Combine(root,"workspace-error.txt"),a.ProcessFailedKind.ToString());Dispose();};
    view.Source=new Uri("https://prism-workspace.local/workspace.html");
   }catch(Exception ex){File.WriteAllText(Path.Combine(root,"workspace-error.txt"),ex.ToString());Hide();}};
-  Deactivate+=(s,e)=>{if(page=="apps"&&!IsInteracting){if(DockActive()||dockAnchor.Contains(Cursor.Position))dismissal.Start();else Hide();}};
+  // Native focus can still be transferring to WebView2 when Deactivate is raised.
+  Deactivate+=(s,e)=>{if(page=="apps"&&!IsInteracting)dismissal.Start();};
   Activated+=(s,e)=>dismissal.Stop();
-  dismissal.Tick+=(s,e)=>{if(!Visible||page!="apps"||ContainsFocus){dismissal.Stop();return;}if(!IsInteracting&&!DockActive()){dismissal.Stop();Hide();}};
+  dismissal.Tick+=(s,e)=>{var active=GetForegroundWindow();if(!Visible||page!="apps"||ContainsFocus||active==Handle){dismissal.Stop();return;}if(active!=IntPtr.Zero&&!IsInteracting&&!DockActive(active)){dismissal.Stop();Hide();}};
   VisibleChanged+=(s,e)=>{if(!Visible){generation++;interacting=false;CancelWeatherSearch();Send(new{type="visibility",visible=false});}else if(ready){Send(new{type="visibility",visible=true});Publish();}};
   FormClosing+=(s,e)=>{if(!closed&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();}};
   timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(page=="settings"){PublishLyrics();PublishCompanion();}}};timer.Start();
   Resize+=(s,e)=>{view.Visible=Visible&&WindowState!=FormWindowState.Minimized;Shape();if(ready){Send(new{type="visibility",visible=IsOpen});PublishLayout();}};
-  Move+=(s,e)=>{if(!placing&&Visible){display=Screen.FromControl(this);if(page=="settings")settingsBounds=Bounds;if(ready)PublishLayout();}};
+  Move+=(s,e)=>{if(!placing&&Visible&&WindowState!=FormWindowState.Minimized){display=Screen.FromControl(this);if(page=="settings")settingsBounds=Bounds;if(ready)PublishLayout();}};
  }
  protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=WindowState!=FormWindowState.Minimized;}
  void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){const int d=48;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=new Region(path);if(old!=null)old.Dispose();}}

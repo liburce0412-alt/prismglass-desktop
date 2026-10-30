@@ -159,6 +159,27 @@ class TestCompanionServer {
   string root=Path.Combine(fixture,"scene-assets"),web=Path.Combine(root,"companion-web");Directory.CreateDirectory(web);File.WriteAllText(Path.Combine(web,"companion-glass.js"),"/* local fixture */");File.WriteAllBytes(Path.Combine(web,"companion-scene.jpg"),new byte[276733]);
   using(var server=new CompanionServer(root,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>false)){var script=Call(server,"/companion-glass.js","GET",null,null,null);var image=Call(server,"/companion-scene.jpg","GET",null,null,null);Check(script.Status==200&&script.ContentType=="application/javascript; charset=utf-8"&&image.Status==200&&image.ContentType=="image/jpeg"&&image.Body.Length==276733,"exact public glass script and scene JPEG assets are served within static size bound");Check(Call(server,"/other.jpg","GET",null,null,null).Status==404&&Call(server,"/companion-scene.jpg/extra","GET",null,null,null).Status==404&&Call(server,"/companion-scene.jpg?path=private","GET",null,null,null).Status==400&&Call(server,"/companion-glass.js","POST",new{},null,null).Status==405,"new public assets do not widen arbitrary-file, query or write access");}
  }
+ static void ActivityChecks(string fixture){
+  string root=Path.Combine(fixture,"recent-activity");bool locked=false;
+  using(var server=new CompanionServer(root,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>locked)){
+   string cookie=Pair(server,new CompanionGrant{pointer=true});var device=Device(server);var listener=typeof(CompanionServer).GetField("listener",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic);
+   listener.SetValue(server,System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(System.Net.HttpListener)));
+   try{
+    Check(server.ActiveDeviceCount==0,"stored pairing alone never appears as a connected iPad");
+    var bad=Request("/api/state","GET",null,cookie,null);bad.Origin="https://evil.example";server.Dispatch(bad,Origin);Call(server,"/api/state","GET",null,new string('a',64),null);Call(server,"/api/pointer/begin","POST",new{},cookie,"wrong");
+    Check(server.ActiveDeviceCount==0&&device.lastSeen==DateTime.MinValue,"unpaired, foreign-origin and invalid-CSRF traffic cannot mark a device active");
+    var session=Call(server,"/api/session","GET",null,cookie,null);Check(server.ActiveDeviceCount==1&&device.lastSeen>DateTime.UtcNow.AddSeconds(-2),"an authenticated live request marks its paired device active");
+    device.lastSeen=DateTime.UtcNow.AddSeconds(-11);Check(server.ActiveDeviceCount==1,"recent requests remain visible within the twelve-second activity window");
+    device.lastSeen=DateTime.UtcNow.AddSeconds(-13);Check(server.ActiveDeviceCount==0,"a silent device disappears after the activity window");device.lastSeen=DateTime.UtcNow.AddSeconds(1);Check(server.ActiveDeviceCount==0,"a future timestamp is not accepted as recent activity");
+    Call(server,"/api/state","GET",null,cookie,null);locked=true;Check(server.ActiveDeviceCount==0,"locked desktop hides all connected-device activity");locked=false;
+    string second=Pair(server,new CompanionGrant());Call(server,"/api/session","GET",null,second,null);Check(server.ActiveDeviceCount==2,"the connected count includes only independently authenticated recent devices");
+    Check(!Json.Serialize(device).Contains("lastSeen")&&!Json.Serialize(Status(server)).Contains("lastSeen")&&!Encoding.UTF8.GetString(session.Body).Contains("lastSeen"),"presence timestamps are absent from persisted device serialization and public responses");
+    using(var reopened=new CompanionServer(root,(path,body,grant)=>null,()=>false))Check(Device(reopened).lastSeen==DateTime.MinValue&&reopened.ActiveDeviceCount==0,"process restart does not restore old online presence");
+    listener.SetValue(server,null);server.Stop();Check(device.lastSeen==DateTime.MinValue&&server.ActiveDeviceCount==0,"stopping service clears recent activity and returns no connected devices");
+    device.grants.Active=true;device.lastSeen=DateTime.UtcNow;Check(server.ActiveDeviceCount==0,"an inactive listener cannot report a connected device even with a recent record");
+   }finally{listener.SetValue(server,null);}
+  }
+ }
  static void Main(){
   string fixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"companion-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);Directory.CreateDirectory(Path.Combine(fixture,"companion-web"));File.WriteAllText(Path.Combine(fixture,"companion-web","index.html"),"<!doctype html><title>Companion</title>");bool locked=false;int calls=0;bool throws=false,large=false;var entered=new ManualResetEventSlim(false);var release=new ManualResetEventSlim(true);
   Func<string,Dictionary<string,object>,CompanionGrant,CompanionReply> handle=(path,body,grant)=>{Interlocked.Increment(ref calls);entered.Set();release.Wait();if(throws)throw new IOException("C:\\private-path\\secret");return large?CompanionReply.Json(409,new{error="conflict",text=new string('x',32768)}):CompanionReply.Json(200,new{ok=true,calls=calls});};
@@ -183,7 +204,7 @@ class TestCompanionServer {
     server.Stop();Check(Call(server,"/api/session","GET",null,cookie,null).Status==401,"stop invalidates in-flight session grants");
    }
    HostnameChecks(fixture);PairingLifetimeChecks(fixture);RememberDeviceChecks(fixture);
-    BudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);ScreenRouteChecks(fixture);
+    BudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);ScreenRouteChecks(fixture);ActivityChecks(fixture);
    Console.WriteLine("Passed "+checks+" companion transport checks.");
   }catch(Exception ex){Console.WriteLine("FAIL "+ex);Environment.ExitCode=1;}finally{release.Set();entered.Dispose();release.Dispose();Directory.Delete(fixture,true);}
  }
@@ -252,7 +273,7 @@ class TestCompanionServer {
  }
  static void ScreenRouteChecks(string fixture){
   int calls=0;bool locked=false;using(var server=new CompanionServer(Path.Combine(fixture,"screen-security"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>locked)){
-   int networkChecks=0;string observedPeer="";bool networkReady=false;server.BeforeScreen=(peer,grant)=>{networkChecks++;observedPeer=peer;return networkReady?null:CompanionReply.Error(409,"screen_network_pending","pending");};
+   int networkChecks=0;string observedPeer="",observedOffer="";bool networkReady=false;server.BeforeScreen=(peer,grant,sdp)=>{networkChecks++;observedPeer=peer;observedOffer=sdp;return networkReady?null:CompanionReply.Error(409,"screen_network_pending","pending");};
    Check(Call(server,"/api/screen","GET",null,null,null).Status==401&&calls==0,"screen metadata requires pairing");
    string cookie=Pair(server,new CompanionGrant{pointer=true});string csrf=Device(server).csrf;
    Check(Call(server,"/api/screen","GET",null,cookie,null).Status==403&&calls==0,"pointer permission does not grant screen access");
@@ -263,7 +284,7 @@ class TestCompanionServer {
    var cross=Request("/api/screen/begin","POST",offer,cookie,csrf);cross.Origin="https://evil.example";Check(server.Dispatch(cross,Origin).Status==403&&calls==1,"foreign origin cannot open a video stream");
    Check(Call(server,"/api/screen/begin","GET",null,cookie,null).Status==403&&calls==1,"image-style GET cannot open capture");
    Check(networkChecks==0,"unpaired, ungranted, CSRF and foreign-origin requests cannot trigger network repair");
-   Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==409&&calls==1&&observedPeer=="192.168.1.21","pending repair uses the authenticated socket peer and blocks capture");
+   Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==409&&calls==1&&observedPeer=="192.168.1.21"&&observedOffer==offer.offer,"pending repair receives the authenticated socket peer and current offer while blocking capture");
    networkReady=true;
    Check(Call(server,"/api/screen/begin","POST",offer,cookie,csrf).Status==200&&calls==2&&Device(server).commands.Count==0,"ephemeral signaling does not cache video sessions in action history");
    Check(networkChecks==2,"completed network repair resumes the ordinary capture handler");

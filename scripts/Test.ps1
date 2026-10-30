@@ -38,6 +38,7 @@ foreach($test in @('TestCompanionInstall.js','TestCompanionScan.js','TestCompani
 & node (Join-Path $repo 'tests/TestGlassOutlineMessages.js');if($LASTEXITCODE -ne 0){throw 'Glass outline message checks failed'}
 & node (Join-Path $repo 'tests/TestDockTransition.js');if($LASTEXITCODE -ne 0){throw 'Dock transition checks failed'}
 & node (Join-Path $repo 'tests/TestWallpaperFeedback.js');if($LASTEXITCODE -ne 0){throw 'Wallpaper feedback checks failed'}
+& node (Join-Path $repo 'tests/TestIsland.js');if($LASTEXITCODE -ne 0){throw 'Island interaction checks failed'}
 & node (Join-Path $repo 'tests/TestWeatherPresentation.js');if($LASTEXITCODE -ne 0){throw 'Weather presentation checks failed'}
 & (Join-Path $repo 'tests/TestDockPreviewLifecycle.ps1')
 foreach($js in Get-ChildItem "$repo/src/LiquidDesktop" -Filter '*.js' -Recurse){& node --check $js.FullName;if($LASTEXITCODE -ne 0){throw "Invalid JavaScript: $($js.Name)"}}

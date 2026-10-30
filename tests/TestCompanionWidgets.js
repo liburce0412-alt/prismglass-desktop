@@ -123,7 +123,7 @@ test('clear and hidden state remove private copies while local tools remain usab
   assert.equal(anonymous.all['widget-stopwatch'].textContent, '00:04'); assert.equal(anonymous.all['widget-stopwatch-toggle'].textContent, '暂停', 'anonymous polling must not interrupt local tools');
 });
 test('breathing obeys reduced motion and hiding its card stops activity', () => {
-  const f = fixture(); f.click('widget-breath-toggle'); assert.equal(f.all['widget-breath-orb'].dataset.running, 'true'); assert.equal(f.all['widget-breath-status'].textContent, '慢慢吸气'); f.advance(4500); assert.equal(f.all['widget-breath-status'].textContent, '缓缓呼气');
+  const f = fixture(); f.click('widget-breath-toggle'); assert.equal(f.all['widget-breath-orb'].dataset.running, 'true'); assert.equal(f.all['widget-breath-status'].textContent, '吸气'); f.advance(4500); assert.equal(f.all['widget-breath-status'].textContent, '呼气');
   f.reduce(true); assert.equal(f.all['widget-breath-orb'].dataset.running, 'false'); assert.match(f.all['widget-breath-status'].textContent, /减少动态/); f.reduce(false); assert.equal(f.all['widget-breath-orb'].dataset.running, 'true');
   const checkbox = f.preference('breath'); checkbox.checked = false; checkbox.onchange(); assert.equal(f.all['widget-breath-orb'].dataset.running, 'false'); checkbox.checked = true; checkbox.onchange(); assert.equal(f.all['widget-breath-orb'].dataset.running, 'false');
   f.click('widget-breath-toggle'); f.media.matches = true; f.media.emit('change'); assert.equal(f.all['widget-breath-orb'].dataset.running, 'false');

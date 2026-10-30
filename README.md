@@ -10,13 +10,13 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 [![License: MIT](https://img.shields.io/badge/License-MIT-6d83b3.svg)](LICENSE)
 ![Platform: Windows x64](https://img.shields.io/badge/Windows-x64-586a92.svg)
 
-**1.0.0 正式版 / Windows 10/11 x64。** 从个人长期使用的桌面方案整理而来，使用 C# WinForms + WebView2 + WebGL + Rainmeter。默认开机进入普通 Windows 桌面，美化由用户手动开启；可在设置中选择开机自启。
+**1.0.1 正式版 / Windows 10/11 x64。** 从个人长期使用的桌面方案整理而来，使用 C# WinForms + WebView2 + WebGL + Rainmeter。默认开机进入普通 Windows 桌面，美化由用户手动开启；可在设置中选择开机自启。
 
 [看显示效果](#显示效果) · [歌词效果](#dock-歌词效果) · [功能](#功能) · [构建与安装](#构建与安装) · [操作速查](#操作速查) · [常见问题](#常见问题)
 
 ## 下载与安装
 
-免费开源，MIT 许可。普通用户从 [1.0.0 正式版发布页](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v1.0.0) 下载 `PrismGlass-Setup-1.0.0-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。变化与验收范围见 [1.0.0 更新说明](docs/RELEASE-1.0.0.md)，后续版本见 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases)。
+免费开源，MIT 许可。普通用户从 [1.0.1 正式版发布页](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v1.0.1) 下载 `PrismGlass-Setup-1.0.1-x64.exe`；GitHub 自动生成的 **Source code** 压缩包是开发源码，不是安装程序。变化与验收范围见 [1.0.1 更新说明](docs/RELEASE-1.0.1.md)，后续版本见 [GitHub Releases](https://github.com/liburce0412-alt/prismglass-desktop/releases)。
 
 1. 运行中文安装向导，组件页自动检查 Rainmeter、WebView2 Runtime 和 .NET Framework 4.8。缺少时点击“一键补齐缺失组件”，按提示下载、校验并调用官方安装程序；失败可重试，也可选择已有程序或从官网离线安装。使用系统自带 Windows PowerShell 5.1，无需另装 PowerShell 7、Git、Node.js 或开发工具。
 2. 许可页默认接受协议，默认创建一个名为 **PrismGlass** 的桌面图标，完成页默认勾选“启动 PrismGlass”。这些选择可在向导中修改；不创建开机启动项。
@@ -43,6 +43,14 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 移除右侧“桌面文件”卡片和对应设置项，不删除桌面文件；左侧常用位置仍保留，文件浏览可从右侧管理页打开。隐藏或最小化的设置页面与被遮挡的桌面组件会按可见性暂停后台工作，显示时恢复；保留 Sky/Astro 材质和玻璃效果。
 
 iPad 竖屏首页的音乐与待办不再重叠，横屏投屏页将触控板与设置并排；断线说明提供直接重连入口，锁屏状态与网络错误分别显示。
+
+## 1.0.1 交互修复
+
+应用中心打开后不再依赖快速移入鼠标，Dock 悬停预览会在应用中心打开期间暂停。固定到版本化安装目录的 Windows 应用包按已注册的应用身份恢复入口与图标，应用更新后仍可匹配已有窗口；Dock 重排保留各应用自己的缩放过渡。Dock 与歌词胶囊和顶部灵动岛共用屏幕中心，左右侧栏的玻璃顶边对齐，隐藏或排序右侧入口不再改变顶边位置。
+
+顶部胶囊聚合实际投屏、触控、已连接设备、专注进度、音乐和天气状态，点击或下拉展开常用操作，可直接管理连接、停止远程操作和恢复整栏。交互参考 [Apple 实时活动](https://developer.apple.com/design/human-interface-guidelines/live-activities)、[vivo 原子岛](https://www.vivo.com/tw/originos) 与 [小米超级岛](https://www.mi.com/global/hyperos/) 的紧凑状态、展开控制与活动聚合，继续沿用本项目的 Sky/Astro 外观。
+
+触控在前台连接正常时持续保持，空闲与页内切换不再自动停用；停止、后台、断线、锁屏或撤权会结束控制。投屏保持原比例，使用页面可用空间，不再为工具栏固定预留一列。主屏画面下方有留白时用于放置按钮，独立副屏使用角落按钮；控制面板按需展开。原生键盘打开后，右侧天然留白足够时放置小输入区，让画面保留全部可用高度；其余情况使用约 55 像素的底部输入条，画面底边与其贴合。各页面精简宣传语和重复说明，保留必要操作、权限与错误提示。检查记录见 [验证概述](docs/VALIDATION.md)。
 
 ## 既有投屏与更新功能
 

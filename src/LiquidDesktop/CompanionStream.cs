@@ -45,7 +45,7 @@ internal sealed class CompanionMonitorSelection {
 internal sealed class CompanionStream : IDisposable {
  readonly object gate=new object();readonly Func<bool> locked;readonly Func<DateTime> clock;readonly ICompanionStreamRuntime runtime;readonly System.Threading.Timer timer;
  CompanionGrant owner;string lease="";DateTime expires;bool disposed,cleanupPending;
- internal bool IsActive {get {lock(gate)return owner!=null;}}
+ internal bool IsActive {get {lock(gate)return owner!=null||cleanupPending;}}
  public CompanionStream(string root,Func<bool> isLocked,Func<string> address=null):this(new CompanionStreamRuntime(root,address),isLocked,()=>DateTime.UtcNow,true){}
  internal CompanionStream(ICompanionStreamRuntime backend,Func<bool> isLocked,Func<DateTime> now,bool watch){runtime=backend;locked=isLocked;clock=now;if(watch)timer=new System.Threading.Timer(ignored=>{try{Sweep();}catch{}},null,1000,1000);}
  bool Allowed(CompanionGrant grant){try{return grant!=null&&grant.Active&&grant.screen&&!locked();}catch{return false;}}

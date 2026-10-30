@@ -53,6 +53,7 @@ internal sealed class CompanionControls : IDisposable {
   if(Allowed(grant,false)){if(job!=null&&ReferenceEquals(job.owner,grant))power=JobState(job);else if(Pending(job))power=new{status="busy",action="",id="",executeAt=0L,message="另一台设备已有电源操作，请稍后再试。"};}
   return new{pointer=new{active=own,expiresAt=own?Stamp(lease.expires):0},power=power};
  }}
+ internal bool IsActive {get{lock(gate){Prune(clock());return lease!=null||releasePending;}}}
  public CompanionReply Pointer(string path,Dictionary<string,object> request,CompanionGrant grant){lock(gate){
   DateTime now=clock();Prune(now);if(!Allowed(grant,true))return Error(403,"forbidden","此设备未获鼠标控制权限，或电脑已锁定。");
   if(path=="/api/pointer/begin"){
@@ -73,6 +74,7 @@ internal sealed class CompanionControls : IDisposable {
   else if(kind=="scroll"){if(!Keys(request,"leaseId","seq","kind","steps")||!Integer(request,"steps",out steps))return Invalid();command=new MouseCommand(kind,scroll:Clamp(steps,5));}
   else if(kind=="click"){string button=Text(request,"button");if(!Keys(request,"leaseId","seq","kind","button")||(button!="left"&&button!="right"))return Invalid();command=new MouseCommand(kind,click:button);}
   else if(kind=="drag"){phase=Text(request,"phase");if(!Keys(request,"leaseId","seq","kind","phase")||(phase!="start"&&phase!="hold"&&phase!="end"))return Invalid();}
+  else if(kind=="keepalive"){if(!Keys(request,"leaseId","seq","kind"))return Invalid();}
   else if(kind=="text"||kind=="key"){
    if(!grant.keyboard)return Error(403,"keyboard_denied","请在电脑为此设备允许键盘输入。");
    string value=Text(request,kind=="text"?"text":"key");if(!Keys(request,"leaseId","seq","kind",kind=="text"?"text":"key")||(kind=="text"?!ValidText(value):KeyCodes(value)==null))return Invalid();
@@ -90,7 +92,7 @@ internal sealed class CompanionControls : IDisposable {
   }
   bool sent=false;try{sent=command==null||(kind=="move"&&command.dx==0&&command.dy==0)||(kind=="scroll"&&command.steps==0)||mouse(command);}catch{}finally{if(!sent)EndLease();}
   if(!sent)return Error(503,"input_blocked","Windows 未接受鼠标输入；较高权限窗口或系统安全界面可能阻止控制。请在电脑端操作。");
-  if(lease.dragging)lease.dragExpires=now.AddMilliseconds(750);
+  if(lease.dragging&&kind!="keepalive")lease.dragExpires=now.AddMilliseconds(750);
   lease.expires=now.AddSeconds(20);return CompanionReply.Json(200,new{ignored=false,seq=sequence,expiresAt=Stamp(lease.expires)});
  }}
  public CompanionReply Power(string path,Dictionary<string,object> request,CompanionGrant grant){lock(gate){

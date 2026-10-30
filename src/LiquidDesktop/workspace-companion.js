@@ -24,7 +24,7 @@
  function renderGrants(){
   const current=selection(),value=current?(drafts.get(selected)||normalized(current.item.grants)):normalized(null),dirty=current&&signature(value)!==signature(current.item.grants);
   $('companion-permission-title').textContent=current?current.item.name+' 的共享权限':'选择一台设备';
-  $('companion-permission-hint').textContent=!current?'在左侧选择设备或待批准请求。':current.isPending?'核对设备名称，只勾选需要开放的功能。':dirty?'有未保存的更改，点击保存后才生效。':'已保存。勾选权限后点击保存。';
+  $('companion-permission-hint').textContent=!current?'在左侧选择设备或待批准请求。':current.isPending?'核对设备名称，只勾选需要开放的功能。':dirty?'有未保存的更改，点击保存后才生效。':'已保存';
   for(const input of document.querySelectorAll('[data-grant]')){input.checked=value[input.dataset.grant];input.disabled=!current||state.busy;}
   $('companion-grant-save').hidden=!!current?.isPending;$('companion-grant-save').disabled=!current||!dirty||state.busy;
   $('companion-approve').hidden=!current?.isPending;$('companion-approve').disabled=!current||state.busy;
@@ -60,7 +60,7 @@
   <div class="companion-connection-head"><div><strong id="companion-service-status">正在读取状态…</strong><p id="companion-url"></p></div><div class="companion-actions"><button type="button" id="companion-connect" data-companion-command>检查并连接</button><button type="button" id="companion-stop" class="quiet">关闭连接</button></div></div>
   <p id="companion-notice" role="status" hidden></p>
   <div class="companion-actions"><button type="button" id="companion-pair" data-companion-command>生成配对二维码</button><button type="button" id="companion-help-link" class="quiet">首次连接指南 ↓</button></div>
-  <section id="companion-pairing" hidden aria-label="连接二维码"><img id="companion-qr" alt="配对二维码"><div><strong id="companion-pair-code"></strong><p id="companion-pair-note"></p><p class="life-note">在 Safari 分享菜单中添加到主屏幕，下次轻点图标进入。</p><button type="button" id="companion-collapse-qr" class="quiet">收起二维码</button></div></section>
+  <section id="companion-pairing" hidden aria-label="连接二维码"><img id="companion-qr" alt="配对二维码"><div><strong id="companion-pair-code"></strong><p id="companion-pair-note"></p><button type="button" id="companion-collapse-qr" class="quiet">收起二维码</button></div></section>
   <details id="companion-network"><summary>连接设置</summary><div class="companion-network-fields"><label>电脑网络<select id="companion-address"></select></label><label>端口<input id="companion-port" type="number" min="1024" max="65535"></label></div><p class="life-note">换网后重新检查连接。涉及证书、网络类别或防火墙的改动，会逐项说明并请求确认。</p></details>
   <div class="companion-section-head"><h2>设备与权限</h2><span>仅在保存或批准后生效</span></div>
   <div class="companion-device-layout"><div class="companion-device-lists"><h3>已授权设备</h3><div id="companion-devices"></div><h3>待批准请求</h3><div id="companion-pending"></div></div><section class="companion-permissions"><h3 id="companion-permission-title">选择一台设备</h3><p id="companion-permission-hint" class="life-note"></p><div class="companion-actions"><button type="button" id="companion-grant-save">保存设备权限</button><button type="button" id="companion-approve" hidden>批准请求</button><button type="button" id="companion-reject" class="quiet" hidden>拒绝</button><button type="button" id="companion-revoke" class="quiet" hidden>撤销授权</button></div><div id="companion-grants"></div></section></div>

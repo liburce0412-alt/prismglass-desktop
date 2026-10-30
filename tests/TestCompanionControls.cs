@@ -16,6 +16,7 @@ internal static class TestCompanionControls {
  static string Begin(Fixture f,CompanionGrant grant){return (string)Map(f.controls.Pointer("/api/pointer/begin",Body(),grant))["leaseId"];}
  static CompanionReply Move(Fixture f,CompanionGrant grant,string lease,int seq,object x,object y){return f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",seq,"kind","move","dx",x,"dy",y),grant);}
  static CompanionReply Drag(Fixture f,CompanionGrant grant,string lease,int seq,string phase){return f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",seq,"kind","drag","phase",phase),grant);}
+ static CompanionReply Keepalive(Fixture f,CompanionGrant grant,string lease,int seq){return f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",seq,"kind","keepalive"),grant);}
  static string Prepare(Fixture f,CompanionGrant grant,string action){return (string)Map(f.controls.Power("/api/power/prepare",Body("action",action),grant))["ticketId"];}
  static CompanionReply Commit(Fixture f,CompanionGrant grant,string ticket){return f.controls.Power("/api/power/commit",Body("ticketId",ticket),grant);}
  static Dictionary<string,object> Schedule(Fixture f,CompanionGrant grant,string action){return Map(Commit(f,grant,Prepare(f,grant,action)));}
@@ -57,7 +58,7 @@ internal static class TestCompanionControls {
    var grant=Grant();string lease=Begin(f,grant);Drag(f,grant,lease,1,"start");int releases=0;f.onMouse=command=>command.kind!="up"||++releases>1;Drag(f,grant,lease,2,"end");Check(releases==2&&f.inputs.Last().kind=="up","failed release receives one bounded immediate retry");
   }
   using(var f=new Fixture()){
-   var grant=Grant();string lease=Begin(f,grant);Drag(f,grant,lease,1,"start");f.mouseOk=false;Check(Drag(f,grant,lease,2,"end").Status==503&&f.controls.Pointer("/api/pointer/begin",Body(),grant).Status==503,"unaccepted release stays pending and blocks a new press");int before=f.inputs.Count;f.mouseOk=true;f.Advance(.25);Check(f.inputs.Count==before+1&&f.inputs.Last().kind=="up"&&f.controls.Pointer("/api/pointer/begin",Body(),grant).Status==200,"timer retries pending mouse-up after Windows input becomes available again");
+   var grant=Grant();string lease=Begin(f,grant);Drag(f,grant,lease,1,"start");f.mouseOk=false;Check(Drag(f,grant,lease,2,"end").Status==503&&f.controls.IsActive&&f.controls.Pointer("/api/pointer/begin",Body(),grant).Status==503,"unaccepted release stays visibly active and blocks a new press");int before=f.inputs.Count;f.mouseOk=true;f.Advance(.25);Check(f.inputs.Count==before+1&&f.inputs.Last().kind=="up"&&!f.controls.IsActive&&f.controls.Pointer("/api/pointer/begin",Body(),grant).Status==200,"timer retries pending mouse-up after Windows input becomes available again");
   }
   using(var f=new Fixture()){
    var grant=Grant();string lease=Begin(f,grant);Drag(f,grant,lease,1,"start");f.mouseOk=false;Check(f.controls.Pointer("/api/pointer/begin",Body(),grant).Status==503&&!(bool)Part(f.controls.Snapshot(grant),"pointer")["active"]&&f.inputs.Count(i=>i.kind=="down")==1,"restarting a held drag cannot create a new lease when its old release fails");
@@ -65,6 +66,19 @@ internal static class TestCompanionControls {
   var down=CompanionControls.Inputs(new CompanionControls.MouseCommand("down",click:"left"));var up=CompanionControls.Inputs(new CompanionControls.MouseCommand("up",click:"left"));Check(down.Length==1&&down[0].data.mouse.flags==2&&up.Length==1&&up[0].data.mouse.flags==4,"native drag structs encode explicit left press and release without invoking SendInput");
  }
  static void Main(){
+  using(var f=new Fixture()){
+   var grant=Grant();string lease=Begin(f,grant);bool healthy=true;
+   for(int seq=1;seq<=15;seq++){f.Advance(5);healthy&=Keepalive(f,grant,lease,seq).Status==200;}
+   Check(healthy&&f.controls.IsActive&&(bool)Part(f.controls.Snapshot(grant),"pointer")["active"]&&f.inputs.Count==0,"authenticated keepalives preserve enabled idle touch beyond a minute without injecting input");
+   var expires=Part(f.controls.Snapshot(grant),"pointer")["expiresAt"];f.Advance(19);
+   Check((bool)Map(Keepalive(f,grant,lease,15))["ignored"]&&Equals(expires,Part(f.controls.Snapshot(grant),"pointer")["expiresAt"]),"replayed keepalives do not renew a lease");
+   Check(f.controls.Pointer("/api/pointer",Body("leaseId",lease,"seq",16,"kind","keepalive","dx",1),grant).Status==400&&f.inputs.Count==0,"keepalive cannot smuggle input fields");
+   f.now=f.now.AddSeconds(1);Check(!f.controls.IsActive&&Keepalive(f,grant,lease,16).Status==409,"live status prunes a lost lease even before the periodic timer runs");
+   lease=Begin(f,grant);Drag(f,grant,lease,1,"start");f.Advance(.5);Keepalive(f,grant,lease,2);f.Advance(.25);
+   Check(f.inputs.Select(i=>i.kind).SequenceEqual(new[]{"down","up"})&&!(bool)Part(f.controls.Snapshot(grant),"pointer")["active"],"idle keepalive cannot extend the separate held-button safety deadline");
+   lease=Begin(f,grant);grant.pointer=false;Check(Keepalive(f,grant,lease,1).Status==403,"keepalive cannot preserve revoked pointer permission");grant.pointer=true;lease=Begin(f,grant);f.locked=true;
+   Check(Keepalive(f,grant,lease,1).Status==403&&!(bool)Part(f.controls.Snapshot(grant),"pointer")["active"],"locking the desktop ends a lease even when keepalives arrive");
+  }
   Check(!new CompanionGrant().keyboard,"existing devices do not silently gain keyboard permission");
   using(var f=new Fixture()){
    var grant=Grant();string lease=Begin(f,grant);var text=Body("leaseId",lease,"seq",1,"kind","text","text","你好 iPad 😀");

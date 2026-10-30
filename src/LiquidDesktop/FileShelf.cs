@@ -57,7 +57,7 @@ internal sealed class ShelfReader : IDisposable {
 internal sealed class FileShelf : Form {
  public event Action Ready;
  public event Action<CursorPreferences,int> CursorSettingsChanged;
- public Rectangle OcclusionBounds {get{int count=VisibleCards().Count;float top=(620-(count*74+36))/2f;return new Rectangle(Left+(int)(417*scale),Top+(int)((top-22)*scale),(int)(82*scale),(int)((count*74+58)*scale));}}
+ public Rectangle OcclusionBounds {get{int count=VisibleCards().Count;return new Rectangle(Left+(int)(417*scale),Top+(int)(4*scale),(int)(82*scale),(int)((count*74+58)*scale));}}
  static readonly string[] CardNames={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCardNames={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  readonly string root;readonly bool preview;readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly ShelfReader reader=new ShelfReader();
@@ -92,11 +92,12 @@ internal sealed class FileShelf : Form {
  }
  void SyncZoom(){pixels.Sync();}
  void Place(){
-  scale=Math.Max(.65f,Math.Min(1.25f,Math.Min((screen.Height-250)/620f,(screen.Width-180)/500f)));
-  int width=(int)Math.Ceiling(500*scale),height=(int)Math.Ceiling(620*scale);Bounds=new Rectangle(screen.Right-width-20,screen.Top+Math.Max(82,(screen.Height-height)/2),width,height);Shape(expanded?1:0);
+  // Share SideDock's scale and top anchor; visible entries shorten downward from that baseline.
+  scale=Math.Max(.5f,Math.Min(1.25f,Math.Min((screen.Height-240)/680f,(screen.Width-48)/852f)));
+  int width=(int)Math.Ceiling(500*scale),height=(int)Math.Ceiling(620*scale);Bounds=new Rectangle(screen.Right-width-20,screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),width,height);Shape(expanded?1:0);
  }
  void Shape(float amount){using(var shape=new GraphicsPath()){
-  int count=VisibleCards().Count;float top=(620-(count*74+36))/2f;Round(shape,417*scale,(top-22)*scale,82*scale,(count*74+58)*scale,26*scale);if(amount>.001f)Round(shape,(404-400*amount)*scale,4*scale,400*amount*scale,612*scale,26*scale);
+  int count=VisibleCards().Count;Round(shape,417*scale,4*scale,82*scale,(count*74+58)*scale,26*scale);if(amount>.001f)Round(shape,(404-400*amount)*scale,4*scale,400*amount*scale,612*scale,26*scale);
   var old=Region;Region=new Region(shape);if(old!=null)old.Dispose();
  }}
  static void Round(GraphicsPath p,float x,float y,float w,float h,float r){float d=Math.Min(r*2,Math.Min(w,h));if(w<=0||h<=0)return;p.StartFigure();p.AddArc(x,y,d,d,180,90);p.AddArc(x+w-d,y,d,d,270,90);p.AddArc(x+w-d,y+h-d,d,d,0,90);p.AddArc(x,y+h-d,d,d,90,90);p.CloseFigure();}

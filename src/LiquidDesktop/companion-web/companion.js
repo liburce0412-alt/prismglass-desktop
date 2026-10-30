@@ -7,7 +7,7 @@
   var appGridKey = '', cooldownUntil = 0, cooldownCode = '', feedbackKind = '', taskFilter = 'all', writesBlocked = false;
   var page = 'home', appPage = 0, pageSize = 24, composing = false, searchTimer = 0, appNodes = Object.create(null);
   var assets = Object.create(null), wantedAssets = Object.create(null), assetActive = 0, scene = 'auto', touchKey = '', rememberedContext = {};
-  var pointerLease = '', pointerSeq = 0, pointerExpires = 0, pointerBusy = false, pointerTimer = 0, pointerGeneration = 0, pointerDelta = null, fingers = {}, gesture = null;
+  var pointerLease = '', pointerSeq = 0, pointerExpires = 0, pointerBusy = false, pointerTimer = 0, pointerTimerDelay = 0, pointerGeneration = 0, pointerDelta = null, fingers = {}, gesture = null;
   var pointerSamples = [], pointerActions = [], pointerHeld = false, pointerDragWanted = false, pointerLastSent = 0, pointerLastTap = null, pointerSpeed = 1, pointerNatural = true, wheelContact = null;
   var powerTicket = null, powerBusy = false, powerError = '', controlsVersion = 0, resumePage = '', resumeScene = 'auto', volumeEditing = false;
   var powerNames = { lock: '锁定', sleep: '睡眠', restart: '重启', shutdown: '关机' };
@@ -105,7 +105,7 @@
     $('theme-toggle').disabled = true; $('motion-toggle').disabled = true; $('apps-tab').disabled = true; $('work-tab').disabled = true; $('notes-tab').disabled = true; $('logout').disabled = true;
     $('pair-submit').disabled = false; $('pair-code').disabled = false; $('device-name').disabled = false; text('pair-submit', '请求配对');
     visible('note-reload', false); visible('pair-form', false); visible('pair-panel', true);
-    text('pair-heading', '让桌面，来到手边。'); visible('pair-retry', false);
+    text('pair-heading', '连接电脑'); visible('pair-retry', false);
     text('pair-hint', '正在恢复已记住的设备…'); text('pair-status', '连接成功后会自动进入，无需重复扫码。');
     actionButtons.forEach(function (button) { button.disabled = true; });
     document.body.dataset.music = 'quiet'; feedback('', false); showPage('home');
@@ -204,11 +204,11 @@
     text('system-stamp', s.available ? '电脑状态 · ' + (s.updatedAt ? time(s.updatedAt) : '已更新') : s.reason || '电脑暂未提供性能数据');
     text('volume-value', v.available ? percent((v.data || {}).value) : '未获取');
     var m = permission('music') ? state.music || {} : {};
-    text('track-title', m.available ? m.title || '未提供歌名' : permission('music') ? m.reason || '音乐响起时，在这里相遇。' : '音乐尚未共享');
+    text('track-title', m.available ? m.title || '未提供歌名' : permission('music') ? m.reason || '暂无播放' : '音乐尚未共享');
     text('track-artist', m.available ? m.artist || '' : ''); text('music-source', m.available ? m.source || '系统媒体' : '未获取');
     text('playback-state', m.available ? m.playing === true ? '正在播放' : m.playing === false ? '已暂停' : '播放状态未提供' : '');
     if (window.PrismCompanionLyrics) window.PrismCompanionLyrics.render(m, $('reduce-motion').checked);
-    else { text('lyric-current', m.available ? m.current || '此刻，听音乐。' : ''); text('lyric-next', m.available ? m.next || '' : ''); }
+    else { text('lyric-current', m.available ? m.current || '暂无歌词' : ''); text('lyric-next', m.available ? m.next || '' : ''); }
     text('play-button', m.available && m.playing === true ? '暂停' : m.available && m.playing === false ? '播放' : '播放 / 暂停');
     document.body.dataset.music = m.available ? m.playing === false ? 'paused' : 'active' : 'quiet';
     if (!m.available || !safeAsset(m.cover)) { $('cover').removeAttribute('src'); $('cover').hidden = true; $('cover').dataset.asset = ''; }
@@ -230,12 +230,12 @@
     var items = allowed && Array.isArray(tasks.items) ? tasks.items : [];
     var open = items.filter(function (item) { return !item.done; });
     text('home-task-count', allowed ? open.length ? open.length + ' 件待办' : '暂时都完成了' : permission('tasks') ? '等待电脑同步' : '待办尚未共享');
-    text('home-task-first', allowed ? open.length ? open[0].text : '空一点时间，做喜欢的事。' : '在电脑开启共享后，在这里查看。');
+    text('home-task-first', allowed ? open.length ? open[0].text : '暂无待办' : '请在电脑开启待办共享');
     text('home-task-second', open.length > 1 ? open[1].text : ''); visible('home-task-second', open.length > 1);
     var filtered = items.filter(function (item) { return taskFilter === 'all' || (taskFilter === 'done') === !!item.done; }), listKey = JSON.stringify([!!allowed, tasks.revision, taskFilter, filtered]);
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = !allowed; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
     text('task-count', allowed ? items.filter(function (t) { return !t.done; }).length + ' 项未完成' : permission('tasks') ? '暂不可用' : '未共享');
-    text('tasks-empty', !allowed ? permission('tasks') ? tasks.reason || '电脑暂未提供待办，稍后会自动同步。' : '请在电脑允许此设备共享待办。' : taskFilter === 'open' ? '没有未完成的待办。' : taskFilter === 'done' ? '还没有已完成的待办。' : '手边的事情，都已记好。'); visible('tasks-empty', !filtered.length);
+    text('tasks-empty', !allowed ? permission('tasks') ? tasks.reason || '电脑暂未提供待办，稍后会自动同步。' : '请在电脑允许此设备共享待办。' : taskFilter === 'open' ? '没有未完成的待办。' : taskFilter === 'done' ? '还没有已完成的待办。' : '暂无待办'); visible('tasks-empty', !filtered.length);
     if (listKey !== taskListKey) {
       taskListKey = listKey; $('task-list').textContent = '';
       filtered.forEach(function (item) {
@@ -273,11 +273,11 @@
   }
   function renderFocus() {
     var f = state && state.focus || {};
-    if (!f.available) { text('focus-time', '--:--'); text('focus-status', '电脑专注组件未运行'); text('focus-completed', '由电脑计时'); text('home-focus-time', '留一段专注'); text('home-focus-label', '给喜欢的事，一点时间'); return; }
+    if (!f.available) { text('focus-time', '--:--'); text('focus-status', '电脑专注组件未运行'); text('focus-completed', '由电脑计时'); text('home-focus-time', '--:--'); text('home-focus-label', '专注计时未开启'); return; }
     var running = f.deadline > 0, remaining = running ? Math.max(0, f.deadline - (Date.now() + clockOffset) / 1000) : f.remaining;
-    text('focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('focus-status', running ? remaining > 0 ? '给眼前的事情一点时间' : '等待电脑确认完成' : '准备好时，就开始');
+    text('focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('focus-status', running ? remaining > 0 ? '正在专注' : '等待电脑确认完成' : '准备开始');
     text('focus-toggle', running ? '暂停' : '开始'); text('focus-completed', number(f.completed) !== null ? '电脑已记录 ' + f.completed + ' 轮专注' : '由电脑计时');
-    text('home-focus-time', number(remaining) === null ? '留一段专注' : duration(remaining)); text('home-focus-label', running ? '正在专注 · 与电脑同步' : '给喜欢的事，一点时间');
+    text('home-focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('home-focus-label', running ? '正在专注' : '专注计时');
   }
 
   async function loadApps() { var result = await request('/api/apps'); apps = result; appsAt = Date.now(); pruneAssets(); renderApps(); }
@@ -330,8 +330,9 @@
   }
   function changePage(next) {
     if ($('feedback').dataset.error !== 'true') feedback('', false);
-    if (page === 'pointer' && next !== 'pointer') stopPointer(true);
+    if (page === 'pointer' && next !== 'pointer') { cancelPointerGesture(); keyboardPanel(false); }
     page = next; document.body.dataset.page = page;
+    renderKeyboard();
     if (window.PrismCompanionScreen) window.PrismCompanionScreen.render(session && session.grants, session && session.csrf, page === 'pointer');
     ['home', 'work', 'notes', 'apps', 'pointer', 'widgets', 'computer', 'appearance'].forEach(function (name) { visible(name + '-page', page === name); if (page === name) $(name + '-tab').setAttribute('aria-current', 'page'); else $(name + '-tab').removeAttribute('aria-current'); });
     if (page !== 'widgets' && window.PrismCompanionWidgets) window.PrismCompanionWidgets.pause();
@@ -459,34 +460,36 @@
     if (lease && session) releasePointerLease(lease, session.csrf);
     renderKeyboard();
   }
-  function keyboardPanel(open) { if (!open) $('screen-text').blur(); document.body.dataset.screenKeyboard = String(open); $('screen-keyboard').hidden = !open; $('screen-keyboard-toggle').setAttribute('aria-expanded', String(open)); text('screen-keyboard-toggle', open ? '收起键盘' : '键盘'); }
+  function keyboardStatus(message, notice) { text('keyboard-status', message); $('keyboard-status').dataset.notice = String(!!notice); if (window.PrismCompanionScreen) window.PrismCompanionScreen.layout(); }
+  function keyboardPanel(open) { if (!open) $('screen-text').blur(); document.body.dataset.screenKeyboard = String(open); $('screen-keyboard').hidden = $('screen-keyboard-bar').hidden = !open; $('screen-keyboard-toggle').setAttribute('aria-expanded', String(open)); text('screen-keyboard-toggle', open ? '收起键盘' : '键盘'); if (window.PrismCompanionScreen) { if (open) window.PrismCompanionScreen.closeTools(); window.PrismCompanionScreen.layout(); } }
+  $('screen-keyboard-close').onclick = function () { keyboardPanel(false); $('screen-keyboard-toggle').focus(); };
   function renderKeyboard() {
     var allowed = permission('keyboard'), ready = allowed && !!pointerLease && permission('pointer') && page === 'pointer' && !document.hidden;
     $('screen-keyboard-toggle').disabled = !ready; $('screen-text').disabled = !ready; $('screen-text-send').disabled = !ready || keyboardSending;
     remoteKeys.forEach(function (button) { button.disabled = !ready || keyboardSending; });
-    if (!allowed) { $('screen-text').value = ''; keyboardPanel(false); text('keyboard-status', '在电脑为此设备勾选“键盘输入”，文字与按键才会启用。'); }
-    else if (!ready) text('keyboard-status', '启用触控后，可展开键盘向电脑输入。');
-    else if (!keyboardSending && $('keyboard-status').textContent.indexOf('启用') >= 0) text('keyboard-status', '先选中电脑输入框，再输入文字或使用按键。');
+    if (!allowed) { $('screen-text').value = ''; keyboardPanel(false); keyboardStatus('请在电脑允许此设备使用键盘。', true); }
+    else if (!ready) keyboardStatus('请先启用触控。', true);
+    else if (!keyboardSending && $('keyboard-status').textContent.indexOf('启用') >= 0) keyboardStatus('输入将发送到电脑当前输入框。', false);
   }
   function releasePointerLease(lease, csrf) {
     try { fetch('/api/pointer/end', { method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ leaseId: lease }) }).catch(function () {}); } catch (_) {}
   }
   async function beginPointer() {
-    if (!permission('pointer') || pointerBusy || pointerLease || !state) return;
-    var generation = ++pointerGeneration, authGeneration = epoch; pointerBusy = true; $('pointer-enable').disabled = true;
+    if (!permission('pointer') || pointerBusy || pointerLease || !state || page !== 'pointer' || document.hidden) return;
+    var generation = ++pointerGeneration, token = session.csrf; pointerBusy = true; $('pointer-enable').disabled = true;
     try {
       var result = await request('/api/pointer/begin', {}, true);
-      if (generation !== pointerGeneration || page !== 'pointer') { if (authGeneration === epoch) request('/api/pointer/end', { leaseId: result.leaseId }, true).catch(function () {}); return; }
+      if (generation !== pointerGeneration || !permission('pointer') || document.hidden) { releasePointerLease(result.leaseId, token); return; }
       pointerLease = result.leaseId; pointerExpires = result.expiresAt; pointerSeq = 0; pointerLastSent = Date.now(); queuePointer();
       $('pointer-wheel').dataset.active = 'true'; $('pointer-wheel').setAttribute('aria-disabled', 'false'); $('wheel-up').disabled = $('wheel-down').disabled = false;
       $('pointer-surface').dataset.active = 'true'; $('pointer-stop').disabled = $('pointer-left').disabled = $('pointer-right').disabled = false;
       text('pointer-status', '已启用 · 单指移动，双击按住拖拽，双指轻点右键、上下滚动。');
     } catch (error) { if (generation === pointerGeneration) { stopPointer(false); controlError(error, 'pointer-status'); } }
-    finally { if (generation === pointerGeneration) { pointerBusy = false; $('pointer-enable').disabled = !!pointerLease || !permission('pointer'); renderKeyboard(); } }
+    finally { if (generation === pointerGeneration) { pointerBusy = false; $('pointer-enable').disabled = !!pointerLease || !permission('pointer'); renderKeyboard(); queuePointer(); } }
   }
   async function sendPointer(kind, values) {
     if ((kind === 'text' || kind === 'key') && !permission('keyboard')) return false;
-    if (!pointerLease || pointerBusy || !permission('pointer') || document.hidden || page !== 'pointer') return;
+    if (!pointerLease || pointerBusy || !permission('pointer') || document.hidden || page !== 'pointer' && kind !== 'keepalive' && !(kind === 'drag' && values.phase === 'end')) return;
     if (Date.now() + clockOffset >= pointerExpires) { stopPointer(false); return; }
     var generation = pointerGeneration, body = { leaseId: pointerLease, seq: ++pointerSeq, kind: kind }; Object.keys(values).forEach(function (key) { body[key] = values[key]; }); pointerBusy = true; pointerLastSent = Date.now();
     if (kind === 'drag' && values.phase === 'start') pointerHeld = true;
@@ -496,7 +499,7 @@
     finally { if (generation === pointerGeneration) { pointerBusy = false; queuePointer(); } }
   }
   function pointerAction(kind, values) {
-    if (!pointerLease) return;
+    if (!pointerLease || document.hidden || page !== 'pointer' && !(kind === 'drag' && values.phase === 'end')) return;
     if (pointerActions.length >= 4) { stopPointer(true); return; }
     pointerActions.push({ kind: kind, values: values, at: Date.now() }); queuePointer();
   }
@@ -505,8 +508,13 @@
     pointerActions = pointerActions.filter(function (action) { return action.kind !== 'drag' || action.values.phase !== 'start'; });
     if (pointerHeld && !pointerActions.some(function (action) { return action.kind === 'drag' && action.values.phase === 'end'; })) pointerAction('drag', { phase: 'end' });
   }
+  function cancelPointerGesture() {
+    fingers = {}; gesture = null; wheelContact = null; pointerDelta = null; pointerSamples = []; pointerActions = []; pointerLastTap = null;
+    endPointerDrag(); queuePointer();
+  }
   function clickPointer(button) { pointerDelta = null; pointerSamples = []; if (pointerHeld || pointerDragWanted) endPointerDrag(); pointerAction('click', { button: button }); }
   function addPointerDelta(kind, dx, dy) {
+    if (!pointerLease || document.hidden || page !== 'pointer') return;
     var last = pointerSamples[pointerSamples.length - 1];
     if (last && last.kind !== kind || pointerDelta && pointerDelta.kind !== kind) { pointerSamples = []; pointerDelta = null; }
     if (pointerSamples.length >= 64) pointerSamples.shift();
@@ -523,10 +531,13 @@
     return delta.kind === 'scroll' ? y ? { kind: 'scroll', values: { steps: y } } : null : x || y ? { kind: 'move', values: { dx: x, dy: y } } : null;
   }
   function queuePointer() {
-    if (pointerTimer || !pointerLease) return;
+    if (!pointerLease || pointerBusy) return;
+    var delay = pointerActions.length || pointerSamples.length || pointerHeld || Object.keys(fingers).length || wheelContact ? 17 : 5000;
+    if (pointerTimer && pointerTimerDelay <= delay) return;
+    clearTimeout(pointerTimer); pointerTimerDelay = delay;
     pointerTimer = setTimeout(function () {
-      pointerTimer = 0; if (!pointerLease) return; queuePointer();
-      if (pointerBusy || Date.now() - pointerLastSent < 17) return;
+      pointerTimer = 0; if (!pointerLease || pointerBusy) return;
+      if (Date.now() - pointerLastSent < 17) { queuePointer(); return; }
       if (Date.now() + clockOffset >= pointerExpires) { stopPointer(true); return; }
       var action = pointerActions[0];
       while (action && Date.now() - action.at > 200 && !(action.kind === 'drag' && action.values.phase === 'end')) {
@@ -538,7 +549,9 @@
       if (delta) sendPointer(delta.kind, delta.values);
       else if (action) { pointerActions.shift(); sendPointer(action.kind, action.values); }
       else if (pointerHeld && pointerDragWanted && Date.now() - pointerLastSent >= 250) sendPointer('drag', { phase: 'hold' });
-    }, 17);
+      else if (Date.now() - pointerLastSent >= 5000) sendPointer('keepalive', {});
+      else queuePointer();
+    }, delay);
   }
   function pointerMove(event) {
     var finger = fingers[event.pointerId]; if (!pointerLease || !finger) return; event.preventDefault();
@@ -549,7 +562,7 @@
   }
   function pointerEnd(event, cancel) {
     if (!fingers[event.pointerId]) return; delete fingers[event.pointerId];
-    if (cancel) { stopPointer(true); return; }
+    if (cancel) { cancelPointerGesture(); return; }
     if (!Object.keys(fingers).length) {
       var tap = gesture && gesture.distance < 7 && Date.now() - gesture.at < 350;
       if (gesture && gesture.drag) { var started = pointerHeld; endPointerDrag(); if (!started && tap) clickPointer('left'); pointerLastTap = null; }
@@ -651,17 +664,16 @@
   $('screen-keyboard-toggle').onclick = function () { if (!permission('keyboard') || !pointerLease) return; var open = $('screen-keyboard').hidden; keyboardPanel(open); if (open) $('screen-text').focus(); };
   $('screen-text').oncompositionstart = function () { keyboardComposing = true; };
   $('screen-text').oncompositionend = function () { keyboardComposing = false; };
-  $('screen-text').oninput = function () { if (pointerLease && Date.now() - pointerLastSent > 5000) pointerAction('move', { dx: 0, dy: 0 }); };
   $('screen-text-form').onsubmit = async function (event) {
     event.preventDefault(); if (keyboardComposing || keyboardSending || !permission('keyboard') || !pointerLease) return;
     var input = $('screen-text'), value = input.value;
-    if (!value || value.length > 256 || /[\x00-\x1f\x7f-\x9f]/.test(value)) { text('keyboard-status', '请输入 1–256 个字符；回车请用下方按键。'); return; }
-    if (pointerBusy || pointerHeld || pointerDragWanted) { text('keyboard-status', '请先结束当前触控操作，再发送文字。'); return; }
-    var generation = pointerGeneration, authGeneration = epoch; keyboardSending = true; renderKeyboard(); text('keyboard-status', '正在发送文字…');
+    if (!value || value.length > 256 || /[\x00-\x1f\x7f-\x9f]/.test(value)) { keyboardStatus('请输入 1–256 个字符；换行请用 Enter 按键。', true); return; }
+    if (pointerBusy || pointerHeld || pointerDragWanted) { keyboardStatus('请先结束当前触控操作。', true); return; }
+    var generation = pointerGeneration, authGeneration = epoch; keyboardSending = true; renderKeyboard(); keyboardStatus('正在发送文字…', false);
     var sent = await sendPointer('text', { text: value });
-    if (generation !== pointerGeneration || authGeneration !== epoch) return;
+    if (generation !== pointerGeneration || authGeneration !== epoch) { if (authGeneration === epoch && permission('keyboard') && input.value === value) keyboardStatus('未确认发送，请查看电脑后再操作。', true); return; }
     keyboardSending = false; if (sent && input.value === value) input.value = ''; renderKeyboard();
-    if (permission('keyboard') && pointerLease) text('keyboard-status', sent ? '文字已发送。' : '未确认发送，请查看电脑后再操作。');
+    if (permission('keyboard') && pointerLease) keyboardStatus(sent ? '文字已发送。' : '未确认发送，请查看电脑后再操作。', !sent);
   };
   remoteKeys.forEach(function (button) { button.onclick = function () { if (!permission('keyboard') || keyboardSending) return; endPointerDrag(); pointerAction('key', { key: button.getAttribute('data-remote-key') }); }; });
   $('pointer-speed').oninput = function () { var value = Number(this.value); if (!isFinite(value)) value = 100; value = Math.max(50, Math.min(200, value)); pointerSpeed = value / 100; text('pointer-speed-value', value + '%'); pointerDelta = null; pointerSamples = []; };
@@ -670,20 +682,20 @@
   $('pointer-surface').onpointerdown = function (event) {
     if (!pointerLease || wheelContact) return; event.preventDefault();
     fingers[event.pointerId] = { x: event.clientX, y: event.clientY };
-    if (Object.keys(fingers).length > 2) { stopPointer(true); return; }
+    if (Object.keys(fingers).length > 2) { cancelPointerGesture(); return; }
     if (!gesture) {
       var doubleTap = pointerLastTap && Date.now() - pointerLastTap.at <= 300 && Math.abs(event.clientX - pointerLastTap.x) + Math.abs(event.clientY - pointerLastTap.y) < 24;
       gesture = { at: Date.now(), distance: 0, multi: false, drag: !!doubleTap }; pointerLastTap = null;
       if (doubleTap) { pointerDragWanted = true; pointerAction('drag', { phase: 'start' }); }
     }
     if (Object.keys(fingers).length > 1) { gesture.multi = true; gesture.drag = false; pointerLastTap = null; endPointerDrag(); pointerDelta = null; pointerSamples = []; }
-    if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { stopPointer(true); }
+    if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { cancelPointerGesture(); }
   };
   $('pointer-surface').onpointermove = pointerMove;
   $('pointer-surface').onpointerup = function (event) { pointerEnd(event, false); };
   $('pointer-surface').onpointercancel = function (event) { pointerEnd(event, true); };
-  $('pointer-surface').onlostpointercapture = function (event) { if (fingers[event.pointerId]) stopPointer(true); };
-  window.addEventListener('blur', function () { if (pointerLease) stopPointer(true); });
+  $('pointer-surface').onlostpointercapture = function (event) { if (fingers[event.pointerId]) cancelPointerGesture(); };
+  window.addEventListener('blur', function () { cancelPointerGesture(); });
   $('pointer-surface').oncontextmenu = function (event) { event.preventDefault(); };
   $('pointer-surface').onkeydown = function (event) {
     if (event.key === 'Escape') { stopPointer(true); return; }
@@ -694,14 +706,14 @@
   $('pointer-wheel').onpointerdown = function (event) {
     if (!pointerLease || wheelContact || Object.keys(fingers).length) return;
     event.preventDefault(); endPointerDrag(); pointerSamples = []; pointerDelta = null; wheelContact = { id: event.pointerId, y: event.clientY };
-    if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { stopPointer(true); }
+    if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { cancelPointerGesture(); }
   };
   $('pointer-wheel').onpointermove = function (event) {
     if (!pointerLease || !wheelContact || wheelContact.id !== event.pointerId) return;
     event.preventDefault(); addPointerDelta('scroll', 0, (event.clientY - wheelContact.y) * (pointerNatural ? 1 : -1)); wheelContact.y = event.clientY;
   };
   $('pointer-wheel').onpointerup = function (event) { if (wheelContact && wheelContact.id === event.pointerId) wheelContact = null; };
-  $('pointer-wheel').onpointercancel = $('pointer-wheel').onlostpointercapture = function (event) { if (wheelContact && wheelContact.id === event.pointerId) stopPointer(true); };
+  $('pointer-wheel').onpointercancel = $('pointer-wheel').onlostpointercapture = function (event) { if (wheelContact && wheelContact.id === event.pointerId) cancelPointerGesture(); };
   $('pointer-wheel').oncontextmenu = function (event) { event.preventDefault(); };
   $('pointer-wheel').onkeydown = function (event) {
     if (event.key === 'Escape') { stopPointer(true); return; }
@@ -806,7 +818,7 @@
   window.addEventListener('online', function () { if (!document.hidden) schedule(0); });
   window.addEventListener('offline', function () { clearPrivate(true); connection('网络已断开', false); text('pair-heading', '网络已断开'); visible('pair-retry', true); text('pair-hint', '网络恢复后会重新连接，未完成操作不会自动重试。'); });
   window.addEventListener('beforeunload', function (event) { if (noteDirty || $('task-text').value.trim()) { event.preventDefault(); event.returnValue = ''; } });
-  function sizeViewport() { document.body.style.setProperty('--viewport-height', (window.visualViewport ? window.visualViewport.height : window.innerHeight) + 'px'); }
-  window.addEventListener('resize', sizeViewport); if (window.visualViewport) window.visualViewport.addEventListener('resize', sizeViewport);
+  function sizeViewport() { var viewport = window.visualViewport, style = document.body.style; style.setProperty('--viewport-height', (viewport ? viewport.height : window.innerHeight) + 'px'); style.setProperty('--viewport-width', (viewport ? viewport.width : window.innerWidth) + 'px'); style.setProperty('--viewport-top', (viewport ? viewport.offsetTop : 0) + 'px'); style.setProperty('--viewport-left', (viewport ? viewport.offsetLeft : 0) + 'px'); if (window.PrismCompanionScreen) window.PrismCompanionScreen.layout(); }
+  window.addEventListener('resize', sizeViewport); if (window.visualViewport) { window.visualViewport.addEventListener('resize', sizeViewport); window.visualViewport.addEventListener('scroll', sizeViewport); }
   sizeViewport(); clearPrivate(); prefillPairCode(); tick(); setInterval(tick, 1000); schedule(0);
 }());

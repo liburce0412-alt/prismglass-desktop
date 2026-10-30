@@ -26,6 +26,7 @@ function Initialize()
   check(read('dock-layout-monitor-1.json'):find('"dpi":1.25',1,true)~=nil and moved[1]<0,'monitor placement and diagnostics preserve negative coordinates and DPI scale')
   local expectedLeft=math.ceil((16+92*math.min(1.25,(900-240)/680,(1600-48)/852))/1.25)
   check(moved[1]==-1600+expectedLeft,'left-side monitor origin is preserved while local dimensions are scaled')
+  check(math.abs((moved[1]+1600+tonumber(vars.DockWidth)/2)*1.25-800)<.001,'Dock center matches the monitor center at 125 percent scale')
   vars.DockMonitorLeft='2560';vars.DockMonitorTop='-164';vars.DockMonitorWidth='2560';vars.DockMonitorHeight='1560';ReloadLayout()
   check(moved[1]==2665 and math.abs(moved[2]-965.6)<.001,'right-side mixed-DPI monitor preserves positive X and negative Y origins')
   for _,c in ipairs({
@@ -35,7 +36,10 @@ function Initialize()
   }) do
    vars.DockMonitorLeft=c[1];vars.DockMonitorTop=c[2];vars.DockMonitorWidth=c[3];vars.DockMonitorHeight=c[4];vars.DockPixelScale=c[5];ReloadLayout()
    check(math.abs(moved[1]-c[6])<.001 and math.abs(moved[2]-c[7])<.001,c[8]..' uses its own origin and work area')
+   check(math.abs((moved[1]-tonumber(c[1])+tonumber(vars.DockWidth)/2)*tonumber(c[5])-tonumber(c[3])/2)<.001,c[8]..' keeps the Dock and lyric capsule on the monitor center')
   end
+  vars.DockMonitorLeft='0';vars.DockMonitorTop='0';vars.DockMonitorWidth='2560';vars.DockMonitorHeight='1440';vars.DockPixelScale='1';ReloadLayout()
+  check(moved[1]==131 and tonumber(vars.DockWidth)==2298 and moved[1]+tonumber(vars.DockWidth)/2==1280,'2560 pixel desktop preserves left rail clearance while centering the Dock at 1280')
   vars.DockMonitorLeft='-1600';vars.DockMonitorTop='0';vars.DockMonitorWidth='1600';vars.DockMonitorHeight='900';vars.DockPixelScale='1.25';ReloadLayout()
   SetIconOpacity(255);Hover(0);write('dock-drag-feedback-monitor-1.txt',fakeTime+2 ..'|2|0|0');write('lyrics-monitor-1.txt',fakeTime+3 ..'|1|1\nYQ==\nYg==\n');for i=1,70 do Update() end
   check(shown.DragMarker and math.abs(tonumber(options['DragMarker.X'])-16-2*cell)<.01 and options['Icon2.ImageAlpha']=='255','insertion feedback holds application icons above the lyrics')
@@ -45,6 +49,12 @@ function Initialize()
   check(not shown.DragMarker and options['DragHint.Text']:find('保留原文件',1,true)~=nil,'dragging outside clearly describes unpinning without file deletion')
   write('dock-drag-feedback-monitor-1.txt','');for i=1,5 do Update() end
   check(not dragActive and not shown.DragHint and items[2].id=='p23','ending the drag clears feedback and applies the committed order')
+  Hover(2);for i=1,12 do Update() end
+  check(tonumber(options['Icon2.W'])>48,'hover animation is active before a Dock layout change')
+  write('dock-state.txt',rows);ReloadLayout();Update()
+  check(hover==0 and tonumber(options['Icon2.W'])==48 and tonumber(options['Icon3.W'])>48,'reordering carries animation with its application instead of enlarging the new slot occupant')
+  write('dock-state.txt','workspace\tQXBwcw==\tR3JpZA==\t0\t0\t1\t0\npexplorer\tRmlsZXM=\tSWNvbkE=\t1\t0\t1\t0\np42\tTmV3\tSWNvbkI=\t0\t0\t1\t0\n');ReloadLayout();Update()
+  check(tonumber(options['Icon3.W'])==48,'a newly inserted application never inherits a removed icon hover size')
   vars.DockIconSize='60';vars.DockOffset='24';ReloadLayout();Hover(0);write('dock-motion-monitor-1.txt','true');for i=1,18 do Update() end;Hover(2);for i=1,5 do Update() end
   check(tonumber(options['Icon2.W'])==60 and tonumber(options['Icon2.Y'])==24,'per-monitor pause stops bounce and live icon-size settings are applied')
   check(math.abs(moved[2]-(900/1.25-104-24/1.25))<.001,'live bottom offset remains physical pixels at 125 percent scale')
