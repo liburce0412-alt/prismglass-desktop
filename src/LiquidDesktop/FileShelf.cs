@@ -57,7 +57,7 @@ internal sealed class ShelfReader : IDisposable {
 internal sealed class FileShelf : Form {
  public event Action Ready;
  public event Action<CursorPreferences,int> CursorSettingsChanged;
- public Rectangle OcclusionBounds {get{int count=VisibleCards().Count;return new Rectangle(Left+(int)(417*scale),Top+(int)(4*scale),(int)(82*scale),(int)((count*74+58)*scale));}}
+ public Rectangle OcclusionBounds {get{int count=VisibleCards().Count;return new Rectangle(Left+(int)(420*scale),Top+(int)(4*scale),(int)(88*scale),(int)((count*74+58)*scale));}}
  static readonly string[] CardNames={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCardNames={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  readonly string root;readonly bool preview;readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly ShelfReader reader=new ShelfReader();
@@ -75,7 +75,7 @@ internal sealed class FileShelf : Form {
  public FileShelf(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
  public FileShelf(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();layout="";Publish();});
-  root=directory;preview=isPreview;shared=data;instance=screenInstance;quotaReader=shared==null?new QuotaReader(root):shared.Quota;quotaSnapshot=quotaReader.Cached();screen=Screen.PrimaryScreen.Bounds;Text="PrismGlass 桌面空间 · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(27,39,55);view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);ReadState();Place();
+  root=directory;preview=isPreview;shared=data;instance=screenInstance;quotaReader=shared==null?new QuotaReader(root):shared.Quota;quotaSnapshot=quotaReader.Cached();screen=Screen.PrimaryScreen.Bounds;Text="PrismGlass 桌面空间 · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(27,39,55);view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);ReadState();Place();
   ReadCursorSettings();ReadLeftVisibility();Shown+=async(s,e)=>{try{
    var env=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"shelf-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(env);SyncZoom();
    var core=view.CoreWebView2;core.Settings.IsZoomControlEnabled=false;core.Settings.AreDefaultContextMenusEnabled=false;core.Settings.AreDevToolsEnabled=false;core.Settings.IsStatusBarEnabled=false;
@@ -83,7 +83,7 @@ internal sealed class FileShelf : Form {
    core.NavigationStarting+=(sender,a)=>{if(!String.Equals(a.Uri,"https://prism-shelf.local/shelf.html",StringComparison.Ordinal))a.Cancel=true;};
    core.NewWindowRequested+=(sender,a)=>a.Handled=true;
    core.WebMessageReceived+=(sender,a)=>{if(String.Equals(a.Source,"https://prism-shelf.local/shelf.html",StringComparison.Ordinal))Receive(a.TryGetWebMessageAsString());};
-   core.ProcessFailed+=(sender,a)=>{try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),"WebView2: "+a.ProcessFailedKind);}catch{}Close();};
+   core.ProcessFailed+=(sender,a)=>{if(WebViewRecovery.KeepAlive(root,a.ProcessFailedKind))return;try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),"WebView2: "+a.ProcessFailedKind);}catch{}Close();};
    view.Source=new Uri("https://prism-shelf.local/shelf.html");
   }catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),ex.Message);}catch{}Close();}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready){nextContent=DateTime.MinValue;RefreshContent();}};
@@ -94,11 +94,11 @@ internal sealed class FileShelf : Form {
  void Place(){
   // Share SideDock's scale and top anchor; visible entries shorten downward from that baseline.
   scale=Math.Max(.5f,Math.Min(1.25f,Math.Min((screen.Height-240)/680f,(screen.Width-48)/852f)));
-  int width=(int)Math.Ceiling(500*scale),height=(int)Math.Ceiling(620*scale);Bounds=new Rectangle(screen.Right-width-20,screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),width,height);Shape(expanded?1:0);
+  int width=(int)Math.Ceiling(512*scale),height=(int)Math.Ceiling(620*scale);Bounds=new Rectangle(screen.Right-width-16,screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),width,height);Shape(expanded?1:0);
  }
  void Shape(float amount){using(var shape=new GraphicsPath()){
-  int count=VisibleCards().Count;Round(shape,417*scale,4*scale,82*scale,(count*74+58)*scale,26*scale);if(amount>.001f)Round(shape,(404-400*amount)*scale,4*scale,400*amount*scale,612*scale,26*scale);
-  var old=Region;Region=new Region(shape);if(old!=null)old.Dispose();
+  int count=VisibleCards().Count;Round(shape,420*scale,4*scale,88*scale,(count*74+58)*scale,28*scale);if(amount>.001f)Round(shape,(404-400*amount)*scale,4*scale,400*amount*scale,612*scale,26*scale);
+  var old=Region;Region=GlassWindow.Clip(shape,ClientRectangle);if(old!=null)old.Dispose();
  }}
  static void Round(GraphicsPath p,float x,float y,float w,float h,float r){float d=Math.Min(r*2,Math.Min(w,h));if(w<=0||h<=0)return;p.StartFigure();p.AddArc(x,y,d,d,180,90);p.AddArc(x+w-d,y,d,d,270,90);p.AddArc(x+w-d,y+h-d,d,d,0,90);p.AddArc(x,y+h-d,d,d,90,90);p.CloseFigure();}
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
@@ -137,7 +137,7 @@ internal sealed class FileShelf : Form {
    }
    state.cursor=next;state.cursorScale=size;
    if(!closed&&!preview&&CursorSettingsChanged!=null)CursorSettingsChanged(next,size);
-   if(!closed)Send(new{type="saved",message=preview?"预览中 · 不改变系统鼠标":"鼠标设置已应用并保存"});
+   if(!closed)Send(new{type="saved",scope="cursor",message=preview?"预览中 · 不改变系统鼠标":"鼠标设置已应用并保存"});
   }catch(Exception ex){if(!closed)Send(new{type="error",message=ex.Message});}
   finally{cursorSettingsBusy=false;if(!closed)Send(new{type="cursor-settings",busy=false,settings=state.cursor,scale=state.cursorScale});}
  }
@@ -160,7 +160,7 @@ internal sealed class FileShelf : Form {
   }catch{if(expanded&&mode=="notes"&&!noteConflict){noteConflict=true;Send(new{type="error",message="随手记暂时无法同步，当前草稿已保留。"});}}
  }
  void SaveNote(string value){
-  try{noteRevision=CompanionContent.SaveNoteFile(NotesPath,value,noteSource,noteRevision);noteSource=value;noteDirty=false;noteConflict=false;Send(new{type="saved",message="已保存到原有随手记"});}
+  try{noteRevision=CompanionContent.SaveNoteFile(NotesPath,value,noteSource,noteRevision);noteSource=value;noteDirty=false;noteConflict=false;Send(new{type="saved",scope="notes",text=value,message="已保存到原有随手记"});}
   catch(CompanionContentConflictException){noteConflict=true;Send(new{type="error",message="随手记已在其他入口更新，当前草稿已保留。请复制草稿到记事本合并后再保存。"});}
  }
  void Home(){generation++;path="";query="";offered.Clear();var entries=new List<ShelfEntry>();
@@ -181,7 +181,7 @@ internal sealed class FileShelf : Form {
   if(action=="note-dirty"&&!preview){noteDirty=true;return;}
   if(action=="pin"&&expanded){pinned=true;return;}
   if(!preview&&action=="hover-mode"&&value=="manage")return;
-  if(!preview&&(action=="mode"||action=="pin-mode")&&value=="manage"){SetExpanded(false);File.WriteAllText(Path.Combine(root,"workspace.request"),"settings");return;}
+  if(!preview&&(action=="mode"||action=="pin-mode")&&value=="manage"){SetExpanded(false);File.WriteAllText(Path.Combine(root,"workspace.request"),"components");return;}
   if((action=="hover-mode"||action=="pin-mode")&&(value=="manage"||Array.IndexOf(CardNames,value)>=0&&!state.hiddenCards.Contains(value))){mode=value;SetExpanded(true,action=="pin-mode");return;}
   if(action=="mode"&&(value=="manage"||Array.IndexOf(CardNames,value)>=0&&!state.hiddenCards.Contains(value))){if(expanded&&mode==value)SetExpanded(false);else{mode=value;SetExpanded(true);}return;}
   if(action=="toggle"){SetExpanded(!expanded);return;}if(action=="close"){SetExpanded(false);return;}

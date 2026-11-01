@@ -15,7 +15,7 @@ function Initialize()
   elseif command=='!ShowMeter' then shown[meter]=true elseif command=='!HideMeter' then shown[meter]=false
   elseif command=='!UpdateMeter' then updates=updates+1 elseif command=='!Redraw' then redraws=redraws+1 end
  end}
- local originalTime=os.time;local fakeTime=2000000000;os.time=function()return fakeTime end
+ local originalTime,originalClock=os.time,os.clock;local fakeTime,fakeClock,frameStep=2000000000,0,.016;os.time=function()return fakeTime end;os.clock=function()fakeClock=fakeClock+frameStep;return fakeClock end
  local ok,err=pcall(function()
   dofile(script);Initialize()
   write('dock-state.txt','p1\tVGVzdA==\tVGVzdA==\t1\t0\t1\t0\n')
@@ -43,19 +43,37 @@ function Initialize()
   SetIconOpacity(0);fakeTime=fakeTime+1
   write('dock-state.txt','p1\tVGVzdA==\tVGVzdA==\t1\t0\t1\t0\np2\tTmV4dA==\tVGVzdA==\t0\t0\t1\t0\n');Update()
   check(options['Icon2.ImageAlpha']=='0','newly loaded icons inherit the current hidden opacity')
+  check(math.abs((items[1].cx+items[2].cx)/2-tonumber(vars.DockWidth)/2)<.001,'an all-pinned row is centered before magnification')
   SetIconOpacity(255);Hover(1);for i=1,12 do Update() end
-  check(options['Hit1.ToolTipHidden']=='0' and options['Icon1.ToolTipHidden']=='1' and options['Icon1.ToolTipText']=='','only the hovered hit meter owns a tooltip')
-  check(tonumber(options['Icon1.W'])>48 and tonumber(options['Icon1.Y'])<84-tonumber(options['Icon1.W']),'hover still enlarges and bounces the visible icon')
-  Hover(2);check(options['Hit1.ToolTipHidden']=='1' and options['Hit2.ToolTipHidden']=='0','moving to another icon immediately clears the old tooltip')
+  check(tooltipIndex==1 and options['Hit1.ToolTipHidden']=='1' and options['Icon1.ToolTipHidden']=='1' and options['Icon1.ToolTipText']=='','only the hovered icon owns the native capsule, without duplicate Rainmeter tooltips')
+  check(tonumber(options['Icon1.W'])>48 and tonumber(options['Icon1.Y'])<84-tonumber(options['Icon1.W']),'hover produces a raised magnification wave')
+  check(tonumber(options['Icon2.W'])>48,'neighboring icons participate in the magnification wave')
+  Pointer(items[1].cx/tonumber(vars.DockWidth));for i=1,60 do Update() end
+  check(tonumber(options['Icon1.W'])>=80,'wave crest reaches a clearly visible magnification')
+  local center=waveX;Pointer((items[1].cx+cell*.2)/tonumber(vars.DockWidth));Update()
+  check(waveX>center and waveX<items[1].cx+cell*.2,'pointer movement inside one icon moves the wave continuously')
+  Pointer(-1)
+  local prior=sizes[1];Hover(2);Update();check(math.abs(sizes[1]-prior)<8,'reversing the wave continues from its current size')
+  Hover(0);for i=1,120 do Update() end;check(tonumber(options['Icon1.W'])==48 and tonumber(options['Icon2.W'])==48,'leaving settles every icon to its original size')
+  Hover(2);check(tooltipIndex==2 and options['Hit1.ToolTipHidden']=='1' and options['Hit2.ToolTipHidden']=='1','moving to another icon immediately clears the old tooltip')
   Press(2);check(options['Hit2.ToolTipHidden']=='1','pressing clears the tooltip before launch or drag')
   Hover(2);fakeTime=fakeTime+1;write('dock-state.txt','p1\tVGVzdA==\tVGVzdA==\t1\t0\t1\t0\n');Update()
   check(hover==0 and options['Hit2.ToolTipHidden']=='1' and options['Hit2.ToolTipText']=='','removing a hovered entry clears tooltip text and identity')
+  Hover(1);for i=1,80 do Update() end;check(math.abs(items[1].drawX-tonumber(vars.DockWidth)/2)<1,'a single magnified icon remains centered')
   Hover(1);Hover(0);check(options['Hit1.ToolTipHidden']=='1','leaving the Dock clears the tooltip')
   fakeTime=fakeTime+1;write('dock-state.txt','p1\tVGVzdA==\tVGVzdA==\t1\t0\t1\t1\n');Update()
   check(tonumber(options['Icon1.Y'])<84-tonumber(options['Icon1.W']),'application attention keeps its bounce')
   fakeTime=fakeTime+4;write('dock-lyrics.txt',fakeTime+3 ..'|1|1\nYQ==\nYg==\n');Update()
   check(options['Icon1.ImageAlpha']=='255','orphaned reduced-motion lyric files cannot leave icons hidden')
+  local rows={};for i=1,20 do rows[#rows+1]='p'..i..'\tVGVzdA==\tVGVzdA==\t1\t0\t'..(i<=10 and '1' or '0')..'\t0\n' end;write('dock-state.txt',table.concat(rows))
+  local function sample(step,count)frameStep=step;Initialize();Update();Hover(10);Pointer(items[10].cx/tonumber(vars.DockWidth));for i=1,count do Update() end;return sizes[10],waveAmount end
+  local fast,fastAmount=sample(.008,25);local slow,slowAmount=sample(.02,10)
+  check(math.abs(fast-slow)<1.2 and math.abs(fastAmount-slowAmount)<.00001,'wave timing stays consistent at 125 and 50 updates per second')
+  frameStep=.016;local startDivider=tonumber(options['Divider.X']);Pointer(items[11].cx/tonumber(vars.DockWidth));Hover(11);local clear=true
+  for i=1,80 do Update();local x=tonumber(options['Divider.X']);clear=clear and x>items[10].drawX+sizes[10]/2 and x<items[11].drawX-sizes[11]/2 end
+  check(clear and math.abs(startDivider-tonumber(options['Divider.X']))>1,'divider follows the breathing gap without crossing enlarged icons')
+  local priorElapsed=elapsed;frameStep=-1;Update();check(elapsed>priorElapsed and sizes[11]==sizes[11],'clock overflow retains a finite animation cadence');frameStep=.016
  end)
  if not ok then report:write('ERROR '..tostring(err)..'\n')else report:write('Completed '..checks..' native Lua checks.\n')end
- report:close();os.time=originalTime;SKIN=nativeSkin;Update=function()return 0 end
+ report:close();os.time=originalTime;os.clock=originalClock;SKIN=nativeSkin;Update=function()return 0 end
 end

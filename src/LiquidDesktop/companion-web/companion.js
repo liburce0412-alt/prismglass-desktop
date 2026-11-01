@@ -11,7 +11,9 @@
   var pointerSamples = [], pointerActions = [], pointerHeld = false, pointerDragWanted = false, pointerLastSent = 0, pointerLastTap = null, pointerSpeed = 1, pointerNatural = true, wheelContact = null;
   var powerTicket = null, powerBusy = false, powerError = '', controlsVersion = 0, resumePage = '', resumeScene = 'auto', volumeEditing = false;
   var powerNames = { lock: '锁定', sleep: '睡眠', restart: '重启', shutdown: '关机' };
-  var keyboardComposing = false, keyboardSending = false;
+  var directContact = null, directPosition = null, offlineText = null, keyboardRecovered = false;
+  var nativeTouches = {}, touchFrames = [], touchGeometry = '', touchScreen = '';
+  var keyboardComposing = false, keyboardSending = false, pointerRequest = null, pointerRequestKind = '';
   var remoteKeys = Array.prototype.slice.call(document.querySelectorAll('[data-remote-key]'));
   var actionButtons = Array.prototype.slice.call(document.querySelectorAll('[data-action]'));
   var privateViews = Array.prototype.slice.call(document.querySelectorAll('.private-view'));
@@ -67,6 +69,8 @@
   }
 
   function clearPrivate(keepDraft, keepPairInput) {
+    if (keepDraft === true) { if (session && session.csrf && permission('keyboard') && $('screen-text').value) offlineText = { csrf: session.csrf, text: $('screen-text').value }; } else offlineText = null;
+    keyboardRecovered = false;
     $('screen-text').value = ''; keyboardComposing = false; keyboardSending = false; keyboardPanel(false);
     if (window.PrismCompanionScan) window.PrismCompanionScan.stop();
     volumeEditing = false;
@@ -111,6 +115,7 @@
     document.body.dataset.music = 'quiet'; feedback('', false); showPage('home');
   }
   function restoreDraft() {
+    if (offlineText) { if (session && session.csrf === offlineText.csrf && permission('keyboard')) { $('screen-text').value = offlineText.text; keyboardRecovered = true; keyboardStatus('已恢复草稿，请先核对电脑后再发送。', true); } offlineText = null; }
     if (!offlineDraft) return;
     if (!permission('notes')) delete offlineDraft.note;
     else if (offlineDraft.note && (state.notes || {}).available) {
@@ -451,6 +456,8 @@
     else text(id, error.message || '操作未完成，请重新操作。');
   }
   function stopPointer(notify) {
+    nativeTouches = {}; touchFrames = []; touchGeometry = touchScreen = '';
+    directContact = null; directPosition = null;
     keyboardSending = false;
     wheelContact = null; $('pointer-wheel').dataset.active = 'false'; $('pointer-wheel').setAttribute('aria-disabled', 'true'); $('wheel-up').disabled = $('wheel-down').disabled = true;
     var lease = pointerLease; ++pointerGeneration; pointerLease = ''; pointerSeq = 0; pointerExpires = 0; pointerBusy = false; fingers = {}; gesture = null; pointerDelta = null; pointerSamples = []; pointerActions = []; pointerHeld = false; pointerDragWanted = false; pointerLastTap = null; clearTimeout(pointerTimer); pointerTimer = 0;
@@ -460,15 +467,17 @@
     if (lease && session) releasePointerLease(lease, session.csrf);
     renderKeyboard();
   }
-  function keyboardStatus(message, notice) { text('keyboard-status', message); $('keyboard-status').dataset.notice = String(!!notice); if (window.PrismCompanionScreen) window.PrismCompanionScreen.layout(); }
+  function keyboardStatus(message, notice) { text('screen-text-send', keyboardSending ? '发送中…' : message === '文字已发送。' ? '已发送' : '发送'); text('keyboard-status', message); $('keyboard-status').dataset.notice = String(!!notice); if (window.PrismCompanionScreen) window.PrismCompanionScreen.layout(); }
   function keyboardPanel(open) { if (!open) $('screen-text').blur(); document.body.dataset.screenKeyboard = String(open); $('screen-keyboard').hidden = $('screen-keyboard-bar').hidden = !open; $('screen-keyboard-toggle').setAttribute('aria-expanded', String(open)); text('screen-keyboard-toggle', open ? '收起键盘' : '键盘'); if (window.PrismCompanionScreen) { if (open) window.PrismCompanionScreen.closeTools(); window.PrismCompanionScreen.layout(); } }
   $('screen-keyboard-close').onclick = function () { keyboardPanel(false); $('screen-keyboard-toggle').focus(); };
   function renderKeyboard() {
     var allowed = permission('keyboard'), ready = allowed && !!pointerLease && permission('pointer') && page === 'pointer' && !document.hidden;
+    $('pointer-hardware').disabled = !ready; if (!ready) $('pointer-hardware').checked = false;
+    $('screen-touch-toggle').disabled = !permission('pointer') || pointerBusy && !pointerLease; text('screen-touch-toggle', pointerLease ? '停止触控' : '启用触控'); $('screen-touch-toggle').setAttribute('aria-pressed', String(!!pointerLease)); $('screen-quick-right').disabled = !pointerLease;
     $('screen-keyboard-toggle').disabled = !ready; $('screen-text').disabled = !ready; $('screen-text-send').disabled = !ready || keyboardSending;
     remoteKeys.forEach(function (button) { button.disabled = !ready || keyboardSending; });
-    if (!allowed) { $('screen-text').value = ''; keyboardPanel(false); keyboardStatus('请在电脑允许此设备使用键盘。', true); }
-    else if (!ready) keyboardStatus('请先启用触控。', true);
+    if (!allowed) { keyboardRecovered = false; $('screen-text').value = ''; keyboardPanel(false); keyboardStatus('请在电脑允许此设备使用键盘。', true); }
+    else if (!ready) keyboardStatus(keyboardRecovered ? '草稿已保留，请核对电脑，再启用触控。' : '请先启用触控。', true);
     else if (!keyboardSending && $('keyboard-status').textContent.indexOf('启用') >= 0) keyboardStatus('输入将发送到电脑当前输入框。', false);
   }
   function releasePointerLease(lease, csrf) {
@@ -483,32 +492,37 @@
       pointerLease = result.leaseId; pointerExpires = result.expiresAt; pointerSeq = 0; pointerLastSent = Date.now(); queuePointer();
       $('pointer-wheel').dataset.active = 'true'; $('pointer-wheel').setAttribute('aria-disabled', 'false'); $('wheel-up').disabled = $('wheel-down').disabled = false;
       $('pointer-surface').dataset.active = 'true'; $('pointer-stop').disabled = $('pointer-left').disabled = $('pointer-right').disabled = false;
-      text('pointer-status', '已启用 · 单指移动，双击按住拖拽，双指轻点右键、上下滚动。');
+      text('pointer-status', $('pointer-mode').value === 'touch' ? '已启用原生触摸 · 最多双指，手势由电脑应用处理。' : $('pointer-mode').value === 'direct' ? '已启用 · 轻点目标，按住移动拖拽；右侧可滚动。' : '已启用 · 单指移动，双击按住拖拽，双指轻点右键、上下滚动。');
     } catch (error) { if (generation === pointerGeneration) { stopPointer(false); controlError(error, 'pointer-status'); } }
     finally { if (generation === pointerGeneration) { pointerBusy = false; $('pointer-enable').disabled = !!pointerLease || !permission('pointer'); renderKeyboard(); queuePointer(); } }
   }
-  async function sendPointer(kind, values) {
+  function sendPointer(kind, values) { var operation = performPointer(kind, values); if (pointerBusy) { pointerRequest = operation; pointerRequestKind = kind; } return operation; }
+  async function performPointer(kind, values) {
+    if ($('pointer-surface').dataset.recovering === 'true' && kind !== 'keepalive' && !(kind === 'drag' && values.phase === 'end')) { cancelPointerGesture(); return false; }
     if ((kind === 'text' || kind === 'key') && !permission('keyboard')) return false;
     if (!pointerLease || pointerBusy || !permission('pointer') || document.hidden || page !== 'pointer' && kind !== 'keepalive' && !(kind === 'drag' && values.phase === 'end')) return;
     if (Date.now() + clockOffset >= pointerExpires) { stopPointer(false); return; }
     var generation = pointerGeneration, body = { leaseId: pointerLease, seq: ++pointerSeq, kind: kind }; Object.keys(values).forEach(function (key) { body[key] = values[key]; }); pointerBusy = true; pointerLastSent = Date.now();
-    if (kind === 'drag' && values.phase === 'start') pointerHeld = true;
+    if ((kind === 'drag' || kind === 'point') && values.phase === 'start') pointerHeld = true;
     if (kind === 'drag' && values.phase === 'end') pointerHeld = false;
     try { var result = await request('/api/pointer', body, true); if (generation === pointerGeneration) { pointerExpires = result.expiresAt; return true; } }
     catch (error) { if (generation === pointerGeneration) { stopPointer(false); controlError(error, 'pointer-status'); } }
     finally { if (generation === pointerGeneration) { pointerBusy = false; queuePointer(); } }
   }
-  function pointerAction(kind, values) {
+  function pointerAction(kind, values, position) {
+    if (Object.keys(nativeTouches).length || touchFrames.length) return;
     if (!pointerLease || document.hidden || page !== 'pointer' && !(kind === 'drag' && values.phase === 'end')) return;
     if (pointerActions.length >= 4) { stopPointer(true); return; }
-    pointerActions.push({ kind: kind, values: values, at: Date.now() }); queuePointer();
+    pointerActions.push({ kind: kind, values: values, position: position, at: Date.now() }); queuePointer();
   }
   function endPointerDrag() {
     pointerDragWanted = false;
-    pointerActions = pointerActions.filter(function (action) { return action.kind !== 'drag' || action.values.phase !== 'start'; });
+    pointerActions = pointerActions.filter(function (action) { return (action.kind !== 'drag' && action.kind !== 'point') || action.values.phase !== 'start'; });
     if (pointerHeld && !pointerActions.some(function (action) { return action.kind === 'drag' && action.values.phase === 'end'; })) pointerAction('drag', { phase: 'end' });
   }
   function cancelPointerGesture() {
+    if (Object.keys(nativeTouches).length || touchFrames.length || pointerRequestKind === 'touch' && pointerBusy) { stopPointer(true); return; }
+    directContact = null; directPosition = null;
     fingers = {}; gesture = null; wheelContact = null; pointerDelta = null; pointerSamples = []; pointerActions = []; pointerLastTap = null;
     endPointerDrag(); queuePointer();
   }
@@ -532,26 +546,83 @@
   }
   function queuePointer() {
     if (!pointerLease || pointerBusy) return;
-    var delay = pointerActions.length || pointerSamples.length || pointerHeld || Object.keys(fingers).length || wheelContact ? 17 : 5000;
+    var delay = touchFrames.length || Object.keys(nativeTouches).length || pointerActions.length || pointerSamples.length || directPosition || pointerHeld || Object.keys(fingers).length || wheelContact ? 17 : 5000;
     if (pointerTimer && pointerTimerDelay <= delay) return;
     clearTimeout(pointerTimer); pointerTimerDelay = delay;
     pointerTimer = setTimeout(function () {
       pointerTimer = 0; if (!pointerLease || pointerBusy) return;
       if (Date.now() - pointerLastSent < 17) { queuePointer(); return; }
       if (Date.now() + clockOffset >= pointerExpires) { stopPointer(true); return; }
+      if (touchFrames.length) {
+        var frame = touchFrames.shift();
+        if (Date.now()-frame.at>200 || !validTouchFrame(frame)) { stopPointer(true); return; }
+        sendPointer('touch', {screenLease:frame.screen,contacts:frame.contacts}); return;
+      }
+      if (Object.keys(nativeTouches).length && Date.now()-pointerLastSent>=250) { queueTouchFrame(false); queuePointer(); return; }
       var action = pointerActions[0];
       while (action && Date.now() - action.at > 200 && !(action.kind === 'drag' && action.values.phase === 'end')) {
-        pointerActions.shift(); if (action.kind === 'drag') { stopPointer(true); return; } action = pointerActions[0];
+        pointerActions.shift(); if (action.kind === 'drag' || action.kind === 'point' && action.values.phase === 'start') { stopPointer(true); return; } action = pointerActions[0];
       }
       // Finish the latest movement before releasing a drag; no stale movement is replayed.
       var finishingDrag = action && action.kind === 'drag' && action.values.phase === 'end', scrolling = pointerDelta && pointerDelta.kind === 'scroll' || pointerSamples.length && pointerSamples[0].kind === 'scroll';
+      if ((!action || finishingDrag) && directPosition) {
+        var position = directPosition; directPosition = null;
+        if (pointerHeld && Date.now() - position.at <= 200) { sendDirectPosition(position); return; }
+      }
       var delta = !action || finishingDrag && !scrolling ? takePointerDelta() : null;
       if (delta) sendPointer(delta.kind, delta.values);
-      else if (action) { pointerActions.shift(); sendPointer(action.kind, action.values); }
-      else if (pointerHeld && pointerDragWanted && Date.now() - pointerLastSent >= 250) sendPointer('drag', { phase: 'hold' });
+      else if (action) { pointerActions.shift(); if (action.position) sendDirectPosition(action.position, action.values.phase); else sendPointer(action.kind, action.values); }
+      else if (pointerHeld && pointerDragWanted && Date.now() - pointerLastSent >= 250) { if (directContact) sendDirectPosition(directContact.last); else sendPointer('drag', { phase: 'hold' }); }
       else if (Date.now() - pointerLastSent >= 5000) sendPointer('keepalive', {});
       else queuePointer();
     }, delay);
+  }
+  function directLocation(event, geometry) {
+    var point = window.PrismCompanionScreen && window.PrismCompanionScreen.point(event.clientX, event.clientY);
+    return point && (!geometry || geometry === point.geometry) ? { x: event.clientX, y: event.clientY, geometry: point.geometry, at: Date.now() } : null;
+  }
+  function validTouchFrame(frame) {
+    return frame.positions.every(function (p) { var now=window.PrismCompanionScreen && window.PrismCompanionScreen.point(p.x,p.y);return now && now.geometry===frame.geometry; });
+  }
+  function queueTouchFrame(transition) {
+    if (!pointerLease) return;
+    var frame={contacts:[],positions:[],geometry:touchGeometry,screen:touchScreen,at:Date.now(),transition:transition};
+    var valid=Object.keys(nativeTouches).every(function (key) {
+      var p=nativeTouches[key],location=window.PrismCompanionScreen && window.PrismCompanionScreen.point(p.x,p.y);
+      if (!location || location.geometry!==touchGeometry) return false;
+      frame.contacts.push({id:p.id,x:location.command.x,y:location.command.y});frame.positions.push({x:p.x,y:p.y});return true;
+    });
+    if (!valid) { stopPointer(true); return; }
+    var last=touchFrames[touchFrames.length-1];
+    if (!transition && last && !last.transition) touchFrames[touchFrames.length-1]=frame;else touchFrames.push(frame);
+    if (touchFrames.length>8) { stopPointer(true); return; }queuePointer();
+  }
+  function nativeDown(event) {
+    if (!pointerLease || pointerHeld || pointerDragWanted || wheelContact || $('pointer-surface').dataset.recovering==='true') return;
+    event.preventDefault();var count=Object.keys(nativeTouches).length,location=window.PrismCompanionScreen && window.PrismCompanionScreen.point(event.clientX,event.clientY);
+    if (count>=2 || !location || count && location.geometry!==touchGeometry) { stopPointer(true); return; }
+    touchGeometry=location.geometry;touchScreen=location.command.screenLease;
+    var used=Object.keys(nativeTouches).map(function(key){return nativeTouches[key].id;});
+    nativeTouches[event.pointerId]={id:used.indexOf(0)<0?0:1,x:event.clientX,y:event.clientY};queueTouchFrame(true);
+    if ($('pointer-surface').setPointerCapture) try {$('pointer-surface').setPointerCapture(event.pointerId);}catch(_){stopPointer(true);}
+  }
+  function nativeMove(event) {var p=nativeTouches[event.pointerId];if(!p)return;event.preventDefault();p.x=event.clientX;p.y=event.clientY;queueTouchFrame(false);}
+  function sendDirectPosition(position, phase) {
+    var point = window.PrismCompanionScreen && window.PrismCompanionScreen.point(position.x, position.y);
+    if (!point || point.geometry !== position.geometry) { cancelPointerGesture(); return; }
+    point.command.phase = phase || 'move'; sendPointer('point', point.command);
+  }
+  function directMove(event) {
+    if (!directContact || directContact.id !== event.pointerId) return;
+    var position = directLocation(event, directContact.geometry);
+    if (!position) { cancelPointerGesture(); return; }
+    directContact.last = position;
+    if (!directContact.drag && Math.abs(event.clientX-directContact.x)+Math.abs(event.clientY-directContact.y)>12) {
+      directContact.drag = true; pointerDragWanted = true;
+      pointerAction('point', {phase:'start'}, directContact.origin);
+      if (!directContact) return;
+    }
+    if (directContact.drag) { directPosition = position; queuePointer(); }
   }
   function pointerMove(event) {
     var finger = fingers[event.pointerId]; if (!pointerLease || !finger) return; event.preventDefault();
@@ -660,27 +731,46 @@
   window.addEventListener('companion-widget-navigate', function (event) { if (event.detail && event.detail.page === 'work') showPage('work'); });
   window.addEventListener('companion-widget-immerse', function () { setPresentation(true); });
   $('home-focus').onclick = function () { showPage('work'); };
+  $('screen-touch-toggle').onclick = function () { if (pointerLease) stopPointer(true); else beginPointer(); };
+  $('screen-quick-right').onclick = function () { if (pointerLease) clickPointer('right'); };
+  window.PrismCompanionInput = { stop: stopPointer };
   $('pointer-enable').onclick = beginPointer; $('pointer-stop').onclick = function () { stopPointer(true); };
   $('screen-keyboard-toggle').onclick = function () { if (!permission('keyboard') || !pointerLease) return; var open = $('screen-keyboard').hidden; keyboardPanel(open); if (open) $('screen-text').focus(); };
+  $('screen-text').oninput = function () { keyboardRecovered = false; if (!keyboardSending) text('screen-text-send', '发送'); };
   $('screen-text').oncompositionstart = function () { keyboardComposing = true; };
   $('screen-text').oncompositionend = function () { keyboardComposing = false; };
   $('screen-text-form').onsubmit = async function (event) {
     event.preventDefault(); if (keyboardComposing || keyboardSending || !permission('keyboard') || !pointerLease) return;
     var input = $('screen-text'), value = input.value;
-    if (!value || value.length > 256 || /[\x00-\x1f\x7f-\x9f]/.test(value)) { keyboardStatus('请输入 1–256 个字符；换行请用 Enter 按键。', true); return; }
-    if (pointerBusy || pointerHeld || pointerDragWanted) { keyboardStatus('请先结束当前触控操作。', true); return; }
+    if (!value || value.length > 1024 || /[\x00-\x1f\x7f-\x9f]/.test(value)) { keyboardStatus('请输入最多 1024 个字符；当前不支持段落，电脑回车是独立操作。', true); return; }
+    if (Object.keys(nativeTouches).length || touchFrames.length || pointerHeld || pointerDragWanted || pointerBusy && pointerRequestKind !== 'keepalive') { keyboardStatus('请先结束当前触控操作。', true); return; }
     var generation = pointerGeneration, authGeneration = epoch; keyboardSending = true; renderKeyboard(); keyboardStatus('正在发送文字…', false);
+    if (pointerBusy) {
+      text('screen-text-send', '等待发送'); await pointerRequest;
+      if (generation !== pointerGeneration || authGeneration !== epoch || !pointerLease || !permission('keyboard')) return;
+      if (pointerBusy || pointerHeld || pointerDragWanted || gesture || document.hidden || page !== 'pointer') { keyboardSending = false; renderKeyboard(); keyboardStatus('尚未发送，请结束当前操作后重试。', true); return; }
+      keyboardStatus('正在发送文字…', false);
+    }
     var sent = await sendPointer('text', { text: value });
     if (generation !== pointerGeneration || authGeneration !== epoch) { if (authGeneration === epoch && permission('keyboard') && input.value === value) keyboardStatus('未确认发送，请查看电脑后再操作。', true); return; }
-    keyboardSending = false; if (sent && input.value === value) input.value = ''; renderKeyboard();
+    keyboardSending = false; if (sent && input.value === value) { input.value = ''; keyboardRecovered = false; } renderKeyboard();
     if (permission('keyboard') && pointerLease) keyboardStatus(sent ? '文字已发送。' : '未确认发送，请查看电脑后再操作。', !sent);
   };
   remoteKeys.forEach(function (button) { button.onclick = function () { if (!permission('keyboard') || keyboardSending) return; endPointerDrag(); pointerAction('key', { key: button.getAttribute('data-remote-key') }); }; });
   $('pointer-speed').oninput = function () { var value = Number(this.value); if (!isFinite(value)) value = 100; value = Math.max(50, Math.min(200, value)); pointerSpeed = value / 100; text('pointer-speed-value', value + '%'); pointerDelta = null; pointerSamples = []; };
   $('pointer-natural').checked = true; $('pointer-natural').onchange = function () { pointerNatural = this.checked; pointerDelta = null; pointerSamples = []; };
   ['left', 'right'].forEach(function (button) { $('pointer-' + button).onclick = function () { clickPointer(button); }; });
+  $('pointer-mode').onchange = function () { cancelPointerGesture(); var description = this.value === 'touch' ? '原生触摸：点按、长按与双指缩放；具体手势由电脑应用支持' : this.value === 'direct' ? '电脑画面：轻点目标，按住移动拖拽；滚动使用右侧滚动条' : '电脑触控板：单指移动，轻点左键，双指滚动'; $('pointer-surface').setAttribute('aria-label', description); if (pointerLease) text('pointer-status', description); };
   $('pointer-surface').onpointerdown = function (event) {
-    if (!pointerLease || wheelContact) return; event.preventDefault();
+    if ($('pointer-mode').value === 'touch') {nativeDown(event);return;}
+    if ($('pointer-mode').value === 'direct') {
+      if (!pointerLease || directContact || pointerHeld || pointerDragWanted) { cancelPointerGesture(); return; } event.preventDefault();
+      var point = directLocation(event);
+      if (point) { if ($('pointer-hardware').checked) this.focus(); directContact = { id: event.pointerId, x: point.x, y: point.y, at: Date.now(), geometry: point.geometry, origin: point, last: point, drag: false }; if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { cancelPointerGesture(); } }
+      else text('pointer-status', '请先恢复实时画面，再点选画面内的位置。'); return;
+    }
+
+    if (!pointerLease || wheelContact || this.dataset.recovering === 'true') return; event.preventDefault();
     fingers[event.pointerId] = { x: event.clientX, y: event.clientY };
     if (Object.keys(fingers).length > 2) { cancelPointerGesture(); return; }
     if (!gesture) {
@@ -691,13 +781,31 @@
     if (Object.keys(fingers).length > 1) { gesture.multi = true; gesture.drag = false; pointerLastTap = null; endPointerDrag(); pointerDelta = null; pointerSamples = []; }
     if (this.setPointerCapture) try { this.setPointerCapture(event.pointerId); } catch (_) { cancelPointerGesture(); }
   };
-  $('pointer-surface').onpointermove = pointerMove;
-  $('pointer-surface').onpointerup = function (event) { pointerEnd(event, false); };
-  $('pointer-surface').onpointercancel = function (event) { pointerEnd(event, true); };
-  $('pointer-surface').onlostpointercapture = function (event) { if (fingers[event.pointerId]) cancelPointerGesture(); };
+  $('pointer-surface').onpointermove = function (event) { if ($('pointer-mode').value === 'touch') nativeMove(event);else if ($('pointer-mode').value !== 'direct') pointerMove(event); else directMove(event); };
+  $('pointer-surface').onpointerup = function (event) {
+    if ($('pointer-mode').value === 'touch') {if(!nativeTouches[event.pointerId])return;nativeMove(event);delete nativeTouches[event.pointerId];queueTouchFrame(true);return;}
+    if ($('pointer-mode').value === 'direct') { var contact = directContact; if (!contact || contact.id !== event.pointerId) return;
+      directMove(event); directContact = null;
+      if (contact.drag) { endPointerDrag(); if (!pointerHeld) directPosition = null; }
+      else if (Date.now()-contact.at<=600) { var point = directLocation(event, contact.geometry); if (point && !pointerHeld && !pointerDragWanted) pointerAction('point', {phase:'click'}, point); } return;
+    } pointerEnd(event, false);
+  };
+  $('pointer-surface').onpointercancel = function (event) { if (nativeTouches[event.pointerId] || directContact) cancelPointerGesture(); else pointerEnd(event, true); };
+  $('pointer-surface').onlostpointercapture = function (event) { if (nativeTouches[event.pointerId] || directContact || fingers[event.pointerId]) cancelPointerGesture(); };
   window.addEventListener('blur', function () { cancelPointerGesture(); });
   $('pointer-surface').oncontextmenu = function (event) { event.preventDefault(); };
   $('pointer-surface').onkeydown = function (event) {
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+    if ($('pointer-hardware').checked && permission('keyboard') && pointerLease) {
+      if (event.key === 'Tab' && event.shiftKey) return;
+      var keys = { Escape:'escape', Tab:'tab', Enter:'enter', Backspace:'backspace', ArrowLeft:'left', ArrowUp:'up', ArrowRight:'right', ArrowDown:'down' };
+      var shortcut = event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey ? {a:'select-all',c:'copy',v:'paste',z:'undo'}[event.key.toLowerCase()] : null;
+      var key = shortcut || (!event.ctrlKey && !event.altKey && !event.metaKey ? keys[event.key] : null);
+      if (key) { event.preventDefault(); pointerAction('key',{key:key}); }
+      else if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1 && event.key.charCodeAt(0) >= 32) { event.preventDefault(); pointerAction('text',{text:event.key}); }
+      return;
+    }
+
     if (event.key === 'Escape') { stopPointer(true); return; }
     var moves = { ArrowLeft: [-20, 0], ArrowRight: [20, 0], ArrowUp: [0, -20], ArrowDown: [0, 20] }, move = moves[event.key];
     if (move) { event.preventDefault(); addPointerDelta('move', move[0], move[1]); }

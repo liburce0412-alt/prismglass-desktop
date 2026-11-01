@@ -2,8 +2,15 @@ using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
+using System.Runtime.InteropServices;
 
 internal sealed class CursorPreferences {
+ [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint param,IntPtr data,uint flags);
+ internal static bool Restore(string directory,Func<bool> restore=null){
+  string marker=Path.Combine(directory,"cursor-theme.active");if(!File.Exists(marker))return true;
+  if(!(restore==null?SystemParametersInfo(0x57,0,IntPtr.Zero,0):restore()))return false;
+  File.Delete(marker);return true;
+ }
  public string style="rounded-dark",trailStyle="particles",trailColor="#79C3E3";
  public bool trailEnabled=true;
  public static readonly string[] Styles={"rounded-dark","rounded-light","macos","windows"};

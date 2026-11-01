@@ -14,6 +14,7 @@ internal sealed class DesktopPreferenceState {
  public int glassOpacity=100,textScale=100,gridColumns=6,dockIconSize=48;
  public bool manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true,welcomeShown;
  public List<MonitorPreferences> monitors=new List<MonitorPreferences>();
+ public List<string> desktopWidgets=new List<string>();
 }
 
 // All settings writers share this lock; unrelated shelf data is merged from its latest file.
@@ -33,6 +34,7 @@ internal sealed class DesktopPreferences {
  readonly string root,file;readonly JavaScriptSerializer json=new JavaScriptSerializer();string observed="",loadError="";
  static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
+ static readonly string[] DesktopCards={"Weather","System","Clock","Calendar","Battery","Folders","Music","Focus","Tools"};
  public DesktopPreferenceState Current {get;private set;}
  public long Revision {get;private set;}
  public bool IsFirstRun {get;private set;}
@@ -53,6 +55,7 @@ internal sealed class DesktopPreferences {
   }catch(Exception ex){loadError=ex.Message;if(Revision==0)Revision=1;}
  }
  static void Validate(DesktopPreferenceState value){
+  value.desktopWidgets=Cards(value.desktopWidgets??new List<string>(),DesktopCards);
   if(value.theme!="Sky"&&value.theme!="Astro")throw new ArgumentException("未知主题。");Number(value.glassOpacity,60,100);Number(value.textScale,90,130);Number(value.gridColumns,4,10);Number(value.dockIconSize,32,72);HotkeyBinding.Parse(value.hotkey);
   if(value.monitors==null)value.monitors=new List<MonitorPreferences>();if(value.monitors.Count>32)throw new ArgumentException("显示器配置过多。");var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);foreach(var monitor in value.monitors){if(monitor==null||String.IsNullOrWhiteSpace(monitor.id)||monitor.id.Length>512||!seen.Add(monitor.id))throw new ArgumentException("显示器标识无效或重复。");Number(monitor.dockOffset,0,200);}
  }
@@ -78,6 +81,7 @@ internal sealed class DesktopPreferences {
     case "manualPaused":next.manualPaused=Flag(pair.Value);break;case "reducedMotion":next.reducedMotion=Flag(pair.Value);break;case "pauseOnBattery":next.pauseOnBattery=Flag(pair.Value);break;case "pauseOnPowerSaver":next.pauseOnPowerSaver=Flag(pair.Value);break;case "pauseOnRemote":next.pauseOnRemote=Flag(pair.Value);break;case "showLabels":next.showLabels=Flag(pair.Value);break;case "dockAutoHide":next.dockAutoHide=Flag(pair.Value);break;
     case "monitors":next.monitors=json.Deserialize<List<MonitorPreferences>>(json.Serialize(pair.Value));break;
     case "welcomeShown":next.welcomeShown=Flag(pair.Value);break;
+    case "desktopWidgets":next.desktopWidgets=Cards(pair.Value,DesktopCards);break;
     case "hiddenCards":case "hiddenLeftCards":case "cardOrder":case "leftCardOrder":bool right=pair.Key=="hiddenCards"||pair.Key=="cardOrder";string path=Path.Combine(root,right?"shelf-state.json":"sidebar-visibility.json");string staged;var map=DesktopSettingsFiles.Map(writes.TryGetValue(path,out staged)?staged:DesktopSettingsFiles.Read(path));map[pair.Key]=pair.Key.EndsWith("Order",StringComparison.Ordinal)?Order(pair.Value,right?RightCards:LeftCards):Cards(pair.Value,right?RightCards:LeftCards);if(pair.Key=="hiddenCards"&&((List<string>)map[pair.Key]).Count==RightCards.Length)throw new ArgumentException("右侧至少保留一个入口。");writes[path]=json.Serialize(map);break;
     default:throw new ArgumentException("未知设置项："+pair.Key);
    }}Validate(next);

@@ -36,6 +36,7 @@ internal static class TestWorkspaceUi {
   await Eval("search.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");await Assert("document.querySelector('[data-app-id=f1]')!==null","Escape exits folder before closing workspace");
   await Eval("document.querySelector('[data-app-id=lost]').click()");await Assert("document.querySelector('[role=dialog]')!==null","missing entry opens a repair menu");
   await Eval("PrismApps.cancel();PrismWorkspace.open('settings')");await Task.Delay(150);await Capture("workspace-settings");
+  await Assert("[...document.querySelectorAll('#settings-nav .control-icon use')].length===14&&[...document.querySelectorAll('#settings-nav .control-icon use')].every(e=>e.getBBox().width>0)","all settings navigation icons resolve to the shared vector asset");
   await Assert("document.querySelector('#settings-page').hidden===false&&document.querySelector('[data-setting=theme]').value==='Astro'","settings navigation and active theme match state");
   await Eval("PrismPreferences.apply({...fixture,textScale:120});window.baseText=parseFloat(getComputedStyle(document.querySelector('#settings-title')).fontSize)");await Task.Delay(80);
   await Eval("window.scaledText=parseFloat(getComputedStyle(document.querySelector('#settings-title')).fontSize);PrismPreferences.apply({...fixture,textScale:120})");await Task.Delay(80);
@@ -45,8 +46,12 @@ internal static class TestWorkspaceUi {
   await Assert("document.querySelector('#glass').toDataURL()!==fullGlass&&getComputedStyle(document.querySelector('#settings-title')).opacity==='1'","material strength changes pixels without fading text");
   await Eval("PrismPreferences.apply(fixture)");
   await Eval("PrismWorkspace.change('glassOpacity',75);PrismWorkspace.sendPatch()");await Assert("PrismWorkspace.state.sent.glassOpacity===75","settings change waits for save acknowledgement");
-  await Message("{type:'settings',snapshot:{...fixture,revision:2,glassOpacity:100}}");await Message("{type:'error',message:'冲突：请重试'}");
+  await Message("{type:'settings',snapshot:{...fixture,revision:2,glassOpacity:100}}");await Message("{type:'error',scope:'settings',message:'冲突：请重试'}");
   await Assert("PrismWorkspace.state.pending.glassOpacity===75&&PrismWorkspace.state.blocked","conflict retains the user draft");
+  await Message("{type:'apps-loading',loading:true}");await Message("{type:'error',scope:'apps',message:'应用刷新失败'}");await Message("{type:'apps-loading',loading:false}");
+  await Assert("document.querySelector('#apps-feedback').textContent==='应用刷新失败'&&!document.querySelector('#retry-save').hidden&&document.querySelector('#workspace-status').textContent.includes('冲突')","refresh completion preserves its failure and settings retry");
+  await Message("{type:'error',scope:'startup',message:'启动设置失败'}");await Assert("document.querySelector('#workspace-status').textContent.includes('冲突')","unrelated error cannot replace unresolved settings failure");
+  await Message("{type:'saved',message:'其他操作完成'}");await Assert("!document.querySelector('#retry-save').hidden&&document.querySelector('#workspace-status').textContent.includes('冲突')","unrelated success cannot hide blocked save feedback");
   await Eval("document.querySelector('#workspace-status').click()");await Assert("__messages.some(m=>{try{let x=JSON.parse(m);return x.action==='settings'&&x.revision===2&&x.changes.glassOpacity===75}catch{return false}})","retry uses refreshed revision and preserved draft");
   await Message("{type:'settings',snapshot:{...fixture,revision:3,glassOpacity:75}}");await Message("{type:'saved',scope:'settings',message:'已保存'}");
   await Eval("document.querySelector('[data-page=launcher]').click();document.querySelector('#reset-page').click();PrismWorkspace.sendPatch()");
@@ -96,7 +101,7 @@ internal static class TestWorkspaceUi {
   await Eval("document.querySelector('[data-device=\"device:ipad-two\"]').click();document.querySelector('[data-device=\"device:ipad-one\"]').click()");
   await Assert("document.querySelector('[data-grant=pointer]').checked","switching device preserves the unsaved permission draft");
   await Eval("document.querySelector('#companion-grant-save').click();window.grantRequest=JSON.parse(__messages.at(-1))");
-  await Assert("grantRequest.action==='companion'&&grantRequest.command==='grant'&&grantRequest.id==='ipad-one'&&grantRequest.grants.pointer&&grantRequest.grants.music&&Object.keys(grantRequest.grants).length===9&&document.querySelector('#companion-grant-save').disabled","explicit save submits exact host ID and complete grants and immediately blocks duplicate saves");
+  await Assert("grantRequest.action==='companion'&&grantRequest.command==='grant'&&grantRequest.id==='ipad-one'&&grantRequest.grants.pointer&&grantRequest.grants.music&&Object.keys(grantRequest.grants).length===10&&grantRequest.grants.audio===false&&document.querySelector('#companion-grant-save').disabled","explicit save submits exact host ID and complete grants and immediately blocks duplicate saves");
   await Eval("PrismWorkspace.receive({type:'companion',value:{...companionFixture,notice:'设置未能保存，请重试。',error:true,result:{request:grantRequest.request,ok:false}}})");
   await Assert("document.querySelector('[data-grant=pointer]').checked&&!document.querySelector('#companion-grant-save').disabled&&document.querySelector('#companion-notice').textContent.includes('未能保存')","failed save retains draft and persistent retry guidance");
   await Eval("document.querySelector('#companion-grant-save').click();window.savedRequest=JSON.parse(__messages.at(-1));companionFixture.service.devices[0].grants.pointer=true;PrismWorkspace.receive({type:'companion',value:{...companionFixture,notice:'共享权限已更新',result:{request:savedRequest.request,ok:true}}})");
@@ -113,11 +118,84 @@ internal static class TestWorkspaceUi {
   await Assert("document.querySelector('#companion-permission-title').textContent==='选择一台设备'&&[...document.querySelectorAll('[data-grant]')].every(i=>!i.checked&&i.disabled)&&document.querySelector('#companion-pair').textContent==='连接并生成配对二维码'","first connection has no selected permissions and explains the connect-and-pair action");
   await Capture("workspace-companion-first-use");
   await Assert("__errors.length===0","companion settings runs with no JavaScript errors");
+  await Eval("PrismWorkspace.receive({type:'settings',snapshot:{...fixture,desktopWidgets:[]}});document.querySelector('[data-page=components]').click()");
+  await Assert("document.querySelectorAll('[data-widget]').length===9&&[...document.querySelectorAll('[data-widget]')].every(x=>!x.checked)","all nine retained desktop cards are present and off by default");
+  await Eval("document.querySelector('[data-widget=Clock]').click();PrismWorkspace.sendPatch()");
+  await Assert("PrismWorkspace.state.sent.desktopWidgets.join(',')==='Clock'","independent clock selection submits through existing settings acknowledgement flow");
+  await Message("{type:'saved',scope:'settings'}");
+  await Eval("PrismWorkspace.receive({type:'settings',snapshot:{...fixture,desktopWidgets:[]}})");
+  await Eval("document.querySelector('[data-page=npu]').click()");await Assert("document.querySelector('#npu-capture').disabled&&document.querySelector('#npu-result').readOnly","NPU text extraction starts disabled until configured and keeps results read-only");
+  await Message("{type:'npu-status',value:{available:true,message:'本机 NPU 已配置'}}");
+  await Eval("window.npuBefore=__messages.length;document.querySelector('#npu-capture').click();document.querySelector('#npu-capture').click()");
+  await Assert("document.querySelector('#npu-capture').disabled&&__messages.slice(npuBefore).filter(m=>{try{return JSON.parse(m).action==='npu-capture'}catch{return false}}).length===1","NPU capture is explicit and cannot be submitted twice while busy");
+  await Message("{type:'npu-result',text:'',busy:false,message:'模型暂不可用',error:true}");await Assert("!document.querySelector('#npu-capture').disabled&&document.querySelector('#npu-status').dataset.error==='true'","NPU failure stays by its action and permits retry");
+  await Message("{type:'npu-result',text:'冰川测试124\\n<script>bad()</script>',busy:false,message:'已提取 · NPU'}");
+  await Assert("document.querySelector('#npu-result').value.includes('<script>')&&document.querySelector('#npu-result').value.includes('冰川测试124')&&!document.querySelector('#npu-copy').disabled&&__errors.length===0","recognized text is displayed literally and enables an explicit copy action");
+  await Capture("workspace-npu-result");
+  await Eval("document.querySelector('#npu-copy').click()");await Assert("JSON.parse(__messages.at(-1)).action==='npu-copy'&&!('text' in JSON.parse(__messages.at(-1)))","copy requests the host-owned result without accepting replacement text");
+  await Eval("document.querySelector('[data-page=appearance]').click();document.querySelector('[data-page=npu]').click()");await Assert("document.querySelector('#npu-result').value===''&&document.querySelector('#npu-copy').disabled","leaving text extraction clears private result state");
+  foreach(string theme in new[]{"Sky","Astro"}){
+   await Message("{type:'layout',width:1000,height:720,sceneWidth:1920,sceneHeight:1080,originX:460,originY:160,theme:'"+theme+"',paused:true,wallpaper:1}");
+   await Eval("PrismWorkspace.receive({type:'settings',snapshot:{...fixture,theme:'"+theme+"'}})");
+   foreach(string section in new[]{"welcome","startup","appearance","weather","components","launcher","dock","lyrics","shortcuts","displays","performance","npu","companion","updates"}){
+    await Eval("document.querySelector('[data-page="+section+"]').click();document.querySelector('.settings-scroll').scrollTop=0");await Task.Delay(80);
+    await Assert("(()=>{const s=document.querySelector('.settings-scroll'),n=document.querySelector('#settings-nav');return s.scrollWidth<=s.clientWidth+1&&n.scrollWidth<=n.clientWidth+1&&document.querySelector('#settings-title').textContent.trim()&&__errors.length===0})()","settings page fits without horizontal overflow in "+theme+" / "+section);
+    await Capture("settings-"+theme.ToLowerInvariant()+"-"+section);
+   }
+  }
+  int wallpaperVersion=10;
+  foreach(string background in new[]{"bright","dark","busy"}){
+   using(var bitmap=new Bitmap(1920,1080))using(var graphics=Graphics.FromImage(bitmap)){
+    graphics.Clear(background=="dark"?Color.FromArgb(4,5,12):Color.WhiteSmoke);
+    if(background=="busy")for(int y=0;y<1080;y+=64)for(int x=0;x<1920;x+=64)if((x/64+y/64)%2==0)graphics.FillRectangle(Brushes.MidnightBlue,x,y,64,64);
+    bitmap.Save(Path.Combine(root,"wallpaper.png"));
+   }
+   foreach(string theme in new[]{"Sky","Astro"}){
+    await Eval("PrismWorkspace.receive({type:'settings',snapshot:{...fixture,theme:'"+theme+"'}});PrismWorkspace.open('settings');document.querySelector('[data-page=appearance]').click()");
+    await Message("{type:'layout',width:1000,height:720,sceneWidth:1920,sceneHeight:1080,originX:460,originY:160,theme:'"+theme+"',paused:true,wallpaper:"+(++wallpaperVersion)+"}");await Task.Delay(180);
+    await Capture("wallpaper-"+background+"-"+theme.ToLowerInvariant());
+    await Assert("document.querySelector('#glass').width===innerWidth&&__errors.length===0&&!__messages.some(m=>typeof m==='string'&&m.startsWith('error:'))","wallpaper renderer remains healthy on "+background+" / "+theme);
+   }
+  }
+  form.ClientSize=new Size(560,420);
+  foreach(string theme in new[]{"Sky","Astro"}){
+   await Eval("PrismWorkspace.receive({type:'settings',snapshot:{...fixture,theme:'"+theme+"',textScale:130}})");
+   await Message("{type:'layout',width:560,height:420,sceneWidth:1920,sceneHeight:1080,originX:460,originY:160,theme:'"+theme+"',paused:true,wallpaper:"+wallpaperVersion+"}");
+   foreach(string section in new[]{"welcome","startup","appearance","weather","components","launcher","dock","lyrics","shortcuts","displays","performance","npu","companion","updates"}){
+    await Eval("document.querySelector('[data-page="+section+"]').click();document.querySelector('.settings-scroll').scrollTop=0");await Task.Delay(80);await Capture("compact-130-"+theme.ToLowerInvariant()+"-"+section);
+    await Assert("(()=>{const s=document.querySelector('.settings-scroll'),n=document.querySelector('#settings-nav');return s.scrollWidth<=s.clientWidth+1&&n.scrollWidth<=n.clientWidth+1&&__errors.length===0})()","minimum supported window and maximum text fit "+theme+" / "+section);
+   }
+  }
+  form.ClientSize=new Size(1000,720);
   await view.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("window.__glassCards=[];Object.defineProperty(window,'PrismGlassRenderer',{configurable:true,set(renderer){Object.defineProperty(window,'PrismGlassRenderer',{configurable:true,writable:true,value:(canvas,post,subscribe)=>renderer(canvas,post,receive=>subscribe(m=>{if(m.cards)window.__glassCards=m.cards;receive(m)}))})}})");
   view.Source=new Uri("https://prism-test.local/sidedock.html");for(int i=0;i<100;i++){await Task.Delay(80);if(await Eval("!!document.querySelector('#rail')&&document.readyState==='complete'")=="true")break;}
   await Message("{type:'layout',theme:'Astro',scale:1,x:0,y:0,width:1920,height:1080,paused:true,wallpaper:1}");await Message("{type:'visibility',hiddenLeftCards:[],leftCardOrder:['Life','Tools','System','Folders','Focus','Music','Weather','network']}");await Task.Delay(150);
   await Assert("document.querySelector('[data-widget=life]').getBoundingClientRect().top<document.querySelector('[data-widget=weather]').getBoundingClientRect().top&&document.querySelector('#capsule').style.order==='7'","left component ordering changes real rendered positions");
+  await Eval("document.querySelector('[data-widget=weather]').click()");await Message("{type:'dismiss'}");await Assert("document.querySelector('#dock').dataset.mode==='weather'","clicked left panel survives host dismissal");
+  await Eval("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',isComposing:true,bubbles:true}))");await Assert("document.querySelector('#dock').dataset.mode==='weather'","left IME Escape preserves panel");
+  await Eval("document.querySelector('#close-panel').click()");await Assert("document.activeElement===document.querySelector('[data-widget=weather]')&&document.querySelector('#dock').dataset.mode==='closed'","weather close restores its actual trigger without reopening");
+  await Message("{type:'layout',theme:'Sky',scale:1,x:0,y:0,width:1920,height:1080,paused:false,wallpaper:1}");
+  await Message("{type:'motion',paused:true}");await Task.Delay(60);await Message("{type:'motion',paused:false}");
+  await Eval("document.querySelector('[data-widget=weather]').click();window.leftOpening=null;(function frame(){const a=Number(document.querySelector('#detail').style.opacity);if(a>.1&&a<.9)leftOpening=getComputedStyle(document.querySelector('#widget-page')).visibility==='visible';else if(a>=.9)leftOpening=false;else requestAnimationFrame(frame)})();");await Task.Delay(100);
+  await Assert("leftOpening===true","left panel content fades with its opening glass instead of appearing at the end");
+  await Assert("(()=>{const width=document.querySelector('#detail').style.width,anchor=document.querySelector('#bridge').style.top;document.querySelector('#close-panel').click();return document.querySelector('#detail').style.width===width&&document.querySelector('#bridge').style.top===anchor&&!document.querySelector('#widget-page').hidden&&document.querySelector('#detail').inert})()","reversing the left panel preserves its live geometry and outgoing content while disabling input");
+  await Task.Delay(100);
+  await Assert("(()=>{const width=document.querySelector('#detail').style.width;document.querySelector('[data-widget=weather]').click();return document.querySelector('#detail').style.width===width&&!document.querySelector('#detail').inert})()","reopening continues from the closing frame without snapping");
+  await Task.Delay(650);await Assert("Math.abs(parseFloat(document.querySelector('#detail').style.width)-368)<1&&getComputedStyle(document.querySelector('#widget-page')).visibility==='visible'","interrupted left panel settles at the full content width");
+  await Eval("document.querySelector('#close-panel').click()");await Task.Delay(650);await Assert("parseFloat(document.querySelector('#detail').style.width)<1&&document.querySelector('#detail').inert","left panel closes fully after interrupted motion");
+  await Message("{type:'preferences',snapshot:{reducedMotion:true,textScale:100}}");await Eval("document.querySelector('[data-widget=weather]').click()");await Task.Delay(60);await Assert("document.querySelector('#detail').style.width==='368px'&&document.querySelector('#detail').style.opacity==='1'","application reduced-motion setting settles the left panel without spring motion");await Eval("document.querySelector('#close-panel').click()");await Task.Delay(60);await Message("{type:'preferences',snapshot:{reducedMotion:false,textScale:100}}");
+  await Eval("window.wifiBefore=__messages.length;document.querySelector('#wifi-connect').click()");await Assert("__messages.slice(wifiBefore).includes('wifi-connect')","quick Wi-Fi button requests the fixed Windows network selector command");
+  await Eval("document.querySelector('[data-widget=weather]').click()");await Task.Delay(180);
+  await Assert("(()=>{const c=__glassCards.find(x=>x.name==='weather'),r=__glassCards.find(x=>x.name==='Rail');return r.w===88&&r.r===28&&c&&c.w===72&&c.h===66&&c.r===18})()","left selected card uses the same glass and dimensions as the right rail");await Capture("sidedock-glass-selection");
   var leftTops=new Dictionary<string,string>();
+  await Eval("document.querySelector('[data-widget=focus]').click()");
+  await Message("{type:'widgets',music:{title:'等待播放'},focus:{available:true,total:1500,remaining:900,deadline:0}}");
+  await Assert("document.querySelector('#widget-focus-toggle').textContent==='继续'&&document.querySelector('#widget-focus-state').textContent==='已暂停'","left focus shows the actual paused state and resume action");
+  await Message("{type:'widgets',music:{title:'等待播放'},focus:{available:true,total:300,remaining:180,deadline:Math.floor(Date.now()/1000)+180}}");
+  await Assert("document.querySelector('#widget-focus-state').textContent==='休息进行中'","a running break is not labelled as focus");
+  await Message("{type:'widgets',music:{title:'等待播放'},focus:{available:true,total:300,remaining:0,deadline:0}}");
+  await Assert("document.querySelector('#widget-focus-state').textContent==='本轮已结束'&&document.querySelector('#widget-focus-toggle').textContent==='重新开始'","completed focus exposes an explicit restart action");
+  await Eval("document.querySelector('#close-panel').click()");
   foreach(string railScale in new[]{"0.5","0.8","1","1.25"}){
    await Message("{type:'layout',theme:'Sky',scale:"+railScale+",x:0,y:0,width:2560,height:1440,paused:true,wallpaper:1}");await Task.Delay(80);
    leftTops[railScale]=await Eval("__glassCards.find(c=>c.name==='Rail').y");
@@ -126,23 +204,39 @@ internal static class TestWorkspaceUi {
   view.Source=new Uri("https://prism-test.local/shelf.html");for(int i=0;i<100;i++){await Task.Delay(80);if(await Eval("!!document.querySelector('#triggers')&&document.readyState==='complete'")=="true")break;}
   await Message("{type:'layout',theme:'Astro',scale:1,x:0,y:0,width:1920,height:1080,paused:true,wallpaper:1}");await Message("{type:'local-state',state:{tasks:[],links:[],hiddenCards:[],hiddenLeftCards:[],countdownTitle:'',countdownDate:'',cardOrder:['calculator','links','countdown','tasks','notes','desktop','quota']}}");await Task.Delay(150);
   await Assert("document.querySelector('#triggers [data-mode=calculator]').getBoundingClientRect().top<document.querySelector('#triggers [data-mode=quota]').getBoundingClientRect().top","right component ordering changes real rendered positions");await Assert("__errors.length===0","ordered shelf has no JavaScript errors");
+  await Message("{type:'notes',text:'草稿'}");await Eval("document.querySelector('#note-text').value='新草稿';document.querySelector('#note-text').dispatchEvent(new Event('input'));window.beforeShelf=__messages.length");await Message("{type:'saved',scope:'cursor',message:'鼠标已保存'}");await Assert("document.querySelector('[data-mode=notes] .rail-summary').textContent!=='已保存'","cursor acknowledgement cannot mark note saved");
+  await Message("{type:'saved',scope:'notes',text:'草稿',message:'已保存'}");await Assert("document.querySelector('[data-mode=notes] .rail-summary').textContent==='未保存'","late note acknowledgement preserves newer draft marker");
+  await Eval("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',isComposing:true,bubbles:true}))");await Assert("!__messages.slice(beforeShelf).some(m=>{try{return JSON.parse(m).action==='close'}catch{return false}})","right IME Escape never closes panel");
   await Assert("!document.querySelector('[data-mode=desktop]')&&!document.querySelector('#desktop-page')","desktop card and page are removed without affecting other tools");
   await Eval("document.querySelector('#manage-trigger').click();document.querySelector('#browse').click()");await Assert("__messages.some(m=>m.includes('home'))&&!document.querySelector('#files-page').hidden","file browser remains available from the management page");
   foreach(string railScale in new[]{"0.5","0.8","1","1.25"}){
-   await Message("{type:'layout',theme:'Astro',scale:"+railScale+",originX:0,originY:0,width:500*"+railScale+",height:620*"+railScale+",sceneWidth:2560,sceneHeight:1440,paused:true,wallpaper:1}");
+   await Message("{type:'layout',theme:'Astro',scale:"+railScale+",originX:0,originY:0,width:512*"+railScale+",height:620*"+railScale+",sceneWidth:2560,sceneHeight:1440,paused:true,wallpaper:1}");
    foreach(string hidden in new[]{"[]","['quota','notes','tasks','countdown','links']"}){
     await Message("{type:'local-state',state:{tasks:[],links:[],hiddenCards:"+hidden+",hiddenLeftCards:[],countdownTitle:'',countdownDate:'',cardOrder:['calculator','links','countdown','tasks','notes','quota']}}");await Task.Delay(80);
     await Assert("(()=>{const rail=__glassCards.find(c=>c.name==='ShelfRail'),s="+railScale+",first=[...document.querySelectorAll('#triggers [data-mode]')].find(b=>!b.hidden&&parseFloat(b.style.top)===26),manage=document.querySelector('#manage-trigger').getBoundingClientRect();return Math.abs(rail.y-"+leftTops[railScale]+")<.01&&first&&Math.abs(first.getBoundingClientRect().top-26*s)<.01&&manage.bottom<=rail.y+rail.h+.01&&rail.y+rail.h<=620*s})()","right glass aligns with the actual left glass and contains its controls with "+(hidden=="[]"?"six":"one")+" entries at scale "+railScale);
    }
   }
   await Capture("shelf-aligned-one-entry");
+  await Message("{type:'local-state',state:{tasks:[],links:[],hiddenCards:[],hiddenLeftCards:[],countdownTitle:'',countdownDate:''}}");
+  await Message("{type:'layout',theme:'Astro',scale:1,originX:0,originY:0,width:512,height:620,sceneWidth:1920,sceneHeight:1080,paused:true,wallpaper:1}");
+  await Message("{type:'expanded',value:true,mode:'tasks',pinned:true}");await Task.Delay(180);
+  await Assert("(()=>{const c=__glassCards.find(x=>x.name==='ShelfSelection'),r=__glassCards.find(x=>x.name==='ShelfRail'),b=document.querySelector('[data-mode=tasks]');return r.w===88&&r.r===28&&c&&c.w===72&&c.h===66&&c.r===18&&getComputedStyle(b).backgroundColor==='rgba(0, 0, 0, 0)'})()","right rail has matching dimensions and real glass selection rather than a flat fill");
+  await Capture("shelf-glass-selection");
+  await Message("{type:'layout',theme:'Sky',scale:1,originX:0,originY:0,width:512,height:620,sceneWidth:1920,sceneHeight:1080,paused:false,wallpaper:1}");await Message("{type:'preferences',snapshot:{reducedMotion:true,textScale:100}}");await Message("{type:'expanded',value:true,mode:'calculator',pinned:true}");await Task.Delay(60);await Assert("document.querySelector('#panel').style.opacity==='1'&&!document.querySelector('#panel').inert","application reduced-motion setting settles the right panel immediately");await Message("{type:'expanded',value:false}");await Task.Delay(60);await Assert("document.querySelector('#panel').style.opacity==='0'&&document.querySelector('#panel').inert","right panel closes without fading when reduced motion is enabled");
   view.Source=new Uri("https://prism-test.local/island.html");for(int i=0;i<100;i++){await Task.Delay(80);if(await Eval("!!window.PrismIsland")=="true")break;}
   await Message("{type:'layout',theme:'Astro',scale:1,x:0,y:0,width:1920,height:1080,paused:true,wallpaper:1}");await Task.Delay(150);
   await Eval("document.querySelector('[data-action=refresh]').click()");await Assert("__messages.includes('action:refresh')","wallpaper refresh button reaches the host");
   await Message("{type:'wallpaper-refresh',busy:true,message:'正在更新玻璃…'}");await Assert("document.querySelector('[data-action=refresh]').disabled&&!document.querySelector('#wallpaper-status').hidden&&document.querySelector('#wallpaper-status').getBoundingClientRect().width>0","wallpaper progress appears on the collapsed top bar");
   await Message("{type:'wallpaper-refresh',busy:false,failed:false,message:'壁纸玻璃已更新'}");await Capture("wallpaper-refreshed");await Assert("!document.querySelector('[data-action=refresh]').disabled&&document.querySelector('#wallpaper-status').textContent==='壁纸玻璃已更新'&&__errors.length===0","wallpaper completion remains visible without script errors");
   await Eval("document.querySelector('#wallpaper-status').hidden=true;PrismIsland.receive({type:'widgets',music:{title:'玻璃海岸：一首很长的歌曲标题，用于验证省略而不挤掉控制',artist:'正在播放 · 本地播放器',playing:true},focus:{available:true,total:1500,remaining:1200,deadline:Math.floor(Date.now()/1000)+900,completed:3},weather:{ready:true,temp:22.4,location:'杭州 · 浙江 · 中国',source:'CMA GRAPES · Open-Meteo',updatedAt:Date.now(),utcOffsetSeconds:28800},sourceStatus:{weather:{available:true}}});PrismIsland.change('pill');document.querySelector('#handle').click()");await Task.Delay(1000);
-  await Assert("document.querySelector('#island').dataset.mode==='open'&&!document.querySelector('#details').inert&&document.querySelector('#handle').getAttribute('aria-expanded')==='true'","accessible pill click opens the real control panel");
+  await Assert("document.querySelector('#island').dataset.mode==='bar'&&document.querySelector('#details').inert&&document.querySelector('#handle').getAttribute('aria-expanded')==='false'","accessible central click restores the full bar without opening controls");
+  await Eval("document.querySelector('#handle').click()");await Task.Delay(1000);
+  string handleX=await Eval("(()=>{const r=document.querySelector('#handle').getBoundingClientRect();return r.x+r.width/2})()"),handleY=await Eval("(()=>{const r=document.querySelector('#handle').getBoundingClientRect();return r.y+r.height/2})()");
+  await view.CoreWebView2.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent","{\"type\":\"mousePressed\",\"x\":"+handleX+",\"y\":"+handleY+",\"button\":\"left\",\"clickCount\":1}");
+  await view.CoreWebView2.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent","{\"type\":\"mouseReleased\",\"x\":"+handleX+",\"y\":"+handleY+",\"button\":\"left\",\"clickCount\":1}");
+  await Assert("document.querySelector('#island').dataset.mode==='bar'&&document.querySelector('#details').inert","actual pointer press, release and click restore the pill exactly once");
+  await Eval("document.querySelector('#handle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}))");await Task.Delay(1000);
+  await Assert("document.querySelector('#island').dataset.mode==='open'&&!document.querySelector('#details').inert&&document.querySelector('#handle').getAttribute('aria-expanded')==='true'","down arrow still opens the real activity controls");
   await Assert("document.querySelector('#island').dataset.activity==='focus'&&document.querySelector('#island-progress').value>0&&document.querySelector('#focus-toggle').textContent==='暂停'&&document.querySelector('#weather-meta').textContent.includes('CMA GRAPES')","actual island shows running focus progress and sourced weather");
   await Message("{type:'companion',state:{running:true,connected:1,screen:true,pointer:true}}");
   await Assert("document.querySelector('#island').dataset.mode==='open'&&document.querySelector('#island').dataset.activity==='screen'&&!document.querySelector('#companion-stop').hidden","live screen state updates in place without closing a manually opened panel");

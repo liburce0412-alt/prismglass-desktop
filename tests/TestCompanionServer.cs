@@ -126,7 +126,7 @@ class TestCompanionServer {
    server.UpdateGrant(Device(server).id,new CompanionGrant{pointer=true,power=true});
    Check(Call(server,"/api/pointer","POST",new{},null,csrf).Status==401&&calls==0,"pointer transport requires a paired cookie");var cross=Request("/api/pointer","POST",new{},cookie,csrf);cross.Origin="https://evil.example";Check(server.Dispatch(cross,Origin).Status==403&&calls==0,"pointer transport enforces exact same Origin");Check(Call(server,"/api/pointer","POST",new{},cookie,"wrong").Status==403&&calls==0,"pointer packets require current CSRF even without requestId");var type=Request("/api/pointer","POST",new{},cookie,csrf);type.ContentType="text/plain";Check(server.Dispatch(type,Origin).Status==415&&calls==0,"pointer packets reject non-JSON bodies");
    Check(Call(server,"/api/pointer","GET",null,cookie,null).Status==403&&Call(server,"/api/pointer/other","POST",new{},cookie,csrf).Status==403&&calls==0,"pointer route allowlist rejects GET and extra subroutes");
-   var oversized=Request("/api/pointer","POST",new{padding=new string('x',1024)},cookie,csrf);Check(server.Dispatch(oversized,Origin).Status==413&&calls==0,"pointer payload bound is one KiB before handler admission");oversized.Path="/api/power/commit";Check(server.Dispatch(oversized,Origin).Status==413&&calls==0,"power payload bound is one KiB");
+   var oversized=Request("/api/pointer","POST",new{padding=new string('x',16384)},cookie,csrf);Check(server.Dispatch(oversized,Origin).Status==413&&calls==0,"pointer payload remains bounded at sixteen KiB before handler admission");oversized=Request("/api/power/commit","POST",new{padding=new string('x',1024)},cookie,csrf);Check(server.Dispatch(oversized,Origin).Status==413&&calls==0,"power payload bound is one KiB");
    locked=true;Check(Call(server,"/api/pointer/begin","POST",new{},cookie,csrf).Status==423&&Call(server,"/api/power/cancel","POST",new{jobId="fixture"},cookie,csrf).Status==423&&calls==0,"lock suppresses pointer and cancellation handlers");locked=false;
    var packet=new{leaseId="fixture-lease",seq=7,kind="move",dx=13,dy=-5};Check(Call(server,"/api/pointer/begin","POST",new{},cookie,csrf).Status==200&&lastPath=="/api/pointer/begin","pointer begin needs no normal command requestId");Check(Call(server,"/api/pointer","POST",packet,cookie,csrf).Status==200&&lastPath=="/api/pointer"&&lastBody==Json.Serialize(packet),"server forwards pointer lease, sequence and deltas unchanged");Check(Call(server,"/api/pointer","POST",packet,cookie,csrf).Status==200&&calls==3&&Device(server).commands.Count==0,"pointer sequence dedup belongs to controller without growing command history");
    Device(server).cachedBytes=4194304;Check(Call(server,"/api/pointer/end","POST",new{leaseId="fixture-lease"},cookie,csrf).Status==200,"pointer end bypasses exhausted normal command response history");Device(server).cachedBytes=0;
@@ -169,8 +169,10 @@ class TestCompanionServer {
     var bad=Request("/api/state","GET",null,cookie,null);bad.Origin="https://evil.example";server.Dispatch(bad,Origin);Call(server,"/api/state","GET",null,new string('a',64),null);Call(server,"/api/pointer/begin","POST",new{},cookie,"wrong");
     Check(server.ActiveDeviceCount==0&&device.lastSeen==DateTime.MinValue,"unpaired, foreign-origin and invalid-CSRF traffic cannot mark a device active");
     var session=Call(server,"/api/session","GET",null,cookie,null);Check(server.ActiveDeviceCount==1&&device.lastSeen>DateTime.UtcNow.AddSeconds(-2),"an authenticated live request marks its paired device active");
+    Check((bool)((Dictionary<string,object>)((System.Collections.IList)Status(server)["devices"])[0])["online"],"device management identifies the authenticated online pairing");
     device.lastSeen=DateTime.UtcNow.AddSeconds(-11);Check(server.ActiveDeviceCount==1,"recent requests remain visible within the twelve-second activity window");
     device.lastSeen=DateTime.UtcNow.AddSeconds(-13);Check(server.ActiveDeviceCount==0,"a silent device disappears after the activity window");device.lastSeen=DateTime.UtcNow.AddSeconds(1);Check(server.ActiveDeviceCount==0,"a future timestamp is not accepted as recent activity");
+    Check(!(bool)((Dictionary<string,object>)((System.Collections.IList)Status(server)["devices"])[0])["online"],"device management rejects future activity timestamps");
     Call(server,"/api/state","GET",null,cookie,null);locked=true;Check(server.ActiveDeviceCount==0,"locked desktop hides all connected-device activity");locked=false;
     string second=Pair(server,new CompanionGrant());Call(server,"/api/session","GET",null,second,null);Check(server.ActiveDeviceCount==2,"the connected count includes only independently authenticated recent devices");
     Check(!Json.Serialize(device).Contains("lastSeen")&&!Json.Serialize(Status(server)).Contains("lastSeen")&&!Encoding.UTF8.GetString(session.Body).Contains("lastSeen"),"presence timestamps are absent from persisted device serialization and public responses");
@@ -293,6 +295,15 @@ class TestCompanionServer {
    Check(Call(server,"/api/state","GET",null,cookie,null).Status==503&&calls==beforeApprovalCalls,"UAC waiting never serves private state or invokes a control handler");server.VideoApprovalPending=null;locked=false;
    locked=true;Check(Call(server,"/api/screen/ping","POST",new{lease="test"},cookie,csrf).Status==423&&calls==2,"lock blocks stream heartbeats");locked=false;
    server.Revoke(Device(server).id);Check(Call(server,"/api/screen","GET",null,cookie,null).Status==401&&calls==2,"revoked viewer cannot access streaming routes");
+  }
+  using(var server=new CompanionServer(Path.Combine(fixture,"audio-security"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>false)){
+   string cookie=Pair(server,new CompanionGrant{screen=true}),csrf=Device(server).csrf;var offer=new{lease="test",sequence=1,offer="v=0\r\n"};int before=calls;
+   Check(Call(server,"/api/screen/audio/begin","POST",offer,cookie,csrf).Status==403&&calls==before,"screen-only grant cannot reach audio capture");
+   server.UpdateGrant(Device(server).id,new CompanionGrant{screen=true,audio=true});
+   Check(Call(server,"/api/screen/audio/begin","POST",offer,cookie,null).Status==403&&calls==before,"audio signaling requires CSRF");
+   var cross=Request("/api/screen/audio/begin","POST",offer,cookie,csrf);cross.Origin="https://evil.example";Check(server.Dispatch(cross,Origin).Status==403&&calls==before,"foreign origin cannot capture audio");
+   Check(Call(server,"/api/screen/audio/begin","POST",offer,cookie,csrf).Status==200&&calls==before+1&&Device(server).commands.Count==0,"audio signaling is ephemeral and explicitly authorized");
+   server.UpdateGrant(Device(server).id,new CompanionGrant{screen=true});Check(Call(server,"/api/screen/audio/end","POST",new{lease="test",sequence=2},cookie,csrf).Status==200,"audio stop stays available after audio permission is removed");
   }
  }
 

@@ -51,7 +51,7 @@ internal sealed class DockPreview:Form {
   Clear();var area=Screen.FromRectangle(dock).WorkingArea;columns=ColumnsForWidth(area.Width);page=Math.Min(page,Math.Max(0,(entry.windows.Count-1)/columns));int count=Math.Min(columns,entry.windows.Count-page*columns),tileWidth=Math.Min(236,Math.Max(100,(area.Width-36)/Math.Max(1,count)));
   ClientSize=new Size(count==0?200:count*tileWidth+20,count==0?64:entry.windows.Count>columns?214:186);
   Location=new Point(Math.Max(area.Left+8,Math.Min(area.Right-Width-8,Cursor.Position.X-Width/2)),Math.Max(area.Top+8,Math.Min(area.Bottom-Height-8,dock.Top-Height-14)));
-  using(var path=new GraphicsPath()){int d=24;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=new Region(path);if(old!=null)old.Dispose();}
+  using(var path=new GraphicsPath()){int d=36;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=new Region(path);if(old!=null)old.Dispose();}
   for(int i=0;i<count;i++){
    var tile=new Rectangle(10+i*tileWidth,30,tileWidth-10,141);tiles.Add(tile);IntPtr h;if(DwmRegisterThumbnail(Handle,new IntPtr(entry.windows[page*columns+i].handle),out h)!=0)continue;thumbs.Add(h);SIZE size;if(DwmQueryThumbnailSourceSize(h,out size)!=0)continue;
    float scale=Math.Min((tile.Width-8)/(float)Math.Max(1,size.x),107f/Math.Max(1,size.y));int w=(int)(size.x*scale),ht=(int)(size.y*scale);var props=new PROPS{flags=1|4|8|16,dest=new RECT(tile.X+(tile.Width-w)/2,tile.Y+(111-ht)/2,w,ht),opacity=255,visible=true,client=false};DwmUpdateThumbnailProperties(h,ref props);

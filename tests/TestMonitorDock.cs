@@ -91,6 +91,7 @@ internal static class TestMonitorDock {
    dock.Configure(monitor,preferences,48);Check(Commands().Length==4,"disabled monitor does not repeatedly activate or deactivate");
    preferences.enabled=true;dock.Configure(monitor,preferences,48);Check(Commands().Length==5&&Commands()[4].StartsWith("[!ActivateConfig"),"reenabling activates without rescanning all skins");
    dock.Dispose();dock=null;Check(!Directory.Exists(Path.Combine(fixture,"Dock-monitor-1")),"owned generated skin is removed on dispose");
+   dock=new MonitorDock(fixture,"primary");int beforeClose=Commands().Length;dock.Dispose();dock.Dispose();dock=null;Check(Commands().Length==beforeClose+1&&Commands()[beforeClose]=="!DeactivateConfig PrismGlass\\Dock","primary Dock exits once with its renderer instead of leaving a legacy bar");Check(File.Exists(Path.Combine(fixture,"Dock","Main.ini")),"disposing primary Dock retains its reusable current skin");
    CheckCommandDelivery();Console.WriteLine("Completed "+passed+" MonitorDock activation and command checks; installed Rainmeter was never called.");return 0;
   }catch(Exception ex){Console.Error.WriteLine(ex);return 1;}finally{if(dock!=null)dock.Dispose();Environment.SetEnvironmentVariable("PRISMGLASS_DOCK_TEST_LOG",null);if(Directory.Exists(fixture)){Directory.Delete(fixture,true);if(Directory.Exists(fixture))throw new IOException("Fixture cleanup failed");}}
  }

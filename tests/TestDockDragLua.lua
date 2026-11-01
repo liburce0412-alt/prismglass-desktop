@@ -14,7 +14,7 @@ function Initialize()
  SKIN={GetVariable=function(_,k)return vars[k]end,Bang=function(_,command,meter,key,value)
   if command=='!SetOption' then options[meter..'.'..key]=value elseif command=='!SetVariable' then vars[meter]=key elseif command=='!ShowMeter' then shown[meter]=true elseif command=='!HideMeter' then shown[meter]=false elseif command=='!Move' then moved={meter,key} end
  end}
- local originalTime=os.time;local fakeTime=2000000000;os.time=function()return fakeTime end
+ local originalTime,originalClock=os.time,os.clock;local fakeTime,fakeClock,frameStep=2000000000,0,.016;os.time=function()return fakeTime end;os.clock=function()fakeClock=fakeClock+frameStep;return fakeClock end
  local ok,err=pcall(function()
   dofile(script);Initialize()
   local rows='workspace\tQXBwcw==\tR3JpZA==\t0\t0\t1\t0\npexplorer\tRmlsZXM=\tSWNvbkE=\t1\t0\t1\t0\np23\tRWRnZQ==\tSWNvbkI=\t0\t0\t1\t0\n'
@@ -52,7 +52,7 @@ function Initialize()
   Hover(2);for i=1,12 do Update() end
   check(tonumber(options['Icon2.W'])>48,'hover animation is active before a Dock layout change')
   write('dock-state.txt',rows);ReloadLayout();Update()
-  check(hover==0 and tonumber(options['Icon2.W'])==48 and tonumber(options['Icon3.W'])>48,'reordering carries animation with its application instead of enlarging the new slot occupant')
+  check(hover==0 and tonumber(options['Icon3.W'])>tonumber(options['Icon2.W']) and tonumber(options['Icon3.W'])>48,'reordering carries animation with its application instead of enlarging the new slot occupant')
   write('dock-state.txt','workspace\tQXBwcw==\tR3JpZA==\t0\t0\t1\t0\npexplorer\tRmlsZXM=\tSWNvbkE=\t1\t0\t1\t0\np42\tTmV3\tSWNvbkI=\t0\t0\t1\t0\n');ReloadLayout();Update()
   check(tonumber(options['Icon3.W'])==48,'a newly inserted application never inherits a removed icon hover size')
   vars.DockIconSize='60';vars.DockOffset='24';ReloadLayout();Hover(0);write('dock-motion-monitor-1.txt','true');for i=1,18 do Update() end;Hover(2);for i=1,5 do Update() end
@@ -62,6 +62,6 @@ function Initialize()
   check(options['Icon2.ImageAlpha']=='0','a stale drag cannot permanently block per-monitor lyrics')
  end)
  if not ok then report:write('ERROR '..tostring(err)..'\n')else report:write('Completed '..checks..' native Dock interaction Lua checks.\n')end
- report:close();os.time=originalTime;SKIN=nativeSkin;Update=function()return 0 end
+ report:close();os.time=originalTime;os.clock=originalClock;SKIN=nativeSkin;Update=function()return 0 end
 end
 

@@ -1,4 +1,5 @@
 /* White lettering stays legible over both glass themes and the user's wallpaper. */
+.control-icon{width:20px;height:20px;flex:none;display:inline-block;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 body,body[data-theme=Astro],body.astro{
  color:#fff;
  --ink:#fff;
@@ -22,4 +23,12 @@ body #shelf :is(.intro,.footnote,#hint,#path,.rail-summary){color:#e3edf9}
 body #dock .rail-item.selected:after,
 body #shelf #triggers button[aria-expanded=true]:before{background:#c5e4ff}
 body :is(button,input,textarea,select):focus-visible{outline-color:#d2eaff}
+body #shelf{width:512px}body #shelf #triggers{left:428px}body #shelf #manage-trigger{left:438px}
+body #dock .rail-item,body #shelf #triggers button{width:72px;height:66px;border-radius:18px;padding:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
+body #dock .rail-icon,body #shelf #triggers .utility-icon{width:26px;height:26px;line-height:26px;font-size:26px;stroke-width:1.7}
+body #dock .rail-label,body #shelf #triggers span{font-size:10px;line-height:16px;letter-spacing:.5px}
+body #dock .rail-item small,body #shelf #triggers .rail-summary{font-size:10px;line-height:14px;opacity:.7}
+body[data-glass-ready=true] #dock .rail-item,body[data-glass-ready=true] #shelf #triggers button{background:transparent}
+body #shelf #triggers button[aria-expanded=true]:before{left:2px;top:24px;width:3px;height:18px;border-radius:2px}
+body #shelf #triggers [data-mode=quota]{display:block;padding:0}body #shelf #triggers [data-mode=quota] .quota-face{left:9px}body #shelf #triggers [data-mode=quota] .utility-icon{width:54px;height:54px;stroke-width:3}
 body.prism-reduced-motion *,body.prism-reduced-motion *::before,body.prism-reduced-motion *::after{transition-duration:0s!important;animation-duration:0s!important;scroll-behavior:auto!important}

@@ -11,7 +11,7 @@ try{
  $contract=Join-Path $fixture 'CompanionContracts.cs'
  [IO.File]::WriteAllText($contract,"using System;using System.Text;using System.Collections.Generic;using System.Web.Script.Serialization;`n"+$source.Substring($start,$end-$start))
  $binary=Join-Path $out 'TestCompanionControls.exe'
- & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo "/out:$binary" /r:System.Web.Extensions.dll (Join-Path $repo 'src/LiquidDesktop/CompanionControls.cs') (Join-Path $repo 'tests/TestCompanionControls.cs') $contract
+ & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo "/out:$binary" /r:System.Web.Extensions.dll /r:System.Drawing.dll (Join-Path $repo 'src/LiquidDesktop/CompanionControls.cs') (Join-Path $repo 'tests/TestCompanionControls.cs') $contract
  if($LASTEXITCODE -ne 0){throw 'Companion controls compilation failed'}
  & $binary | Tee-Object -FilePath (Join-Path $out 'control-checks.txt')
  if($LASTEXITCODE -ne 0){throw 'Companion control behavior checks failed'}

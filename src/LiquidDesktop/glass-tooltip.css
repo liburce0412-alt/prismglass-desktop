@@ -1,0 +1,1 @@
+.glass-tooltip{position:absolute;display:none;align-items:center;justify-content:center;box-sizing:border-box;padding:0 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:13px "Segoe UI","Microsoft YaHei UI",sans-serif;color:#f5f8ff;text-shadow:0 1px 3px #122238;pointer-events:none;border-radius:999px;z-index:5}

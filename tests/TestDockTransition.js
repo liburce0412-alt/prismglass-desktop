@@ -11,7 +11,7 @@ function fixture(width=1070){
  function element(){const classes=new Set();return{style:{setProperty(){}},parentElement:{hidden:false,classList:{toggle(){}}},scrollWidth:240,textContent:'',classList:{toggle(n,on){if(on)classes.add(n);else classes.delete(n);},contains:n=>classes.has(n)},setAttribute(){},animate:()=>({cancel(){}})};}
  const elements=new Map(['lyrics-layer','dock-lyrics','lyric-current','lyric-next','scene'].map(id=>[id,element()]));
  const window={addEventListener(){},chrome:{webview:{addEventListener:(_,fn)=>receiver=m=>fn({data:m}),postMessage(message){if(!message.startsWith('dock-icons:'))return;const [,sequence,alpha]=message.split(':').map(Number);const value={sequence,alpha,time:now};commands.push(value);pending.push(value);}}}};
- const context=vm.createContext({window,document:{getElementById:id=>elements.get(id)},innerWidth:1200,innerHeight:800,performance:{now:()=>now},matchMedia:()=>({matches:false,addEventListener(){}}),
+ const context=vm.createContext({window,document:{getElementById:id=>elements.get(id),createElement:()=>element(),body:{appendChild(e){elements.set(e.id,e);}}},innerWidth:1200,innerHeight:800,performance:{now:()=>now},matchMedia:()=>({matches:false,addEventListener(){}}),
   PrismLyrics:{normalize:v=>({layout:'duo',width:900,widthMode:'adaptive',fontSize:26,...v}),apply(){},cancel(){},animate(){},background(){}},PrismGlassRenderer:(_,post,subscribe)=>subscribe(m=>glass.push(m)),
   requestAnimationFrame:fn=>{const id=++nextId;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout:(fn,delay)=>{const id=++nextId;timers.set(id,{fn,due:now+delay});return id;},clearTimeout:id=>timers.delete(id)});
  vm.runInContext(source,context,{filename:'desktop.js'});
@@ -68,5 +68,12 @@ check('unchanged settled alpha is renewed by the existing lyric heartbeat',()=>{
 const fade=fixture();fade.send(lyric);fade.frame(90);fade.send({type:'lyrics',show:false,current:'',next:''});let partial=false;
 for(let i=0;i<70;i++){fade.frame();if(fade.state.opacity>0&&fade.state.opacity<1)partial=true;}
 check('lyrics fade out through intermediate opacity before any icon returns',()=>{assert.equal(partial,true);assert.equal(fade.state.opacity,0);assert.equal(fade.nativeAlpha,255);});
-console.log(checks+' Dock transition checks passed.');
 
+
+
+const labelFixture=fixture();labelFixture.send({type:'dock-label',text:'文件资源管理器',x:400,y:550,w:180,h:36});
+check('name capsule shares the actual Dock glass scene',()=>assert.ok(labelFixture.glass.at(-1).cards.some(c=>c.name==='DockLabel'&&c.r===18)));
+check('only one text label is rendered as plain text',()=>assert.equal(labelFixture.elements.get('dock-name').textContent,'文件资源管理器'));
+labelFixture.send({type:'dock-label',text:''});check('hiding removes both the capsule and its text',()=>{assert.equal(labelFixture.elements.get('dock-name').style.display,'none');assert.ok(!labelFixture.glass.at(-1).cards.some(c=>c.name==='DockLabel'));});
+
+console.log(checks+' Dock transition checks passed.');

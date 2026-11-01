@@ -6,17 +6,20 @@ const source=fs.readFileSync(path.join(__dirname,'../src/LiquidDesktop/glass-ren
 const passed=[];
 function check(name,action){action();passed.push(name);console.log('PASS '+name);}
 function renderer(){
- const messages=[],pending=new Map();let receiver,now=0,nextFrame=0,draws=0;
- const gl=new Proxy({FRAMEBUFFER_COMPLETE:1,getShaderParameter:()=>true,getProgramParameter:()=>true,checkFramebufferStatus:()=>1,
+ const messages=[],pending=new Map(),events=new Map(),timers=new Map();let receiver,now=0,nextFrame=0,nextTimer=0,draws=0,lost=false;
+ const gl=new Proxy({FRAMEBUFFER_COMPLETE:1,isContextLost:()=>lost,getShaderParameter:()=>true,getProgramParameter:()=>true,checkFramebufferStatus:()=>1,
   createShader:()=>({}),createProgram:()=>({}),createBuffer:()=>({}),createTexture:()=>({}),createFramebuffer:()=>({}),
   getUniformLocation:()=>({}),getAttribLocation:()=>0,drawArrays:()=>draws++},{get:(object,key)=>key in object?object[key]:()=>{}});
- const window={addEventListener(){}},canvas={getContext:()=>gl,addEventListener(){}};
+ const window={addEventListener(){}},canvas={getContext:()=>gl,addEventListener:(type,handler)=>events.set(type,handler)};
  const context=vm.createContext({window,performance:{now:()=>now},crypto:{getRandomValues:a=>(a[0]=123,a)},
   requestAnimationFrame:callback=>{const id=++nextFrame;pending.set(id,callback);return id;},cancelAnimationFrame:id=>pending.delete(id),
+  setTimeout:callback=>{const id=++nextTimer;timers.set(id,callback);return id;},clearTimeout:id=>timers.delete(id),
   Image:class{set src(value){this.onload();}}});
  vm.runInContext(source,context,{filename:'glass-renderer.js'});
  window.PrismGlassRenderer(canvas,message=>messages.push(message),callback=>receiver=callback);
- return{messages,send:message=>receiver(message),draws:()=>draws,pending:()=>pending.size,
+ return{messages,lose:()=>{lost=true;},send:message=>receiver(message),draws:()=>draws,pending:()=>pending.size,
+  event(type){let prevented=false;events.get(type)({preventDefault(){prevented=true;}});return prevented;},
+  expire(){const callbacks=[...timers.values()];timers.clear();for(const callback of callbacks)callback();},
   frame(){now+=16;const callbacks=[...pending.values()];pending.clear();for(const callback of callbacks)callback(now);},
   frames(count){for(let i=0;i<count;i++)this.frame();},
   count(type){return messages.filter(message=>message.startsWith(type+':')).length;},
@@ -78,4 +81,13 @@ const pausedClips=astro.count('dock-shape'),pausedDraws=astro.draws();geometry(a
 check('paused repeated drawing remains clipped without extra IPC',()=>{assert.ok(astro.draws()>pausedDraws);assert.equal(astro.count('dock-shape'),pausedClips);});
 astro.send({...layout([dock]),theme:'Astro',paused:false});astro.frames(30);
 check('resuming Astro restores active drawing and required layout clips',()=>{assert.equal(astro.stats().paused,false);assert.ok(astro.pending()>0);assert.equal(astro.count('dock-shape'),pausedClips+1);});
+const pendingLoss=renderer();pendingLoss.send(layout([dock]));pendingLoss.frame();const pendingLossDraws=pendingLoss.draws();pendingLoss.lose();
+check('pending context-loss event does not allow layout or geometry to draw lost resources',()=>{pendingLoss.send({...layout([dock]),width:1200});geometry(pendingLoss,[dock]);pendingLoss.frame();assert.equal(pendingLoss.draws(),pendingLossDraws);assert.ok(!pendingLoss.messages.some(m=>m.startsWith('error:')));});
+const recovery=renderer();recovery.send(layout([dock]));recovery.frame();const beforeLoss=recovery.draws();
+check('context loss permits restoration and suspends drawing without fatal host messages',()=>{assert.equal(recovery.event('webglcontextlost'),true);geometry(recovery,[dock]);recovery.frames(3);assert.equal(recovery.draws(),beforeLoss);assert.ok(!recovery.messages.some(m=>m.startsWith('error:')));});
+check('restoration rebuilds the scene and republishes the native clip and paint readiness',()=>{recovery.event('webglcontextrestored');recovery.frame();assert.ok(recovery.draws()>beforeLoss);assert.equal(recovery.count('dock-shape'),2);assert.equal(recovery.messages.filter(m=>m==='painted').length,2);});
+check('successful restoration cancels its failure deadline',()=>{recovery.expire();assert.ok(!recovery.messages.some(m=>m.startsWith('error:')));});
+check('unrecoverable context loss still reports a bounded fatal failure',()=>{recovery.event('webglcontextlost');recovery.expire();assert.ok(recovery.messages.includes('error:graphics recovery timed out'));});
+const narrow=renderer();narrow.send(layout([{name:'ShelfPanel',x:100,y:80,w:18,h:300,r:26,fixedShape:true}]));narrow.frame();
+check('narrow panel corners remain within the surface instead of crossing',()=>{const points=narrow.latest('widget-shapes')[0];assert.ok(points.every(([x,y])=>x>=101.99&&x<=116.01&&y>=81.99&&y<=378.01));});
 console.log(passed.length+' glass outline message checks passed.');

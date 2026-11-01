@@ -12,3 +12,5 @@
 /* The optical renderer supplies the surface; retain the stronger CSS fallback. */
 body[data-glass-ready=true]{--surface:rgba(235,244,255,.055)}
 body[data-glass-ready=true][data-theme=Astro]{--surface:rgba(8,16,32,.045)}
+
+body[data-glass-ready=true] #panel{background:transparent;border-color:transparent;box-shadow:none}

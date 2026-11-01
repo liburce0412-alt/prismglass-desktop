@@ -23,7 +23,7 @@ function Update-PrismGlassSkinCatalog([string]$Executable,[string]$PendingFile,[
 }
 function Stop-PrismGlassSkins([string]$Executable){
  if(!(Get-Process Rainmeter -ErrorAction SilentlyContinue)){return}
- foreach($config in @('Dock','Focus','Music','System','Weather','Topbar')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
+ foreach($config in @('Dock','Focus','Music','System','Weather','Clock','Calendar','Battery','Folders','Tools','Topbar')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
  $configured=Join-Path $PSScriptRoot 'LiquidDesktop/skin-path.txt'
  $skins=if([IO.File]::Exists($configured)){[IO.Path]::GetFullPath([IO.File]::ReadAllText($configured).Trim())}else{Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter/Skins/PrismGlass'}
  if(Test-Path -LiteralPath $skins){foreach($folder in Get-ChildItem -LiteralPath $skins -Directory -Filter 'Dock-monitor-*'){

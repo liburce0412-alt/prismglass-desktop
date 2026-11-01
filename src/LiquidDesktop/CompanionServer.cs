@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 internal sealed class CompanionGrant {
- public bool apps,tasks,notes,music,control,pointer,power,screen,keyboard;
+ public bool apps,tasks,notes,music,control,pointer,power,screen,keyboard,audio;
  internal volatile bool Active;
 }
 internal sealed class CompanionReply {
@@ -58,7 +58,7 @@ internal sealed class CompanionServer : IDisposable {
  static bool Equal(string left,string right){if(left==null||right==null)return false;byte[] a=Encoding.UTF8.GetBytes(left),b=Encoding.UTF8.GetBytes(right);int mismatch=a.Length^b.Length;for(int i=0;i<Math.Min(a.Length,b.Length);i++)mismatch|=a[i]^b[i];return mismatch==0;}
  static bool Opaque(string value){return value!=null&&Regex.IsMatch(value,"\\A[a-zA-Z0-9_-]{16,96}\\z");}
  static string Text(Dictionary<string,object> body,string key){object value;return body.TryGetValue(key,out value)?value as string:null;}
- static CompanionGrant Copy(CompanionGrant value){return new CompanionGrant{apps=value.apps,tasks=value.tasks,notes=value.notes,music=value.music,control=value.control,pointer=value.pointer,power=value.power,screen=value.screen,keyboard=value.keyboard,Active=true};}
+ static CompanionGrant Copy(CompanionGrant value){return new CompanionGrant{apps=value.apps,tasks=value.tasks,notes=value.notes,music=value.music,control=value.control,pointer=value.pointer,power=value.power,screen=value.screen,keyboard=value.keyboard,audio=value.audio,Active=true};}
  public static string Endpoint(string address,int port){
   IPAddress ip;if(!IPAddress.TryParse(address,out ip)||ip.AddressFamily!=System.Net.Sockets.AddressFamily.InterNetwork||port<1024||port>65535)throw new ArgumentException("请选择本机的局域网 IPv4 地址和 1024–65535 端口。");
   var bytes=ip.GetAddressBytes();if(!(bytes[0]==10||(bytes[0]==172&&bytes[1]>=16&&bytes[1]<=31)||(bytes[0]==192&&bytes[1]==168)))throw new ArgumentException("伴随屏仅支持专用局域网 IPv4 地址。");
@@ -110,8 +110,8 @@ internal sealed class CompanionServer : IDisposable {
  static bool AssetPath(string path){return path!=null&&path.StartsWith("/api/assets/",StringComparison.Ordinal);}
  static bool PointerPath(string path){return path=="/api/pointer"||path=="/api/pointer/begin"||path=="/api/pointer/end";}
  static bool PowerPath(string path){return path=="/api/power/prepare"||path=="/api/power/commit"||path=="/api/power/cancel";}
- static bool ScreenWritePath(string path){return path=="/api/screen/begin"||path=="/api/screen/ping"||path=="/api/screen/end";}
- static int BodyLimit(string path){return PointerPath(path)||PowerPath(path)?ControlBody:MaxBody;}
+ static bool ScreenWritePath(string path){return path=="/api/screen/begin"||path=="/api/screen/ping"||path=="/api/screen/end"||path=="/api/screen/audio/begin"||path=="/api/screen/audio/end";}
+ static int BodyLimit(string path){return PointerPath(path)?16384:PowerPath(path)?ControlBody:MaxBody;}
  static string RouteCategory(string path){return AssetPath(path)?"asset":PointerPath(path)?"pointer":path=="/api/power/cancel"?"power_cancel":PowerPath(path)?"power":path=="/api/pair"?"pair":path!=null&&path.StartsWith("/api/",StringComparison.Ordinal)?"core":"static";}
  CompanionReply Enter(string path,out SemaphoreSlim slots){
   slots=AssetPath(path)?assetRequests:PointerPath(path)?pointerRequests:path=="/api/power/cancel"?cancelRequests:PowerPath(path)?powerRequests:requests;
@@ -139,7 +139,7 @@ internal sealed class CompanionServer : IDisposable {
  public void Reject(string id){lock(gate)pending.Remove(id);}
  public void UpdateGrant(string id,CompanionGrant grant){lock(gate){if(disposed)throw new ObjectDisposedException("CompanionServer");if(Locked())throw new InvalidOperationException("请先解锁电脑。");if(grant==null)throw new ArgumentNullException("grant");var device=devices.Find(d=>d.id==id&&d.expiresAt>Now);if(device==null)throw new InvalidOperationException("设备授权已失效，请重新选择。");var previous=device.grants;var next=Copy(grant);next.Active=previous.Active;device.grants=next;try{Save();}catch{device.grants=previous;next.Active=false;throw;}previous.Active=false;}}
  public void Revoke(string id){lock(gate){var device=devices.Find(d=>d.id==id);if(device==null)return;device.grants.Active=false;devices.Remove(device);try{Save();}catch{loadError="撤销未能持久保存，服务已停用。请检查运行目录权限。";Stop();throw;}var removed=new List<string>();foreach(var entry in pending)if(entry.Value.deviceId==id)removed.Add(entry.Key);foreach(var key in removed)pending.Remove(key);}}
- public object Status(){lock(gate){Locked();Prune();var waiting=new List<object>();foreach(var request in pending.Values)if(request.deviceId==null)waiting.Add(new{id=request.id,name=request.name,expiresAt=request.expiresAt.ToString("o")});var known=new List<object>();foreach(var device in devices)if(device.expiresAt>Now)known.Add(new{id=device.id,name=device.name,grants=device.grants,expiresAt=device.expiresAt.ToString("o")});return new{enabled=listener!=null,address=Address,pairingExpiresAt=pairingExpires>Now?pairingExpires.ToString("o"):null,pending=waiting,devices=known,error=loadError,diagnostics=Diagnostics()};}}
+ public object Status(){lock(gate){Locked();Prune();var waiting=new List<object>();foreach(var request in pending.Values)if(request.deviceId==null)waiting.Add(new{id=request.id,name=request.name,expiresAt=request.expiresAt.ToString("o")});var known=new List<object>();foreach(var device in devices)if(device.expiresAt>Now)known.Add(new{id=device.id,name=device.name,grants=device.grants,expiresAt=device.expiresAt.ToString("o"),online=listener!=null&&device.grants.Active&&device.lastSeen<=Now&&Now-device.lastSeen<TimeSpan.FromSeconds(12)});return new{enabled=listener!=null,address=Address,pairingExpiresAt=pairingExpires>Now?pairingExpires.ToString("o"):null,pending=waiting,devices=known,error=loadError,diagnostics=Diagnostics()};}}
  internal CompanionReply Dispatch(CompanionRequest request,string origin,int expectedGeneration=-1){
   SemaphoreSlim slots;var rejected=Enter(request==null?null:request.Path,out slots);if(rejected!=null)return rejected;try{return DispatchCore(request,origin,expectedGeneration);}finally{slots.Release();}
  }
@@ -185,7 +185,7 @@ internal sealed class CompanionServer : IDisposable {
  }
  static bool Route(string path,bool write,CompanionGrant grant){
   if(path=="/api/screen")return !write&&grant.screen;
-  if(ScreenWritePath(path))return write&&grant.screen;
+  if(ScreenWritePath(path))return write&&grant.screen&&(path!="/api/screen/audio/begin"||grant.audio);
   if(!write)return path=="/api/state"||(path=="/api/apps"&&grant.apps)||(Regex.IsMatch(path,"\\A/api/assets/[a-zA-Z0-9_-]{16,96}\\z")&&(grant.apps||grant.music));
   if(PointerPath(path))return grant.pointer;if(PowerPath(path))return grant.power;
   return path=="/api/logout"||path=="/api/action"||path=="/api/tasks"&&grant.tasks||path=="/api/notes"&&grant.notes||path=="/api/settings"&&grant.control||path=="/api/lyrics-style"&&grant.music&&grant.control;

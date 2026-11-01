@@ -3,11 +3,11 @@ const fs = require('node:fs'), vm = require('node:vm');
 const code = fs.readFileSync('src/LiquidDesktop/companion-web/companion-screen.js', 'utf8');
 function fixture(info = {}) {
   const ids = {}, calls = [], events = {}, timers = new Map(), peers = [];
-  let serial = 0, delayed = null, delayedEnd = null; const beginReplies = [];
+  let serial = 0, delayed = null, delayedEnd = null; const beginReplies = [], pingReplies = [], audioReplies = [];
   function node(id) { return ids[id] || (ids[id] = { value: id === 'screen-quality' ? '720' : '0', dataset: {}, attributes: {}, children: [], hidden: true, text: '', get textContent() { return this.text; }, set textContent(value) { this.text = value; this.children = []; }, setAttribute(key, value) { this.attributes[key] = value; }, focus() {}, click() {}, appendChild(child) { this.children.push(child); this.value = child.value; }, pause() {}, play() { return Promise.resolve(); } }); }
   class Peer {
     constructor(options) { assert.deepEqual(JSON.parse(JSON.stringify(options)), { iceServers: [] }); this.iceGatheringState = 'complete'; peers.push(this); }
-    addTransceiver(type, options) { assert.equal(type, 'video'); assert.equal(options.direction, 'recvonly'); }
+    addTransceiver(type, options) { assert(['video','audio'].includes(type)); assert.equal(options.direction, 'recvonly'); }
     createOffer() { return Promise.resolve({ type: 'offer', sdp: 'v=0\r\n' }); }
     setLocalDescription(value) { this.localDescription = value; return Promise.resolve(); }
     setRemoteDescription(value) { this.remoteDescription = value; return Promise.resolve(); }
@@ -17,6 +17,8 @@ function fixture(info = {}) {
   const win = { innerWidth:1024,innerHeight:768,visualViewport:{width:1024,height:768},RTCPeerConnection: Peer, addEventListener: (name, fn) => { events[name] = fn; } };
   const fetch = async (path, options) => {
     calls.push({ path, options });
+    if (path === '/api/screen/audio/begin' && audioReplies.length) return audioReplies.shift();
+    if (path === '/api/screen/ping' && pingReplies.length) { var reply=pingReplies.shift(); if (reply instanceof Error) throw reply; return reply; }
     if (path === '/api/screen/begin' && beginReplies.length) return beginReplies.shift();
     if (path === '/api/screen/begin' && delayed) {
       if (!options.signal) return delayed;
@@ -28,22 +30,29 @@ function fixture(info = {}) {
       });
     }
     if (path === '/api/screen/end' && delayedEnd) return delayedEnd;
-    const data = path === '/api/screen' ? { available: true, extensionAvailable: true, monitors: [{ id: 0, name: '测试屏幕' }], ...info } : path === '/api/screen/begin' ? { lease: 'fixture-lease', answer: 'v=0\r\n' } : { ok: true };
+    const data = path === '/api/screen' ? { instance: 'fixture-instance', available: true, extensionAvailable: true, monitors: [{ id: 0, name: '测试屏幕' }], ...info } : path === '/api/screen/begin' ? { lease: 'fixture-lease', answer: 'v=0\r\n' } : { ok: true };
     return { ok: true, json: async () => data };
   };
-  vm.runInNewContext(code, { window: win, document: doc, RTCPeerConnection: Peer, AbortController, fetch, setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, clearTimeout: id => timers.delete(id), MediaStream: class { constructor(tracks) { this.getTracks = () => tracks; } } });
-  return { ids, calls, events, timers, peers, doc, win, beginReplies, screen: win.PrismCompanionScreen, delay(value) { delayed = value; }, delayEnd(value) { delayedEnd = value; } };
+  vm.runInNewContext(code, { window: win, document: doc, getComputedStyle: n => ({paddingTop:n.safeTop || '24px', objectFit: n.fit || 'contain', objectPosition: n.position || '0% 0%'}), RTCPeerConnection: Peer, AbortController, fetch, setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, clearTimeout: id => timers.delete(id), MediaStream: class { constructor(tracks) { this.getTracks = () => tracks; } } });
+  return { ids, calls, events, timers, peers, doc, win, beginReplies, pingReplies, audioReplies, screen: win.PrismCompanionScreen, delay(value) { delayed = value; }, delayEnd(value) { delayedEnd = value; } };
 }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 (async () => {
   const f = fixture();
+  const stoppedInput=fixture();let inputStops=0;stoppedInput.win.PrismCompanionInput={stop:()=>inputStops++};
+  stoppedInput.screen.render({screen:true},'stop-input',true);await flush();
+  assert.equal(inputStops,0,'Initial screen state preserves standalone touchpad control');
+  await stoppedInput.ids['screen-start'].onclick();stoppedInput.ids['screen-stop'].onclick();await flush();
+  assert.equal(inputStops,1,'Stopping an opened screen also stops touch input');
+  stoppedInput.ids['screen-stop'].onclick();assert.equal(inputStops,1,'Repeated idle screen cleanup does not stop a new standalone pointer lease');
   f.doc.body.dataset.screenKeyboard='true'; f.screen.layout(); assert.equal(f.doc.body.dataset.screenLayout,'true', 'Keyboard input gets a viewport layout even before fullscreen playback'); assert.equal(f.doc.body.dataset.screenTools,'true', 'Initial visible tools and their toggle agree');
   f.doc.body.dataset.screenKeyboard='false'; f.screen.layout(); assert.equal(f.doc.body.dataset.screenLayout,'false', 'Closing keyboard restores the original non-fullscreen layout');
   const layout = fixture(), picture = layout.ids['screen-video']; picture.hidden=false; picture.videoWidth=1280; picture.videoHeight=720; layout.doc.body.dataset.screenExpanded='true'; picture.onloadedmetadata();
   assert.equal(layout.doc.body.dataset.screenControls,'bottom','Mirror shortcuts use the existing lower letterbox');
-  layout.doc.body.dataset.screenKeyboard='true'; layout.win.visualViewport.height=380; layout.screen.layout();
+  layout.doc.body.dataset.screenKeyboard='true'; layout.win.visualViewport.height=420; layout.screen.layout();
   assert.equal(layout.doc.body.dataset.screenInput,'side','Landscape keyboard uses existing space beside the picture');
-  assert(Math.abs(parseFloat(layout.doc.body.style.values['--screen-input-width'])-(1024-380*16/9))<.01);
+  assert(Math.abs(parseFloat(layout.doc.body.style.values['--screen-input-width'])-(1024-(420-24)*16/9))<.01);
+  layout.ids['pointer-page'].safeTop='44px'; layout.screen.layout(); assert(Math.abs(parseFloat(layout.doc.body.style.values['--screen-input-width'])-(1024-(420-44)*16/9))<.01,'Side controls use the actual safe content height'); layout.ids['pointer-page'].safeTop='24px';
   picture.videoWidth=1024; picture.videoHeight=768; picture.onresize(); assert.equal(layout.doc.body.style.values['--screen-input-width'],'360px','A wide natural gutter does not create an oversized input panel');
   layout.win.visualViewport.width=768; layout.win.visualViewport.height=664; layout.screen.layout(); assert.equal(layout.doc.body.dataset.screenInput,'bottom','Portrait keeps a thin bottom input bar when the natural side space is insufficient');
   layout.screen.closeTools(); assert.equal(layout.doc.body.dataset.screenTools,'false','Keyboard can close tools without moving input focus');
@@ -66,11 +75,15 @@ const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve()
   f.screen.render({ screen: true }, 'csrf-test', true); assert(f.ids['screen-start'].disabled); await flush(); assert(!f.ids['screen-start'].disabled); assert.equal(f.ids['screen-monitor'].children.length,1); await f.ids['screen-start'].onclick();
   assert.equal(f.peers.length, 1); assert.equal(f.calls.filter(c => c.path === '/api/screen/begin').length, 1);
   const begin = f.calls.find(c => c.path === '/api/screen/begin'); assert.equal(begin.options.headers['X-CSRF-Token'], 'csrf-test'); assert.equal(begin.options.credentials, 'same-origin');
-  assert.deepEqual(JSON.parse(begin.options.body), { mode: 'mirror', monitor: 0, quality: '720', offer: 'v=0\r\n' });
+  assert.deepEqual(JSON.parse(begin.options.body), { mode: 'mirror', portrait: false, monitor: 0, quality: '720', instance: 'fixture-instance', offer: 'v=0\r\n' });
   await f.ids['screen-start'].onclick(); assert.equal(f.peers.length, 1, 'double click does not create another viewer');
   let trackStopped = false; f.peers[0].ontrack({ streams: [{ getTracks: () => [{ stop: () => { trackStopped = true; } }] }] });
   assert.equal(f.ids['screen-video'].hidden, false);
   f.ids['screen-video'].onplaying(); assert.equal(f.doc.body.dataset.screenExpanded,'true'); assert.equal(f.doc.body.dataset.screenTools,'false');
+  const mappedVideo=f.ids['screen-video']; mappedVideo.paused=false; mappedVideo.readyState=2; mappedVideo.videoWidth=1280; mappedVideo.videoHeight=720; mappedVideo.getBoundingClientRect=()=>({left:10,top:20,width:1024,height:768});
+  assert.equal(f.screen.point(522,700),null,'letterbox never becomes a desktop click'); assert.equal(f.screen.point(522,308).command.x,32768); assert.equal(f.screen.point(522,308).command.y,32768,'contain center maps correctly');
+  mappedVideo.fit='fill'; assert.equal(f.screen.point(522,404).command.y,32768,'stretch maps the whole rectangle'); mappedVideo.fit='contain'; mappedVideo.position='0% 100%'; assert.equal(f.screen.point(522,500).command.y,32768,'keyboard bottom alignment maps the painted content');
+  mappedVideo.getBoundingClientRect=()=>({left:0,top:24,width:1024,height:744}); mappedVideo.position='0% 0%'; assert.equal(f.screen.point(512,12),null,'Reserved iPad status area never sends a desktop touch'); assert.equal(f.screen.point(512,312).command.y,32768,'Safe inset is excluded from direct and native touch coordinates');
   f.ids['screen-tools-toggle'].onclick(); assert.equal(f.doc.body.dataset.screenTools,'true');
   f.ids['screen-tools-close'].onclick(); assert.equal(f.doc.body.dataset.screenTools,'false');
   f.ids['screen-expand'].onclick(); assert.equal(f.doc.body.dataset.screenExpanded,'false');
@@ -81,6 +94,30 @@ const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve()
   const end = f.calls.find(c => c.path === '/api/screen/end'); assert.equal(end.options.keepalive, true); assert.equal(end.options.headers['X-CSRF-Token'], 'csrf-test');
   f.screen.render({ screen: true }, 'csrf-test', true); assert.equal(f.peers.length, 1, 'restored grant does not restart capture');
   await flush(); await f.ids['screen-start'].onclick(); f.doc.hidden = true; f.events.visibilitychange(); await flush(); assert(f.peers[1].closed); assert.equal(f.timers.size, 0, 'backgrounding cancels heartbeat and startup deadline');
+  const reconnect = fixture(); reconnect.screen.render({screen:true}, 'token', true); await flush(); await reconnect.ids['screen-start'].onclick();
+  const live = reconnect.peers[0]; live.iceConnectionState = 'disconnected'; live.oniceconnectionstatechange(); assert(!live.closed); assert.equal(reconnect.ids['pointer-surface'].dataset.recovering, 'true');
+  live.iceConnectionState = 'connected'; live.oniceconnectionstatechange(); assert.equal(reconnect.ids['pointer-surface'].dataset.recovering, 'false'); assert(![...reconnect.timers.values()].some(t=>t.delay===6000));
+  live.iceConnectionState = 'disconnected'; live.oniceconnectionstatechange(); [...reconnect.timers.values()].find(t=>t.delay===6000).fn(); await flush(); assert(live.closed, 'recovery has a finite deadline');
+  const sources = {instance:'first', monitors:[{id:0,name:'主屏'}, {id:1,name:'外屏'}]}, selection = fixture(sources); selection.screen.render({screen:true}, 'token', true); await flush(); selection.ids['screen-monitor'].value='1'; selection.ids['screen-monitor'].onchange(); await selection.ids['screen-start'].onclick(); selection.screen.clear();
+  selection.screen.render({screen:true}, 'token', true); await flush(); assert.equal(selection.ids['screen-monitor'].value,'1', 'same-instance retry preserves the selected screen');
+  selection.screen.clear(); sources.instance='restarted'; selection.screen.render({screen:true}, 'token', true); await flush(); assert.equal(selection.ids['screen-monitor'].value,''); assert(selection.ids['screen-start'].disabled, 'restarted server requires explicit source selection');
+  selection.ids['screen-monitor'].value='1';selection.ids['screen-monitor'].onchange();assert(!selection.ids['screen-start'].disabled);assert(!selection.ids['screen-status'].textContent.includes('无法确认'),'choosing a fresh source clears the obsolete source warning');
+  const pinging=fixture(); pinging.screen.render({screen:true},'token',true); await flush(); await pinging.ids['screen-start'].onclick(); pinging.pingReplies.push(new Error('transient network'));
+  const heartbeat=[...pinging.timers.values()].find(t=>t.delay===4000); await heartbeat.fn(); assert(!pinging.peers[0].closed); const retryPing=[...pinging.timers.values()].find(t=>t.delay===1000); assert(retryPing); await retryPing.fn(); assert(!pinging.peers[0].closed,'one transient ping failure recovers without replacing capture');
+  pinging.pingReplies.push({ok:false,json:async()=>({error:'screen_expired',message:'expired'})}); await [...pinging.timers.values()].filter(t=>t.delay===4000).at(-1).fn(); assert(pinging.peers[0].closed,'explicit expired lease never receives a retry');
+  const sound=fixture();sound.screen.render({screen:true,audio:false},'token',true);await flush();await sound.ids['screen-start'].onclick();await sound.ids['screen-audio-toggle'].onclick();assert.equal(sound.peers.length,1,'screen grant alone never starts audio');
+  sound.screen.render({screen:true,audio:true},'token',true);await sound.ids['screen-audio-toggle'].onclick();assert.equal(sound.peers.length,2);sound.peers[1].ontrack({streams:[{getTracks:()=>[{stop(){}}]}]});await flush();assert.equal(sound.ids['screen-audio-toggle'].textContent,'关闭声音');
+  await sound.ids['screen-audio-toggle'].onclick();assert(sound.peers[1].closed&&!sound.peers[0].closed,'audio toggle stops only its peer');
+  await sound.ids['screen-audio-toggle'].onclick();sound.screen.clear();assert(sound.peers[2].closed&&sound.peers[0].closed,'clearing screen closes every media receiver');
+  const lateSound=fixture();lateSound.screen.render({screen:true,audio:true},'sound-token',true);await flush();await lateSound.ids['screen-start'].onclick();let releaseSound;
+  lateSound.audioReplies.push(new Promise(resolve=>{releaseSound=resolve;}));const slowSound=lateSound.ids['screen-audio-toggle'].onclick();await flush();
+  const soundDeadline=[...lateSound.timers.values()].find(t=>t.delay===12000);soundDeadline.fn();await flush();assert(lateSound.peers[1].closed&&!lateSound.peers[0].closed);assert.equal(lateSound.ids['screen-audio-toggle'].textContent,'重试声音');assert(!lateSound.ids['screen-audio-toggle'].disabled,'audio timeout frees its button');
+  await lateSound.ids['screen-audio-toggle'].onclick();releaseSound({ok:true,json:async()=>({answer:'v=0\r\n'})});await slowSound;
+  const soundBegins=lateSound.calls.filter(c=>c.path==='/api/screen/audio/begin').map(c=>JSON.parse(c.options.body));const soundEnds=lateSound.calls.filter(c=>c.path==='/api/screen/audio/end').map(c=>JSON.parse(c.options.body));
+  assert(soundEnds.at(-1).sequence<soundBegins.at(-1).sequence,'late audio cleanup cannot stop the newer attempt');assert(!lateSound.peers[2].closed&&!lateSound.peers[1].remoteDescription);
+  lateSound.ids['screen-audio'].play=()=>Promise.reject(new Error('NotAllowedError'));lateSound.peers[2].ontrack({streams:[{getTracks:()=>[]}]});await flush();assert.equal(lateSound.ids['screen-audio-toggle'].textContent,'点按播放声音');
+  lateSound.ids['screen-audio'].play=()=>Promise.resolve();await lateSound.ids['screen-audio-toggle'].onclick();assert.equal(lateSound.ids['screen-audio-toggle'].textContent,'关闭声音');assert.equal(lateSound.peers.length,3,'Safari playback retry reuses its receiver');
+  lateSound.peers[2].iceConnectionState='failed';lateSound.peers[2].oniceconnectionstatechange();assert(!lateSound.peers[0].closed&&lateSound.peers[2].closed,'audio ICE failure retains video');
   const pending = fixture(); let release; pending.delay(new Promise(resolve => { release = resolve; })); pending.screen.render({ screen: true }, 'original', true);
   await flush();
   const opening = pending.ids['screen-start'].onclick(); await flush(); pending.screen.clear(); release({ ok: true, json: async () => ({ lease: 'late-lease', answer: 'v=0\r\n' }) }); await opening;
@@ -101,7 +138,7 @@ const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve()
   assert.equal(modes.ids['screen-mode-extend'].attributes['aria-pressed'], 'true');
   assert.equal(modes.peers.length, 1, 'choosing extension mode does not create a display until Start is pressed');
   await modes.ids['screen-start'].onclick();
-  assert.deepEqual(JSON.parse(modes.calls.filter(c => c.path === '/api/screen/begin')[1].options.body), { mode: 'extend', monitor: -1, quality: '720', offer: 'v=0\r\n' });
+  assert.deepEqual(JSON.parse(modes.calls.filter(c => c.path === '/api/screen/begin')[1].options.body), { mode: 'extend', portrait: false, monitor: -1, quality: '720', instance: 'fixture-instance', offer: 'v=0\r\n' });
   modes.ids['screen-video'].onplaying(); assert.match(modes.ids['screen-status'].textContent, /副屏已打开/);
   modes.ids['screen-video'].hidden=false; modes.ids['screen-video'].videoWidth=1280; modes.ids['screen-video'].videoHeight=720; modes.screen.layout(); assert.equal(modes.doc.body.dataset.screenControls,'top','Extension mode keeps its floating controls without manufacturing letterboxes');
   modes.events.offline(); await flush(); assert(modes.peers[1].closed); assert.equal(modes.ids['screen-video'].srcObject, null);
@@ -129,5 +166,12 @@ const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve()
   const staleEnd = fixture(); staleEnd.screen.render({ screen: true }, 'stale', true); await flush(); await staleEnd.ids['screen-start'].onclick();
   let rejectOld; staleEnd.delayEnd(new Promise(resolve => { rejectOld = resolve; })); const closing = staleEnd.screen.stop(); await staleEnd.ids['screen-start'].onclick();
   rejectOld({ ok: false, json: async () => ({ message: '旧会话错误' }) }); await closing; assert.notEqual(staleEnd.ids['screen-status'].textContent, '旧会话错误', 'a late stop failure cannot overwrite the new session status');
+  const fitting = fixture(); fitting.ids['screen-fit'].value = 'fill'; fitting.ids['screen-fit'].onchange(); assert.equal(fitting.doc.body.dataset.screenFit, 'fill'); assert.equal(fitting.doc.body.dataset.screenControls, 'top');
+  fitting.ids['screen-fit'].value = 'contain'; fitting.ids['screen-fit'].onchange(); assert.equal(fitting.doc.body.dataset.screenFit, 'contain', 'Stretch is reversible without changing the capture session');
+  fitting.doc.body.dataset.screenTools = 'true'; fitting.ids['screen-tools'].onkeydown({ key:'Escape', isComposing:true }); assert.equal(fitting.doc.body.dataset.screenTools, 'true');
+  fitting.ids['screen-tools'].onkeydown({ key:'Escape', preventDefault(){} }); assert.equal(fitting.doc.body.dataset.screenTools, 'false'); assert.equal(fitting.calls.length, 0, 'Closing tools never ends capture or touch');
+  const portrait = fixture(); portrait.win.innerWidth=768;portrait.win.innerHeight=1024;
+  portrait.screen.render({screen:true},'csrf-test',true);await flush();await portrait.ids['screen-mode-extend'].onclick();await portrait.ids['screen-start'].onclick();
+  assert.equal(JSON.parse(portrait.calls.find(c=>c.path==='/api/screen/begin').options.body).portrait,true,'extension captures the initial viewport orientation');
   console.log('Companion screen: mirror/extension choice, capability gating, lease ordering, authenticated signaling, fullscreen, revocation and disconnect cleanup passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

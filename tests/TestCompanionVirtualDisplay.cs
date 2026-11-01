@@ -15,11 +15,13 @@ class TestCompanionVirtualDisplay {
   if(args.Length==1&&(args[0]=="--describe"||args[0]=="--validate")){
    var display=new CompanionVirtualDisplay(AppDomain.CurrentDomain.BaseDirectory);var screens=display.PhysicalMonitors();Console.WriteLine("extensionAvailable="+display.Available+"; physicalLogicalScreens="+screens.Count);foreach(var screen in screens)Console.WriteLine(screen.Id+" "+screen.DeviceName+" "+screen.Name+" "+screen.Bounds);
    if(display.Available){var all=CompanionDisplayTopology.Read(1);var target=CompanionDisplayTopology.FindVirtual(all);var nativePreferred=CompanionDisplayTopology.Preferred(target.target);Console.WriteLine("preferred="+nativePreferred.width+"x"+nativePreferred.height);
-    if(args[0]=="--validate"){var disabled=CompanionDisplayTopology.Disable(all,target);Console.WriteLine("Validating disabled plan...");CompanionDisplayTopology.Validate(disabled);Console.WriteLine("Validating enabled plan...");CompanionDisplayTopology.Validate(CompanionDisplayTopology.Enable(disabled,target,nativePreferred));Console.WriteLine("Both native plans validate; no display state was applied.");}
+    foreach(var mode in CompanionDisplayTopology.SupportedModes(target))Console.WriteLine("supported="+mode.width+"x"+mode.height+"@"+mode.frequency+" rotation="+mode.orientation);
+    if(args[0]=="--validate"){var disabled=CompanionDisplayTopology.Disable(all,target);Console.WriteLine("Validating disabled plan...");CompanionDisplayTopology.Validate(disabled);Console.WriteLine("Validating enabled plan...");CompanionDisplayTopology.Validate(CompanionDisplayTopology.Enable(disabled,target,nativePreferred));Console.WriteLine("Validating portrait plan...");var portraitPlan=CompanionDisplayTopology.EnableValidated(disabled,target,nativePreferred,true);Console.WriteLine("Validated portrait-or-fallback bounds="+CompanionDisplayTopology.Bounds(portraitPlan,portraitPlan.paths[portraitPlan.paths.Length-1]));Console.WriteLine("All native plans validate; no display state was applied.");}
    }
    return 0;
   }
   CompanionDisplayTopology.CheckSizes();Check(true,"CCD native structure sizes match Windows ABI");
+  Check(Marshal.SizeOf(typeof(CompanionDisplayTopology.DisplayMode))==220&&Marshal.OffsetOf(typeof(CompanionDisplayTopology.DisplayMode),"width").ToInt32()==172,"DEVMODEW enumeration layout matches Windows ABI");
   Check(CompanionDisplayTopology.MatchesVirtualIdentity(@"\\?\DISPLAY#MTT1337#x",@"\\?\ROOT#DISPLAY#0000#{x}",new[]{@"Root\MttVDD"}),"specific driver and monitor pair is recognized");
   Check(!CompanionDisplayTopology.MatchesVirtualIdentity(@"\\?\DISPLAY#MTT1337#x",@"\\?\ROOT#DISPLAY#0000#{x}",new[]{@"Root\Other"}),"same monitor name on another driver is rejected");
   Check(!CompanionDisplayTopology.MatchesVirtualIdentity(@"\\?\DISPLAY#DELL#x",@"\\?\ROOT#DISPLAY#0000#{x}",new[]{@"Root\MttVDD"}),"physical monitor on unexpected adapter is rejected");
@@ -30,6 +32,11 @@ class TestCompanionVirtualDisplay {
   Check(initial.paths.Length==4&&initial.modes[5].source.position.x==2560,"planning leaves input snapshot unchanged");
   var preferred=new CompanionDisplayTopology.PreferredMode{width=1440,height=1080,signal=new CompanionDisplayTopology.Signal{a=46656000,c=((ulong)1<<32)|30,f=(ulong)1<<32}};
   var on=CompanionDisplayTopology.Enable(off,initial.paths[3],preferred);
+  var portrait=CompanionDisplayTopology.Enable(off,initial.paths[3],preferred,true);
+  Check(CompanionDisplayTopology.Bounds(portrait,portrait.paths[3])==new Rectangle(2560,0,1080,1440)&&portrait.paths[3].target.rotation==2&&CompanionDisplayTopology.Fingerprint(portrait,Virtual)==original,"portrait rotates only the managed target and preserves physical timing");
+  var rotated=new CompanionDisplayTopology.DisplayMode{width=1080,height=1440,frequency=30,orientation=1};
+  Check(CompanionDisplayTopology.SupportsQuarterTurn(preferred,new[]{rotated}),"driver-enumerated matching quarter turn is supported");
+  rotated.frequency=60;Check(!CompanionDisplayTopology.SupportsQuarterTurn(preferred,new[]{rotated}),"unsupported refresh cannot be invented for portrait");
   Check(on.paths.Length==4&&original==CompanionDisplayTopology.Fingerprint(on,Virtual),"enable preserves all physical timing and clone relationships");
   Check(CompanionDisplayTopology.Bounds(on,on.paths[3])==new Rectangle(2560,0,1440,1080),"virtual screen is independently placed to the right of physical bounds");
   Check(on.paths[3].target.refresh.numerator==30&&on.paths[3].target.refresh.denominator==1,"preferred virtual refresh rate is retained");

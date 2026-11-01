@@ -1,7 +1,7 @@
 'use strict';
 (()=>{
  const $=id=>document.getElementById(id),post=value=>window.chrome?.webview?.postMessage(JSON.stringify({action:'companion',...value}));
- const grants={apps:'共享应用',music:'音乐与歌词',control:'外观、音量与快捷控制',tasks:'私人待办',notes:'私人笔记',screen:'屏幕画面',pointer:'鼠标触控板',keyboard:'键盘输入',power:'电脑电源'};
+ const grants={apps:'共享应用',music:'音乐与歌词',control:'外观、音量与快捷控制',tasks:'私人待办',notes:'私人笔记',screen:'屏幕画面',audio:'电脑系统声音（含其他应用与通知）',pointer:'鼠标触控板',keyboard:'键盘输入',power:'电脑电源'};
  let state=null,selected='',drafts=new Map(),appDraft=null,devicesKey='',appsKey='',request=0,pending=new Map(),lastResult='',mounted=false,collapsedQr='';
  const key=(item,isPending)=>(isPending?'pending:':'device:')+item.id;
  const normalized=value=>Object.fromEntries(Object.keys(grants).map(k=>[k,!!value?.[k]]));
@@ -16,7 +16,7 @@
   const service=state.service||{},next=JSON.stringify([service.devices,service.pending]);
   if(next!==devicesKey){devicesKey=next;for(const isPending of [false,true]){const list=$(isPending?'companion-pending':'companion-devices');list.replaceChildren();const items=service[isPending?'pending':'devices']||[];
     if(!items.length)list.append(node('p',isPending?'暂无请求。新设备扫码后会出现在这里。':'尚无已授权设备。',{className:'companion-empty'}));
-    for(const item of items){const el=button(item.name,()=>select(key(item,isPending)),{className:'companion-device'});el.dataset.device=key(item,isPending);el.append(node('small',isPending?'等待电脑批准':'已配对'));list.append(el);}
+    for(const item of items){const el=button(item.name,()=>select(key(item,isPending)),{className:'companion-device'});el.dataset.device=key(item,isPending);el.append(node('small',isPending?'等待电脑批准':item.online?'当前在线':'已配对'));list.append(el);}
    }
   }
   for(const el of document.querySelectorAll('[data-device]'))el.setAttribute('aria-pressed',String(el.dataset.device===selected));

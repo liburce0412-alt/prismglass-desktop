@@ -55,10 +55,16 @@ internal sealed class MonitorDock : IDisposable {
   sequence=alpha=0;if(value==null)return false;var parts=value.Split(':');
   return parts.Length==2&&Int32.TryParse(parts[0],NumberStyles.None,CultureInfo.InvariantCulture,out sequence)&&sequence>0&&Int32.TryParse(parts[1],NumberStyles.None,CultureInfo.InvariantCulture,out alpha)&&alpha>=0&&alpha<=255;
  }
+ double lastPointer=-2;DateTime pointerRetry;
+ public void Pointer(double fraction){
+  if(disposed||!enabled||double.IsNaN(fraction)||fraction< -1||fraction>1||DateTime.UtcNow<pointerRetry||Math.Abs(fraction-lastPointer)<.0002)return;
+  bool sent=SendSkinCommand(FindWindow("RainmeterMeterWindow",Path.Combine(skinRoot,SkinName,"Main.ini")),"!CommandMeasure Dock \"Pointer("+fraction.ToString(CultureInfo.InvariantCulture)+")\" \""+ConfigName+"\"");
+  if(sent)lastPointer=fraction;else pointerRetry=DateTime.UtcNow.AddMilliseconds(250);
+ }
  public bool SetIconOpacity(int alpha){
   if(alpha<0||alpha>255||!enabled||disposed||DateTime.UtcNow<nextIconAttempt)return false;
   bool sent=SendSkinCommand(FindWindow("RainmeterMeterWindow",Path.Combine(skinRoot,SkinName,"Main.ini")),"!CommandMeasure Dock \"SetIconOpacity("+alpha.ToString(CultureInfo.InvariantCulture)+")\" \""+ConfigName+"\"");
   nextIconAttempt=sent?DateTime.MinValue:DateTime.UtcNow.AddMilliseconds(250);return sent;
  }
- public void Dispose(){if(disposed)return;disposed=true;if(instance=="primary")return;try{Bang("!DeactivateConfig \""+ConfigName+"\"");}catch{}if(generatedFile==null)return;try{if(File.Exists(generatedFile)&&File.ReadAllText(generatedFile).StartsWith(Marker,StringComparison.Ordinal))File.Delete(generatedFile);string directory=Path.GetDirectoryName(generatedFile);if(Directory.Exists(directory)&&Directory.GetFileSystemEntries(directory).Length==0)Directory.Delete(directory);}catch{}}
+ public void Dispose(){if(disposed)return;disposed=true;try{Bang("!DeactivateConfig \""+ConfigName+"\"");}catch{}if(generatedFile==null)return;try{if(File.Exists(generatedFile)&&File.ReadAllText(generatedFile).StartsWith(Marker,StringComparison.Ordinal))File.Delete(generatedFile);string directory=Path.GetDirectoryName(generatedFile);if(Directory.Exists(directory)&&Directory.GetFileSystemEntries(directory).Length==0)Directory.Delete(directory);}catch{}}
 }

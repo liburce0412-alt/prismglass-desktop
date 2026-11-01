@@ -26,7 +26,6 @@ AlwaysOnTop=-2
  $main=$main.Replace('DockMonitorLeft=0','DockMonitorLeft=-16000').Replace('DockMonitorTop=0','DockMonitorTop=-16000').Replace('DockMonitorWidth=0','DockMonitorWidth=2560').Replace('DockMonitorHeight=0','DockMonitorHeight=1440').Replace('DockPixelScale=0','DockPixelScale=1').Replace('[!ZPos 1]','[!ZPos -2]')
  $main=$main.Replace('[Variables]',"[Variables]`r`nProductionScript=$repo\rainmeter\PrismGlass\@Resources\Dock.lua")
  $main | Set-Content -LiteralPath (Join-Path $skin 'Main.ini') -Encoding unicode
- Copy-Item -LiteralPath (Join-Path $repo 'rainmeter/PrismGlass/@Resources/LiquidGlass.lua') -Destination (Join-Path $skins '@Resources/LiquidGlass.lua')
  Add-Type -AssemblyName System.Drawing
  $png=Join-Path $fixture 'icon.png'
  $bitmap=[Drawing.Bitmap]::new(16,16)

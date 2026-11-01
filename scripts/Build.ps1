@@ -17,15 +17,21 @@ $out=if($OutputRoot){[IO.Path]::GetFullPath($OutputRoot)}else{Join-Path $repo 'd
 $app=Join-Path $out 'LiquidDesktop'
 if((Test-Path -LiteralPath (Join-Path $out 'prismglass-install.json')) -or (Test-Path -LiteralPath (Join-Path $app 'runtime-data')) -or (Test-Path -LiteralPath (Join-Path $app 'desktop-settings.json'))){throw 'Build output is a user installation or runtime directory. Choose a clean build directory.'}
 New-Item -ItemType Directory -Path $app -Force | Out-Null
-Get-ChildItem "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.cs','.ps1','.js','.html','.css' -or $_.Name -in 'app-center-pinyin.txt','app-center-pinyin-LICENSE.txt'} | Copy-Item -Destination $app
+Get-ChildItem "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.cs','.ps1','.js','.html','.css','.svg' -or $_.Name -in 'app-center-pinyin.txt','app-center-pinyin-LICENSE.txt'} | Copy-Item -Destination $app
 Copy-Item "$repo/assets/Brand/prismglass-icon-refined.ico" "$app/PrismGlass.ico"
 [IO.File]::WriteAllText((Join-Path $app 'AssemblyInfo.cs'),("using System.Reflection;`n[assembly: AssemblyTitle(""PrismGlass Desktop"")]`n[assembly: AssemblyProduct(""PrismGlass Desktop"")]`n[assembly: AssemblyVersion(""$fileVersion"")]`n[assembly: AssemblyFileVersion(""$fileVersion"")]`n[assembly: AssemblyInformationalVersion(""$version"")]`n"))
 Copy-Item "$repo/src/LiquidDesktop/companion-web" $app -Recurse -Force
+New-Item -ItemType Directory -Path (Join-Path $app 'PrismNpu') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'tools/PrismNpu/main.py') -Destination (Join-Path $app 'PrismNpu/main.py')
 Copy-Item -LiteralPath $qrAssembly -Destination $app
 foreach($name in @('Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll')){Copy-Item "$package/lib/net462/$name" $app}
 Copy-Item "$package/runtimes/win-x64/native/WebView2Loader.dll" $app
 $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $uia=Join-Path (Split-Path $csc) 'WPF'
+$audioAssemblies=@(& (Join-Path $PSScriptRoot 'GetNAudio.ps1') -CacheRoot $deps)
+$audioAssemblies | ForEach-Object {Copy-Item -LiteralPath $_ -Destination $app -Force}
+& $csc /nologo /target:exe /platform:x64 /optimize+ "/out:$app/PrismAudio.exe" "/r:$app/NAudio.Core.dll" "/r:$app/NAudio.Wasapi.dll" "/r:$(Split-Path $csc)/netstandard.dll" (Join-Path $repo 'tools/CompanionAudio/Program.cs')
+if($LASTEXITCODE -ne 0){throw 'Audio capture helper compilation failed'}
 Push-Location $app
 try{
  $sources=@(Get-ChildItem "$repo/src/LiquidDesktop" -Filter '*.cs' | ForEach-Object {$_.FullName})+@(Join-Path $app 'AssemblyInfo.cs')
@@ -41,6 +47,8 @@ Copy-Item "$repo/licenses" $out -Recurse -Force
 Copy-Item "$repo/assets/Cursors" $out -Recurse -Force
 Copy-Item "$repo/LICENSE","$repo/THIRD-PARTY-NOTICES.md","$repo/README.md" $out
 Copy-Item "$repo/docs/COMPANION.md","$repo/docs/COMPANION-SCREEN.md" $out
+Copy-Item "$repo/docs/NPU-TOOLS.md" $out
+Copy-Item "$repo/docs/REMOTE-DESKTOP-COMPARISON.md" $out
 Copy-Item "$repo/docs/PRIVACY.md" $out
 Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1","$repo/scripts/RepairCompanionVideo.ps1" $out
 # Windows PowerShell 5.1 needs a BOM to read Chinese scripts independently of the system locale.

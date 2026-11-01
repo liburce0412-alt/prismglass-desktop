@@ -19,10 +19,12 @@ internal sealed class CompanionVirtualDisplay {
  internal bool Available {get{try{var all=CompanionDisplayTopology.Read(1);CompanionDisplayTopology.FindVirtual(all);return true;}catch{return false;}}}
  internal string UnavailableReason {get{try{CompanionDisplayTopology.FindVirtual(CompanionDisplayTopology.Read(1));return "";}catch(InvalidOperationException ex){return ex.Message;}catch{return "无法读取显示器状态，请在电脑检查虚拟显示驱动。";}}}
  internal List<CompanionPhysicalMonitor> PhysicalMonitors(){return CompanionDisplayTopology.PhysicalMonitors(CompanionDisplayTopology.Read(2));}
- internal Rectangle BeginExtension(){lock(gate){
+ internal Rectangle BeginExtension(bool portrait=false){lock(gate){
   if(owned)throw new InvalidOperationException("副屏已在使用，请先关闭原来的副屏。");
   RecoverIdle();var current=CompanionDisplayTopology.Read(1);var target=CompanionDisplayTopology.FindVirtual(current);
-  var plan=CompanionDisplayTopology.Enable(current,target,CompanionDisplayTopology.Preferred(target.target));
+  var preferred=CompanionDisplayTopology.Preferred(target.target);
+  bool rotate=portrait!=(preferred.height>preferred.width)&&CompanionDisplayTopology.SupportsQuarterTurn(preferred,CompanionDisplayTopology.SupportedModes(target));
+  var plan=CompanionDisplayTopology.EnableValidated(current,target,preferred,rotate);
   SaveIcons();owned=true;extensionTarget=target;
   try{CompanionDisplayTopology.ApplyChecked(current,plan,false);RestoreIcons(false);return CompanionDisplayTopology.WaitVirtualBounds(target,true);}
   catch{try{StopExtension();}catch{throw new InvalidOperationException("副屏启动失败，自动恢复也未完成；请在电脑关闭副屏后重试。");}throw;}
@@ -82,6 +84,20 @@ internal static class CompanionDisplayTopology {
  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]struct AdapterName {public Header header;[MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)]public string path;}
  [StructLayout(LayoutKind.Explicit,Size=80)]internal struct PreferredMode {[FieldOffset(0)]public Header header;[FieldOffset(20)]public uint width;[FieldOffset(24)]public uint height;[FieldOffset(32)]public Signal signal;}
  internal sealed class Snapshot {public DisplayPath[] paths;public Mode[] modes;}
+ [StructLayout(LayoutKind.Explicit,Size=220)]internal struct DisplayMode {
+  [FieldOffset(68)]public ushort size;[FieldOffset(72)]public uint fields;[FieldOffset(84)]public uint orientation;
+  [FieldOffset(168)]public uint bits;[FieldOffset(172)]public uint width;[FieldOffset(176)]public uint height;
+  [FieldOffset(180)]public uint flags;[FieldOffset(184)]public uint frequency;
+ }
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)][return:MarshalAs(UnmanagedType.Bool)]static extern bool EnumDisplaySettingsEx(string device,uint index,ref DisplayMode mode,uint flags);
+ internal static List<DisplayMode> SupportedModes(DisplayPath target){
+  if(!IsVirtual(target))throw new InvalidOperationException("仅枚举受管理副屏的模式。");
+  string device=SourceDevice(target.source);if(String.IsNullOrEmpty(device))throw new InvalidOperationException("副屏显示源不可用。");
+  var result=new List<DisplayMode>();for(uint index=0;index<4096;index++){
+   var mode=new DisplayMode{size=220};if(!EnumDisplaySettingsEx(device,index,ref mode,4))return result;
+   if((mode.fields&0x5C0000)==0x5C0000&&mode.bits==32&&mode.width>=320&&mode.height>=320&&mode.width<=8192&&mode.height<=8192&&mode.frequency>=24&&mode.frequency<=240)result.Add(mode);
+  }throw new InvalidOperationException("副屏模式数量异常。");
+ }
  [DllImport("user32.dll")]static extern int GetDisplayConfigBufferSizes(uint flags,out uint paths,out uint modes);
  [DllImport("user32.dll")]static extern int QueryDisplayConfig(uint flags,ref uint pathCount,[Out]DisplayPath[] paths,ref uint modeCount,[Out]Mode[] modes,IntPtr topology);
  [DllImport("user32.dll",EntryPoint="DisplayConfigGetDeviceInfo")]static extern int SourceInfo(ref SourceName name);
@@ -131,14 +147,21 @@ internal static class CompanionDisplayTopology {
  internal static Snapshot Disable(Snapshot current,DisplayPath target){
   var paths=current.paths.Where(path=>(path.flags&1)!=0&&TargetKey(path)!=TargetKey(target)).ToArray();if(paths.Length==0)throw new InvalidOperationException("不能关闭唯一的显示器。");return new Snapshot{paths=paths,modes=(Mode[])current.modes.Clone()};
  }
- internal static Snapshot Enable(Snapshot current,DisplayPath target,PreferredMode preferred){
+ internal static bool SupportsQuarterTurn(PreferredMode preferred,IEnumerable<DisplayMode> modes){return modes.Any(mode=>mode.orientation==1&&mode.width==preferred.height&&mode.height==preferred.width&&mode.frequency==(uint)preferred.signal.c/Math.Max(1u,(uint)(preferred.signal.c>>32)));}
+ internal static Snapshot EnableValidated(Snapshot current,DisplayPath target,PreferredMode preferred,bool rotate){
+  var plan=Enable(current,target,preferred,rotate);
+  // Some drivers enumerate rotations that CCD rejects; fall back to the native orientation.
+  try{Validate(plan);}catch(Win32Exception){if(!rotate)throw;plan=Enable(current,target,preferred);Validate(plan);}return plan;
+ }
+ internal static Snapshot Enable(Snapshot current,DisplayPath target,PreferredMode preferred,bool rotate=false){
   if(preferred.width==0||preferred.height==0||preferred.width>8192||preferred.height>8192||(ulong)preferred.width*preferred.height>33554432)throw new InvalidOperationException("副屏分辨率无效。");
   var paths=current.paths.Where(path=>(path.flags&1)!=0&&TargetKey(path)!=TargetKey(target)).ToList();if(paths.Count==0)throw new InvalidOperationException("请先连接主屏幕。");
   if(paths.Any(path=>SourceKey(path)==SourceKey(target)))throw new InvalidOperationException("副屏与其他屏幕共用显示源。");
-  int right=paths.Max(path=>Bounds(current,path).Right);if(right>32768-(int)preferred.width)throw new InvalidOperationException("桌面范围过大。");
-  var modes=new List<Mode>(current.modes);target.source.mode=(uint)modes.Count;modes.Add(new Mode{type=1,id=target.source.id,adapter=target.source.adapter,source=new SourceMode{width=preferred.width,height=preferred.height,format=4,position=new Point{x=right,y=0}}});
+  uint width=rotate?preferred.height:preferred.width,height=rotate?preferred.width:preferred.height;
+  int right=paths.Max(path=>Bounds(current,path).Right);if(right>32768-(int)width)throw new InvalidOperationException("桌面范围过大。");
+  var modes=new List<Mode>(current.modes);target.source.mode=(uint)modes.Count;modes.Add(new Mode{type=1,id=target.source.id,adapter=target.source.adapter,source=new SourceMode{width=width,height=height,format=4,position=new Point{x=right,y=0}}});
   target.target.mode=(uint)modes.Count;modes.Add(new Mode{type=2,id=target.target.id,adapter=target.target.adapter,signal=preferred.signal});
-  target.flags=1;target.target.rotation=1;target.target.scaling=1;target.target.refresh=new Rational{numerator=(uint)preferred.signal.c,denominator=(uint)(preferred.signal.c>>32)};target.target.scanline=(uint)(preferred.signal.f>>32);paths.Add(target);return new Snapshot{paths=paths.ToArray(),modes=modes.ToArray()};
+  target.flags=1;target.target.rotation=rotate?2u:1u;target.target.scaling=1;target.target.refresh=new Rational{numerator=(uint)preferred.signal.c,denominator=(uint)(preferred.signal.c>>32)};target.target.scanline=(uint)(preferred.signal.f>>32);paths.Add(target);return new Snapshot{paths=paths.ToArray(),modes=modes.ToArray()};
  }
  internal static string Fingerprint(Snapshot state,Func<DisplayPath,bool> ignore){
   var rows=new List<string>();foreach(var path in state.paths){if((path.flags&1)==0||ignore(path))continue;var bounds=Bounds(state,path);if(path.target.mode>=state.modes.Length)throw new InvalidOperationException("屏幕目标模式不可用。");var mode=state.modes[path.target.mode];var s=mode.signal;

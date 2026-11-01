@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -40,7 +40,7 @@ internal sealed class CompanionHost : IDisposable {
  }
  void NetworkChanged(object sender,EventArgs e){if(closed||activeNetwork==null||!owner.IsHandleCreated)return;try{owner.BeginInvoke(new Action(()=>{if(!closed&&management!=null)management.RefreshNetwork();}));}catch(InvalidOperationException){}}
  void SessionChanged(object sender,SessionSwitchEventArgs e){if(e.Reason==SessionSwitchReason.SessionLock||e.Reason==SessionSwitchReason.SessionLogoff){sessionLocked=true;Interlocked.Increment(ref islandRevision);bridge.StopControls();}else if(e.Reason==SessionSwitchReason.SessionUnlock){sessionLocked=false;Interlocked.Increment(ref islandRevision);}}
- bool IsLocked(){if(closed||sessionLocked)return true;IntPtr input=OpenInputDesktop(0,false,1);if(input==IntPtr.Zero)return true;try{int needed;var name=new StringBuilder(256);return !GetUserObjectInformation(input,2,name,512,out needed)||!String.Equals(name.ToString(),"Default",StringComparison.OrdinalIgnoreCase);}finally{CloseDesktop(input);}}
+ internal bool IsLocked(){if(closed||sessionLocked)return true;IntPtr input=OpenInputDesktop(0,false,1);if(input==IntPtr.Zero)return true;try{int needed;var name=new StringBuilder(256);return !GetUserObjectInformation(input,2,name,512,out needed)||!String.Equals(name.ToString(),"Default",StringComparison.OrdinalIgnoreCase);}finally{CloseDesktop(input);}}
  object Dispatch(Func<object> operation){
   if(closed||owner.IsDisposed||!owner.IsHandleCreated)throw new InvalidOperationException();if(!owner.InvokeRequired)return operation();
   var result=new TaskCompletionSource<object>();int cancelled=0;
@@ -54,7 +54,7 @@ internal sealed class CompanionHost : IDisposable {
  CompanionManagement Management {get{if(management==null)management=new CompanionManagement(this);return management;}}
  public object ManagementSnapshot(){return Management.Snapshot();}
  internal int IslandRevision {get{return Volatile.Read(ref islandRevision);}}
- internal object IslandSnapshot(){bool running=!closed&&server.IsRunning&&!IsLocked();return new{running=running,connected=running?server.ActiveDeviceCount:0,screen=running&&bridge.ScreenActive,pointer=running&&bridge.PointerActive};}
+ internal object IslandSnapshot(){bool running=!closed&&server.IsRunning&&!IsLocked();return new{running=running,connected=running?server.ActiveDeviceCount:0,screen=running&&bridge.ScreenActive,pointer=running&&bridge.PointerActive,audio=running&&bridge.AudioActive};}
  internal async Task StopRemoteControls(){
   if(closed||stoppingRemote)return;stoppingRemote=true;ResetVideo();int revision=videoRevision;Interlocked.Increment(ref islandRevision);
   try{await Task.Run(()=>{bridge.StopControls();if(bridge.PointerActive)throw new InvalidOperationException();});if(!closed&&revision==videoRevision)Management.VideoNotice("远程控制已停止，伴随屏连接和设备授权已保留。",false);}
@@ -126,7 +126,7 @@ internal sealed class CompanionHost : IDisposable {
    return new {status=status,service=state,notice=notice,error=noticeError,busy=working||connecting||host.VideoBusy,readingNetwork=readingNetwork,address=selectedAddress,port=selectedPort,networks=networks.Select(n=>new{address=n.address,label=n.Description}).ToArray(),qr=qrImage,code=code,entryQr=entryQr,result=result,appsLoaded=appsLoaded,apps=entries.Select(e=>new{id=e.id,name=e.name,exists=e.exists,allowed=Allowed(e)}).ToArray()};
   }
   bool Allowed(AppLibraryEntry entry){string signature;return host.config.apps.TryGetValue(entry.id,out signature)&&signature==CompanionBridge.EntrySignature(entry);}
-  static CompanionGrant Grants(Dictionary<string,object> message){object raw;if(!message.TryGetValue("grants",out raw)||!(raw is Dictionary<string,object>))throw new ArgumentException("权限草稿无效，请重新选择设备。");var values=(Dictionary<string,object>)raw;var keys=new[]{"apps","music","control","tasks","notes","pointer","power","screen","keyboard"};if(values.Count!=keys.Length||keys.Any(k=>!values.ContainsKey(k)||!(values[k] is bool)))throw new ArgumentException("权限草稿无效，请重新选择设备。");return new CompanionGrant{apps=(bool)values["apps"],music=(bool)values["music"],control=(bool)values["control"],tasks=(bool)values["tasks"],notes=(bool)values["notes"],pointer=(bool)values["pointer"],power=(bool)values["power"],screen=(bool)values["screen"],keyboard=(bool)values["keyboard"]};}
+  static CompanionGrant Grants(Dictionary<string,object> message){object raw;if(!message.TryGetValue("grants",out raw)||!(raw is Dictionary<string,object>))throw new ArgumentException("权限草稿无效，请重新选择设备。");var values=(Dictionary<string,object>)raw;var keys=new[]{"apps","music","control","tasks","notes","pointer","power","screen","keyboard"};if(values.Count!=keys.Length+(values.ContainsKey("audio")?1:0)||values.ContainsKey("audio")&&!(values["audio"] is bool)||keys.Any(k=>!values.ContainsKey(k)||!(values[k] is bool)))throw new ArgumentException("权限草稿无效，请重新选择设备。");return new CompanionGrant{apps=(bool)values["apps"],music=(bool)values["music"],control=(bool)values["control"],tasks=(bool)values["tasks"],notes=(bool)values["notes"],pointer=(bool)values["pointer"],power=(bool)values["power"],screen=(bool)values["screen"],keyboard=(bool)values["keyboard"],audio=values.ContainsKey("audio")&&(bool)values["audio"]};}
   string DeviceName(string id,bool pending){var snapshot=host.json.Deserialize<Dictionary<string,object>>(host.json.Serialize(host.server.Status()));var list=snapshot[pending?"pending":"devices"] as System.Collections.IEnumerable;if(list!=null)foreach(Dictionary<string,object> item in list)if(CompanionBridge.Text(item,"id")==id)return CompanionBridge.Text(item,"name");throw new InvalidOperationException("设备或请求已失效，请重新选择。");}
   public async void Handle(Dictionary<string,object> message){
    string command=CompanionBridge.Text(message,"command"),request=CompanionBridge.Text(message,"request");

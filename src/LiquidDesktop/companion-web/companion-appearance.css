@@ -195,14 +195,14 @@ body[data-reduced=true] button:active{transform:none!important}
 .screen-keyboard-bar #screen-text-form>label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 body[data-screen-layout=true] .topbar,body[data-screen-layout=true] .touch-bar,body[data-screen-layout=true] .pointer-heading{display:none}
 body[data-screen-layout=true] .shell{padding:0;gap:0}
-/* Safari can pan its visual viewport while the native keyboard is open. */
-body[data-screen-layout=true] #pointer-page{position:fixed;z-index:100;top:var(--viewport-top,0px);left:var(--viewport-left,0px);width:var(--viewport-width,100vw);height:var(--viewport-height,100vh);min-height:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:0;background:#080d17;overflow:hidden}
+/* Keep iPad status overlays clear even when Safari reports a zero safe-area inset. */
+body[data-screen-layout=true] #pointer-page{position:fixed;z-index:100;top:var(--viewport-top,0px);left:var(--viewport-left,0px);width:var(--viewport-width,100vw);height:var(--viewport-height,100vh);min-height:0;padding:max(24px,env(safe-area-inset-top,0px)) 0 0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:0;background:#080d17;overflow:hidden}
 body[data-screen-layout=true] .pointer-workspace{grid-column:1;grid-row:1;min-width:0;min-height:0;display:block;margin:0}
 body[data-screen-layout=true] #pointer-surface{width:100%;height:100%;min-height:0;padding:0;border:0;border-radius:0;box-shadow:none}
 body[data-screen-layout=true] #screen-video{border-radius:0}
 body[data-screen-keyboard=true] #screen-video{object-position:left bottom}
 body[data-screen-layout=true] .wheel-panel{display:none}
-body[data-screen-layout=true] .screen-controls{grid-column:1;grid-row:1;justify-self:end;align-self:stretch;width:300px;max-width:100%;z-index:1;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) 8px 8px;overflow:hidden;pointer-events:none}
+body[data-screen-layout=true] .screen-controls{grid-column:1;grid-row:1;justify-self:end;align-self:stretch;width:300px;max-width:100%;z-index:1;padding:8px max(8px,env(safe-area-inset-right)) 8px 8px;overflow:hidden;pointer-events:none}
 body[data-screen-layout=true] .screen-shortcuts>button{font-size:12px;padding:6px;min-width:48px;max-width:100%;pointer-events:auto}
 body[data-screen-layout=true] .screen-tools-toggle{display:block;width:48px;height:44px;padding:10px;border-radius:14px}
 body[data-screen-layout=true] #screen-tools{min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;background:rgba(12,28,47,.96);padding:12px;border-radius:18px;pointer-events:auto}
@@ -255,3 +255,21 @@ body[data-screen-layout=true] .pointer-actions{margin:8px 0}
 .pair-scan small{color:inherit;opacity:.85}
 .pair-recovery{display:flex;flex-wrap:wrap;margin-top:16px}.pair-recovery>button{margin-right:8px;margin-bottom:6px}
 .connection-settings button:focus,.connection-settings summary:focus{outline:2px solid var(--accent);outline-offset:3px}
+
+/* The input bar shares the surrounding glass and keeps send progress in place. */
+.screen-keyboard-bar{background:linear-gradient(135deg,rgba(34,65,93,.76),rgba(12,28,47,.86));-webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);box-shadow:inset 0 1px rgba(235,248,255,.15)}
+#screen-text-send{min-width:76px;font-variant-numeric:tabular-nums}.screen-keyboard-bar button{border-radius:12px}
+
+body[data-screen-fit=fill] #screen-video{object-fit:fill}
+
+#screen-recovery{display:none}#pointer-surface[data-recovering=true] #screen-recovery{display:block;visibility:visible;position:absolute;z-index:2;top:12px;left:12px;padding:8px 14px;border:1px solid var(--edge);border-radius:12px;background:rgba(12,28,47,.82);color:#f4f8ff;font-size:13px;pointer-events:none}#pointer-surface[data-recovering=true] video{opacity:.55}
+
+.screen-quick{display:none;pointer-events:auto}.screen-quick>div{display:flex;flex-wrap:wrap;align-items:center}.screen-quick button{min-width:44px;min-height:44px;font-size:12px;margin:3px;padding:7px 10px;border-radius:12px}
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-controls{width:min(100%,900px)}
+body[data-screen-layout=true][data-screen-controls=bottom] #screen-tools{width:300px;max-width:100%;align-self:flex-end}
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-quick,body[data-screen-layout=true][data-screen-input=side] .screen-quick{display:flex;flex-wrap:wrap;padding:4px;border:1px solid var(--edge);border-radius:18px;background:linear-gradient(135deg,rgba(34,65,93,.7),rgba(12,28,47,.8));-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-shortcuts,body[data-screen-layout=true][data-screen-input=side] .screen-shortcuts{flex-wrap:wrap;justify-content:flex-end}
+body[data-screen-layout=true][data-screen-input=side] .screen-quick{order:2;width:100%;margin-top:8px}
+.pointer-mode-label{display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-top:12px}.pointer-mode-label select{flex:1;max-width:calc(100% - 56px);margin-left:8px}
+
+body[data-screen-layout=true][data-screen-controls=bottom] .screen-shortcuts{max-height:var(--screen-letterbox-height);overflow:auto;flex-shrink:0}

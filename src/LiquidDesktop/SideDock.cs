@@ -38,7 +38,7 @@ internal sealed class SideDock : Form {
   pixels=new WebViewPixelScale(view,()=>{Place();ApplyRegion();layout="";PublishLayout();});
   root=directory;preview=isPreview;shared=data;instance=screenInstance;source=shared==null?new SideDockData(root):null;widgets=shared==null?new WidgetBackend(root):shared.Widgets;
   Text=preview?"PrismGlass SideDock · 验证":"PrismGlass SideDock";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;
-  screen=Screen.PrimaryScreen.Bounds;Place();BackColor=Color.FromArgb(18,34,46);ApplyRegion();view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);
+  screen=Screen.PrimaryScreen.Bounds;Place();BackColor=Color.FromArgb(18,34,46);ApplyRegion();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);
   Shown+=async(s,e)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"side-preview-runtime":"runtime-data"));
    await view.EnsureCoreWebView2Async(environment);
@@ -50,7 +50,7 @@ internal sealed class SideDock : Form {
    view.CoreWebView2.NavigationStarting+=(sender,a)=>{if(!a.Uri.StartsWith("https://prism-side.local/",StringComparison.Ordinal))a.Cancel=true;};
    view.CoreWebView2.NewWindowRequested+=(sender,a)=>a.Handled=true;
    view.CoreWebView2.WebMessageReceived+=(sender,a)=>{if(a.Source.StartsWith("https://prism-side.local/",StringComparison.Ordinal))Receive(a.TryGetWebMessageAsString());};
-   view.CoreWebView2.ProcessFailed+=(sender,a)=>Fail("WebView2: "+a.ProcessFailedKind);
+   view.CoreWebView2.ProcessFailed+=(sender,a)=>{if(!WebViewRecovery.KeepAlive(root,a.ProcessFailedKind))Fail("WebView2: "+a.ProcessFailedKind);};
    view.Source=new Uri("https://prism-side.local/sidedock.html");timer.Interval=1000;timer.Tick+=(sender,a)=>Tick();timer.Start();
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready){widgetRead=DateTime.MinValue;dataRead=DateTime.MinValue;Tick();}};
@@ -117,6 +117,7 @@ internal sealed class SideDock : Form {
    else if(text.StartsWith("action:")){widgets.Action(text.Substring(7));if(shared!=null)shared.Invalidate();File.WriteAllText(Path.Combine(root,"last-widget-action.txt"),DateTime.UtcNow.ToString("o")+" "+text.Substring(7));Send(widgets.Read());}
    else if(text=="settings-power")OpenSettings("ms-settings:powersleep");
    else if(text=="settings-network")OpenSettings("ms-settings:network-status");
+   else if(text=="wifi-connect"){try{OpenSettings("ms-availablenetworks:");}catch{OpenSettings("ms-settings:network-wifi");}}
    else if(text=="close-preview"&&preview)Close();
   }catch(Exception ex){File.WriteAllText(Diagnostic("side-error.txt"),ex.ToString());Send(new{type="action-error",message="未能打开，请重试。"});}
  }
@@ -144,7 +145,7 @@ internal sealed class SideDock : Form {
   using(var path=new GraphicsPath()){
    if(railHeight>0)Round(path,4*scale,4*scale,88*scale,railHeight*scale,28*scale);
    if(panelWidth>1){Round(path,108*scale,panelTop*scale,panelWidth*scale,panelHeight*scale,28*scale);}
-   var previous=Region;Region=new Region(path);if(previous!=null)previous.Dispose();
+   var previous=Region;Region=GlassWindow.Clip(path,ClientRectangle);if(previous!=null)previous.Dispose();
   }
  }
 }

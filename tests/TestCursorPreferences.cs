@@ -21,6 +21,10 @@ class TestCursorPreferences {
    var bad=CursorPreferences.Load(root);Check(bad.style=="rounded-dark"&&bad.trailStyle=="particles"&&bad.trailColor=="#79C3E3"&&!bad.trailEnabled,"invalid fields recover without enabling disabled trail");
    File.WriteAllText(Path.Combine(root,"cursor-options.json"),"{broken");Check(CursorPreferences.Load(root).style=="rounded-dark","corrupt configuration has a safe default");
    Check(!File.Exists(Path.Combine(root,"cursor-options.json.tmp")),"atomic save leaves no temporary file");
+   int restores=0;Check(CursorPreferences.Restore(root,()=>{restores++;return true;})&&restores==0,"exit leaves unowned Windows cursor settings alone");
+   string marker=Path.Combine(root,"cursor-theme.active");File.WriteAllText(marker,"owned");
+   Check(!CursorPreferences.Restore(root,()=>false)&&File.Exists(marker),"failed native restoration retains its recovery marker");
+   Check(CursorPreferences.Restore(root,()=>{restores++;return true;})&&restores==1&&!File.Exists(marker),"exit clears ownership only after Windows cursor restoration succeeds");
   }catch(Exception ex){Console.WriteLine("FAIL "+ex.GetType().Name+": "+ex.Message);Environment.ExitCode=1;}
   finally{Directory.Delete(root,true);}
  }

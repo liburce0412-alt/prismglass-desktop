@@ -93,7 +93,11 @@ try{
  Check ([IO.File]::ReadAllText((Join-Path $skin 'user-note.txt')) -eq 'keep skin note') 'Upgrade preserves unrelated skin data'
  $foreign=Join-Path $fixture 'foreign'
  Reject {Assert-SetupOwnership $foreign $skin $true} 'Another installation cannot take over owned skin'
- $ownerPath=Join-Path $skin '.prismglass-owner.json';$owner=Read-SetupRecord $ownerPath;$owner.files+=@('..\outside.txt');Write-SetupRecord $ownerPath $owner
+ $ownerPath=Join-Path $skin '.prismglass-owner.json';$owner=Read-SetupRecord $ownerPath
+ $retired=Join-Path $skin 'Topbar/Main.ini';New-Item -ItemType Directory -Path (Split-Path $retired) -Force | Out-Null;[IO.File]::WriteAllText($retired,'old owned topbar');$owner.files+=@('Topbar\Main.ini');Write-SetupRecord $ownerPath $owner
+ Install-SetupSkin $install $skin $record.powershell $record.latitude $record.longitude
+ Check (!(Test-Path -LiteralPath $retired) -and 'Topbar\Main.ini' -notin (Read-SetupRecord $ownerPath).files) 'Upgrade removes the retired owned Topbar and its manifest entry'
+ $owner=Read-SetupRecord $ownerPath;$owner.files+=@('..\outside.txt');Write-SetupRecord $ownerPath $owner
  Reject {Remove-SetupSkin $install $skin} 'Escaping uninstall manifest is rejected before deletion'
  Check (Test-Path -LiteralPath $main) 'Failed uninstall validation preserves program skin'
  $owner.files=@('Dock\Main.ini');Write-SetupRecord $ownerPath $owner

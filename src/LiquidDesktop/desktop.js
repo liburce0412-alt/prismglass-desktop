@@ -2,6 +2,7 @@
 (() => {
 const layer=document.getElementById('lyrics-layer'),pill=document.getElementById('dock-lyrics'),current=document.getElementById('lyric-current'),next=document.getElementById('lyric-next');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)'),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let label=null;const labelText=document.createElement('div');labelText.id='dock-name';labelText.className='glass-tooltip';document.body.appendChild(labelText);
 let glassReceive,layout=null,base=null,active=false,motionPaused=false,raf=0,last=0,watchdog=0,fluid=0,lastText='',lastNext='';
 const size={w:{x:0,v:0,target:0},h:{x:0,v:0,target:0},reveal:{x:0,v:0,target:0}};
 let iconSequence=0,iconAlpha=-1,iconDesired=255,iconSent=-Infinity,iconForce=true,iconPending=false,iconEpoch=0,iconSentEpoch=0,iconsHidden=false,iconLease=0;
@@ -62,7 +63,7 @@ function draw(){
  const moving=Object.values(size).some(p=>p.x!==p.target||p.v!==0);
  const contraction=clamp((base.w-w)/Math.max(1,base.w-textWidth),0,1);
  const card={...base,x,y,w,h,r:base.r+(Math.min(h/2,30)-base.r)*contraction,clipOffsetX:x-base.x,clipOffsetY:y-base.y,fixedShape:active||moving,motionFluid:still()?0:fluid,flowY:Math.sign(-size.w.v)};
- glassReceive({type:'geometry',externallyDriven:true,cards:layout.cards.map(c=>c.name==='Dock'?card:c)});
+ glassReceive({type:'geometry',externallyDriven:true,cards:layout.cards.map(c=>c.name==='Dock'?card:c).concat(label?[label]:[])});
  layer.style.width=layout.width+'px';layer.style.height=layout.height+'px';
  layer.style.transform=`scale(${innerWidth/layout.width},${innerHeight/layout.height})`;
  pill.style.left=x+'px';pill.style.top=y+'px';pill.style.width=w+'px';pill.style.height=h+'px';
@@ -96,7 +97,9 @@ function frame(now){
 function wake(){if(base&&!raf){last=performance.now();raf=requestAnimationFrame(frame);}}
 function hide(){if(active)resetIconAck(true);active=false;targets();PrismLyrics.cancel(pill);cancel(scrollAnimations);draw();wake();}
 function receive(m){
- if(m.type==='dock-icons-ack'){
+ if(m.type==='dock-label'){
+  label=m.text?{name:'DockLabel',x:m.x,y:m.y,w:m.w,h:m.h,r:m.h/2,fixedShape:true,rimStrength:.32}:null;labelText.textContent=m.text;labelText.style.display=label?'flex':'none';if(label){Object.assign(labelText.style,{left:m.x+'px',top:m.y+'px',width:m.w+'px',height:m.h+'px',borderRadius:m.h/2+'px'});}draw();wake();
+ }else if(m.type==='dock-icons-ack'){
   if(!iconPending||m.sequence!==iconSequence||m.alpha!==iconAlpha)return;
   iconPending=false;
   if(iconSentEpoch!==iconEpoch||m.alpha!==iconDesired){draw();wake();return;}

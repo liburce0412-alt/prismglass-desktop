@@ -25,6 +25,8 @@ try{
  foreach($enabled in @($true,$false)){$readiness=@{primaryEnabled=$enabled};Check ((Invoke-Expression $visibleExpression) -eq !$enabled) ('Primary enabled='+$enabled+' gives the correct native icon visibility')}
  Check ([IO.File]::ReadAllText($source).Contains("-ArgumentList '--renderer'")) 'Internal renderer launch cannot recurse through the public startup entry'
  Check ($ast.ParamBlock.Parameters.Name.VariablePath.UserPath -contains 'ShowErrors') 'Interactive launches can opt into visible errors; background callers stay nonmodal'
+ $dockTemplate=[IO.File]::ReadAllText((Join-Path $repo 'rainmeter/PrismGlass/Dock/Main.ini'))
+ Check (!$dockTemplate.Contains('LegacyGlass') -and !$dockTemplate.Contains('LiquidGlass.lua') -and !(Test-Path -LiteralPath (Join-Path $repo 'rainmeter/PrismGlass/Topbar/Main.ini'))) 'Retired Topbar and flat Dock fallback are absent from shipped templates'
 }finally{
  $boundary=[IO.Path]::GetFullPath((Join-Path $repo 'artifacts/tests'))+[IO.Path]::DirectorySeparatorChar
  $resolved=[IO.Path]::GetFullPath($fixture);if(!$resolved.StartsWith($boundary,[StringComparison]::OrdinalIgnoreCase)){throw 'Fixture escaped test directory'}

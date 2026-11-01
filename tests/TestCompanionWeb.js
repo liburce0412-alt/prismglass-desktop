@@ -66,7 +66,7 @@ function fixture(options = {}) {
   const location = { hash: options.hash || '', pathname: '/', search: options.search || '' };
   context.window = { innerWidth: 1024, innerHeight: 768, visualViewport: options.viewport, location, history: { replaceState: (state, title, url) => { historyChanges.push(url); location.hash = ''; } }, matchMedia: () => ({ matches: false }), addEventListener: (name, fn) => { windowListeners[name] = fn; } };
   vm.runInNewContext(source, context, { filename: 'companion.js' });
-  return { ids, all, document, calls, blobs, revokedBlobs, historyChanges, location, current, applications, listeners, windowListeners, time: () => now, timerDelays: () => Array.from(timers.values(), item => item.delay), imageCount: () => imagesCreated, advance: ms => { now += ms; }, handler: fn => { handler = fn; }, async timers(delay) { const ready = Array.from(timers.entries()).filter(([, item]) => item.delay === delay); ready.forEach(([id]) => timers.delete(id)); ready.forEach(([, item]) => item.fn()); await flush(); }, async boot() { await this.timers(0); }, async hide() { document.hidden = true; listeners.visibilitychange(); await flush(); }, async show() { document.hidden = false; listeners.visibilitychange(); await this.timers(0); } };
+  return { window: context.window, ids, all, document, calls, blobs, revokedBlobs, historyChanges, location, current, applications, listeners, windowListeners, time: () => now, timerDelays: () => Array.from(timers.values(), item => item.delay), imageCount: () => imagesCreated, advance: ms => { now += ms; }, handler: fn => { handler = fn; }, async timers(delay) { const ready = Array.from(timers.entries()).filter(([, item]) => item.delay === delay); ready.forEach(([id]) => timers.delete(id)); ready.forEach(([, item]) => item.fn()); await flush(); }, async boot() { await this.timers(0); }, async hide() { document.hidden = true; listeners.visibilitychange(); await flush(); }, async show() { document.hidden = false; listeners.visibilitychange(); await this.timers(0); } };
 }
 const click = (f, action) => (f.all.find(n => n.dataset.action === action) || f.ids['touch-actions'].children.find(n => n.dataset.touchId === action)).onclick();
 const submit = node => node.onsubmit({ preventDefault() {} });
@@ -442,6 +442,10 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   assert.equal(pointerPackets(idle).at(-1).kind, 'move', 'Fresh movement immediately leaves idle scheduling');
   idle.ids['pointer-stop'].onclick(); await flush(); const idleCount = pointerPackets(idle).length; idle.advance(5000); await idle.timers(5000);
   assert.equal(pointerPackets(idle).length, idleCount); assert.equal(idle.ids['pointer-surface'].dataset.active, 'false', 'Explicit stop cancels future keepalives');
+  await idle.ids['pointer-enable'].onclick();idle.window.PrismCompanionInput.stop(true);await flush();
+  assert.equal(idle.ids['pointer-surface'].dataset.active,'false','Screen stop clears the enabled touch state');
+  assert.equal(idle.ids['screen-touch-toggle'].attributes['aria-pressed'],'false','Screen stop updates the touch toggle');
+  assert(idle.calls.some(c=>c.url==='/api/pointer/end'),'Screen stop releases the server pointer lease');
   for (const leave of ['page', 'stop']) {
     let finishBegin; const opening = fixture({ state: { ...sample, permissions: { ...grants, pointer: true } } });
     opening.handler(c => c.url === '/api/pointer/begin' ? new Promise(resolve => { finishBegin = resolve; }) : c.url === '/api/pointer' ? response({ expiresAt: opening.time() + 20000 }) : undefined);
@@ -455,6 +459,61 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   for (let i = 1; i <= 3529; i++) { elapsed += 17; pointerBudget.ids['pointer-surface'].onpointermove(pointerEvent(i, 0)); await pointerPulse(pointerBudget); }
   pointerBudget.ids['pointer-stop'].onclick(); await flush(); assert(pointerPackets(pointerBudget).length >= 3500 && wireTimes.length <= 5400, 'Continuous healthy coalescing approaches 59 Hz within the bounded pointer transport budget');
   for (let end = 0, start = 0; end < wireTimes.length; end++) { while (wireTimes[end] - wireTimes[start] >= 1000) start++; assert(end - start + 1 <= 61 && end - start + 1 <= 90, 'Near-sixty-Hz sampling includes begin/end with room in the ninety-request device budget'); }
+  const direct = await readyPointer(); direct.ids['pointer-mode'].value='direct'; direct.ids['pointer-mode'].onchange();
+  const native=await readyPointer();native.ids['pointer-mode'].value='touch';let nativeGeometry='fixed';
+  native.window.PrismCompanionScreen={point:(x,y)=>({geometry:nativeGeometry,command:{screenLease:'native-screen',x:x*100,y:y*100}})};
+  const nativePad=native.ids['pointer-surface'];nativePad.onpointerdown(pointerEvent(20,30,41));await pointerPulse(native);
+  nativePad.onpointerdown(pointerEvent(40,30,57));await pointerPulse(native);
+  assert.deepEqual(pointerPackets(native).map(p=>p.contacts.map(t=>t.id)),[[0],[0,1]],'Safari pointer ids map to two bounded Windows contacts');
+  nativePad.onpointermove(pointerEvent(45,30,57));nativePad.onpointermove(pointerEvent(50,30,57));await pointerPulse(native);
+  assert.equal(pointerPackets(native).at(-1).contacts[1].x,5000,'native movements coalesce while preserving both contacts');
+  native.advance(250);await pointerPulse(native);await pointerPulse(native);assert.equal(pointerPackets(native).at(-1).contacts.length,2,'stationary native hold renews with the complete contact frame');
+  nativePad.onpointerup(pointerEvent(25,30,41));await pointerPulse(native);await pointerPulse(native);
+  assert.deepEqual(pointerPackets(native).slice(-2).map(p=>p.contacts.map(t=>t.id)),[[0,1],[1]],'final position is delivered before lifting only the first contact');
+  nativePad.onpointerup(pointerEvent(50,30,57));await pointerPulse(native);await pointerPulse(native);
+  assert.equal(pointerPackets(native).at(-1).contacts.length,0,'last lift sends an empty native frame');
+  assert(pointerPackets(native).every(p=>p.kind==='touch'),'native mode never duplicates touches as mouse clicks or scrolling');
+  for(const reason of ['geometry','cancel','mode','third-finger','blur']){
+    const n=await readyPointer();n.ids['pointer-mode'].value='touch';let shape='old';n.window.PrismCompanionScreen={layout(){},point:()=>({geometry:shape,command:{screenLease:'native-screen',x:100,y:200}})};
+    const pad=n.ids['pointer-surface'];pad.onpointerdown(pointerEvent(20,30));await pointerPulse(n);
+    if(reason==='geometry'){shape='new';pad.onpointermove(pointerEvent(21,30));}
+    else if(reason==='cancel')pad.onpointercancel(pointerEvent(20,30));
+    else if(reason==='mode'){n.ids['pointer-mode'].value='direct';n.ids['pointer-mode'].onchange();}
+    else if(reason==='third-finger'){pad.onpointerdown(pointerEvent(40,30,2));pad.onpointerdown(pointerEvent(50,30,3));}
+    else n.windowListeners.blur();
+    await flush();assert.equal(n.ids['pointer-surface'].dataset.active,'false',reason+' cancels native input');assert(n.calls.some(c=>c.url==='/api/pointer/end'),reason+' ends server lease for cancelled releases');
+  }
+  direct.ids['pointer-surface'].onpointerdown(pointerEvent(20,30)); direct.ids['pointer-surface'].onpointerup(pointerEvent(20,30)); await pointerPulse(direct);
+  assert.equal(pointerPackets(direct).filter(p=>p.kind==='point'||p.kind==='click').length,0,'direct mode cannot fall through to a relative click when no live video mapping exists');
+  direct.window.PrismCompanionScreen={point:()=>({geometry:'fixed',command:{screenLease:'screen-lease',x:1234,y:5678}})};
+  direct.ids['pointer-surface'].onpointerdown(pointerEvent(20,30)); direct.ids['pointer-surface'].onpointerup(pointerEvent(20,30)); await pointerPulse(direct);
+  assert.equal(pointerPackets(direct).at(-1).kind,'point'); assert.equal(pointerPackets(direct).at(-1).screenLease,'screen-lease','tap submits one position bound to the screen session');
+  const directCount=pointerPackets(direct).length; direct.ids['pointer-surface'].onpointerdown(pointerEvent(20,30)); direct.ids['pointer-surface'].onpointermove(pointerEvent(100,30)); direct.ids['pointer-surface'].onpointerup(pointerEvent(100,30)); await pointerPulse(direct); assert.equal(pointerPackets(direct).length,directCount,'a slide in tap mode is never an accidental click');
+  const directDrag = await readyPointer(); directDrag.ids['pointer-mode'].value='direct'; let geometry='fixed';
+  directDrag.window.PrismCompanionScreen={point:(x,y)=>({geometry,command:{screenLease:'screen-lease',x:x*100,y:y*100}})};
+  const directPad=directDrag.ids['pointer-surface'];
+  directPad.onpointerdown(pointerEvent(20,30)); directPad.onpointermove(pointerEvent(100,30)); await pointerPulse(directDrag);
+  assert.deepEqual(pointerPackets(directDrag).map(p=>[p.kind,p.phase,p.x]),[['point','start',2000]],'drag presses at the original target before moving');
+  directPad.onpointermove(pointerEvent(110,30)); directPad.onpointermove(pointerEvent(120,30)); await pointerPulse(directDrag);
+  assert.equal(pointerPackets(directDrag).at(-1).x,12000,'direct movement coalesces to the latest absolute position');
+  directDrag.advance(250); await pointerPulse(directDrag); assert.equal(pointerPackets(directDrag).at(-1).phase,'move','stationary direct drag renews through capture-validated coordinates');
+  directPad.onpointerup(pointerEvent(130,30)); await pointerPulse(directDrag); await pointerPulse(directDrag);
+  assert.deepEqual(pointerPackets(directDrag).slice(-2).map(p=>[p.kind,p.phase,p.x]),[['point','move',13000],['drag','end',undefined]],'final fresh position precedes release');
+  for(const reset of ['geometry','cancel','second-finger','mode']) {
+    directDrag.ids['pointer-mode'].value='direct'; geometry='fixed'; directPad.onpointerdown(pointerEvent(20,30)); directPad.onpointermove(pointerEvent(100,30)); await pointerPulse(directDrag);
+    if(reset==='geometry'){geometry='changed';directPad.onpointermove(pointerEvent(120,30));}
+    else if(reset==='cancel')directPad.onpointercancel(pointerEvent(100,30));
+    else if(reset==='second-finger')directPad.onpointerdown(pointerEvent(120,30,2));
+    else {directDrag.ids['pointer-mode'].value='trackpad';directDrag.ids['pointer-mode'].onchange();}
+    await pointerPulse(directDrag);assert.equal(pointerPackets(directDrag).at(-1).phase,'end',reset+' releases the direct drag without replaying movement');
+  }
+  geometry='fixed';directDrag.ids['pointer-mode'].value='direct';directPad.onpointerdown(pointerEvent(20,30));directPad.onpointerup(pointerEvent(20,30));geometry='changed';
+  const beforeChanged=pointerPackets(directDrag).length;await pointerPulse(directDrag);assert.equal(pointerPackets(directDrag).length,beforeChanged,'layout change while a tap is queued cannot click new coordinates');
+  let finishDirect;const slowDirect=await readyPointer(c=>c.url==='/api/pointer'&&c.body.phase==='start'?new Promise(resolve=>{finishDirect=resolve;}):undefined);
+  slowDirect.ids['pointer-mode'].value='direct';slowDirect.window.PrismCompanionScreen={point:(x,y)=>({geometry:'fixed',command:{screenLease:'screen-lease',x,y}})};
+  slowDirect.ids['pointer-surface'].onpointerdown(pointerEvent(20,30));slowDirect.ids['pointer-surface'].onpointermove(pointerEvent(100,30));await pointerPulse(slowDirect);
+  slowDirect.ids['pointer-surface'].onpointercancel(pointerEvent(100,30));finishDirect(response({expiresAt:slowDirect.time()+20000}));await flush();await pointerPulse(slowDirect);
+  assert.deepEqual(pointerPackets(slowDirect).map(p=>[p.kind,p.phase]),[['point','start'],['drag','end']],'cancellation while the press is in flight releases after its acknowledgement');
   const keyboard = fixture({ state: { ...sample, permissions: { ...grants, pointer: true, keyboard: true } } });
   const keyboardHandler = c => c.url === '/api/pointer/begin' ? response({ leaseId: 'keyboard', expiresAt: Date.now() + 120000 }) : c.url === '/api/pointer' ? response({ expiresAt: Date.now() + 120000 }) : undefined;
   keyboard.handler(keyboardHandler); await keyboard.boot(); keyboard.ids['pointer-tab'].onclick();
@@ -465,10 +524,21 @@ const submit = node => node.onsubmit({ preventDefault() {} });
   assert.equal(input.focused, true, 'The user tap synchronously focuses a native text input');
   input.oncompositionstart(); input.value = 'nihao'; await submit(form); assert.equal(pointerPackets(keyboard).length, 0, 'IME candidate composition never sends unfinished text');
   input.value = '你好 iPad 😀'; input.oncompositionend(); await submit(form);
-  assert.deepEqual(pointerPackets(keyboard).map(p => [p.kind, p.text]), [['text', '你好 iPad 😀']]); assert.equal(input.value, ''); assert.equal(input.disabled, false);
+  assert.deepEqual(pointerPackets(keyboard).map(p => [p.kind, p.text]), [['text', '你好 iPad 😀']]); assert.equal(input.value, ''); assert.equal(input.disabled, false); assert.equal(keyboard.ids['screen-text-send'].textContent, '已发送');
+  let releaseKeepalive; keyboard.handler(c => c.url === '/api/pointer' && c.body.kind === 'keepalive' ? new Promise(resolve => { releaseKeepalive = resolve; }) : keyboardHandler(c));
+  keyboard.advance(5000); await keyboard.timers(5000); await flush(); input.value = '保活后发送'; const waitingText = submit(form); await flush();
+  assert.equal(keyboard.ids['screen-text-send'].textContent, '等待发送'); releaseKeepalive(response({ expiresAt: Date.now() + 120000 })); await waitingText;
+  assert.equal(pointerPackets(keyboard).filter(p => p.text === '保活后发送').length, 1, 'Keepalive contention waits and sends exactly once');
+  keyboard.handler(keyboardHandler); input.value='中'.repeat(500)+'，😀'; await submit(form); assert.equal(pointerPackets(keyboard).at(-1).text,'中'.repeat(500)+'，😀','long composed input is not truncated');
+  keyboard.ids['pointer-hardware'].checked=true;
+  keyboard.ids['pointer-surface'].onkeydown({key:'c',ctrlKey:true,preventDefault(){}}); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).at(-1).key,'copy');
+  const keyCount=pointerPackets(keyboard).length; keyboard.ids['pointer-surface'].onkeydown({key:'a',isComposing:true,preventDefault(){throw Error('IME intercepted');}}); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).length,keyCount,'hardware forwarding leaves IME composition alone');
+  keyboard.ids['pointer-surface'].onkeydown({key:'Tab',shiftKey:true,preventDefault(){throw Error('local focus escape trapped');}}); keyboard.ids['pointer-hardware'].checked=false;
+  const retained = fixture({state:{...sample,permissions:{...grants,pointer:true,keyboard:true}}}); retained.handler(keyboardHandler); await retained.boot(); retained.ids['pointer-tab'].onclick(); await retained.ids['pointer-enable'].onclick(); retained.ids['screen-text'].value='待核对中文😀'; retained.windowListeners.offline(); assert.equal(retained.ids['screen-text'].value,'','offline text is hidden'); retained.windowListeners.online(); await retained.timers(0); assert.equal(retained.ids['screen-text'].value,'待核对中文😀'); assert.equal(pointerPackets(retained).filter(p=>p.kind==='text').length,0,'recovery never resends retained text');
+  retained.windowListeners.offline(); retained.handler(c=>c.url==='/api/session'?response({protocol:1,csrf:'different-pairing',grants:{...grants,pointer:true,keyboard:true}}):undefined); retained.windowListeners.online(); await retained.timers(0); assert.equal(retained.ids['screen-text'].value,'','different authenticated pairing cannot recover old text');
   let finishText; keyboard.handler(c => c.url === '/api/pointer' && c.body.kind === 'text' ? new Promise(resolve => { finishText = resolve; }) : keyboardHandler(c));
-  input.value = '第一句'; const sending = submit(form); await flush(); assert.equal(input.disabled, false, 'Sending must not dismiss the native keyboard');
-  await submit(form); assert.equal(pointerPackets(keyboard).length, 2, 'Double submit cannot duplicate input');
+  input.value = '第一句'; const sending = submit(form); await flush(); assert.equal(keyboard.ids['screen-text-send'].textContent, '发送中…'); assert.equal(input.disabled, false, 'Sending must not dismiss the native keyboard');
+  await submit(form); assert.equal(pointerPackets(keyboard).filter(p => p.text === '第一句').length, 1, 'Double submit cannot duplicate input');
   input.value = '下一句'; finishText(response({ expiresAt: Date.now() + 120000 })); await sending; assert.equal(input.value, '下一句', 'A late success preserves newly drafted text');
   keyboard.handler(keyboardHandler); const remoteBackspace = keyboard.all.find(n => n.getAttribute('data-remote-key') === 'backspace'); remoteBackspace.onclick(); await pointerPulse(keyboard); assert.equal(pointerPackets(keyboard).at(-1).key, 'backspace');
   keyboard.ids['screen-keyboard-close'].onclick(); assert(keyboard.ids['screen-keyboard-bar'].hidden && keyboard.ids['screen-keyboard-toggle'].focused && !input.focused); assert.equal(input.value, '下一句', 'Closing the keyboard preserves the unsent draft and returns focus');

@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $source=Get-Content (Join-Path $repo 'src/LiquidDesktop/LiquidDesktop.cs') -Raw
 $start=$source.IndexOf(' void PreviewTick(Point cursor){',[StringComparison]::Ordinal)
@@ -8,7 +8,7 @@ if($start -lt 0 -or $end -lt 0){throw 'PreviewTick method was not found'}
 $method=$source.Substring($start,$end-$start)
 $code=@'
 using System;using System.Drawing;using System.Collections.Generic;
-public sealed class Entry {public string id;public bool system;public List<int> windows=new List<int>{1};}
+public sealed class Entry {public string id;public string name="App";public bool system;public List<int> windows=new List<int>{1};}
 public sealed class DockPreview {
  public bool IsDisposed,KeyboardMode,Shown;public string EntryId;public Rectangle Bounds=new Rectangle(200,300,400,200);
  public DockPreview(string entry,Rectangle dock,bool astro){EntryId=entry;}
@@ -16,8 +16,10 @@ public sealed class DockPreview {
  public void Dispose(){IsDisposed=true;}public void Show(){Shown=true;}
 }
 public sealed class Backend {public Entry Entry(string id){return id=="removed"?null:new Entry{id=id,system=id=="workspace",windows=id=="empty"?new List<int>():new List<int>{1}};}}
+public sealed class DockLabel {public DockLabel(IntPtr h,Action<object> send,Func<Rectangle> screen){}public bool Visible;public static bool TryAnchor(string value,string id,out double anchor){anchor=.5;return value==id&&id.Length>0;}public void Display(string name,Rectangle dock,double anchor,bool astro){Visible=true;}public void Hide(){Visible=false;}}
+public static class DockBackend {public static bool Interaction(string root){return false;}}
 public sealed class PreviewLifecycle {
- DockPreview preview;Rectangle screen=new Rectangle(0,0,1200,800),dockRectangle=new Rectangle(100,600,1000,100);bool dockShown=true;string instance="primary",theme="Sky",hoverId="",nextId="";
+ DockLabel dockLabel;string root="";IntPtr Handle;void Send(object value){}bool paused,draggingDock;DockPreview preview;Rectangle screen=new Rectangle(0,0,1200,800),dockRectangle=new Rectangle(100,600,1000,100);bool dockShown=true;string instance="primary",theme="Sky",hoverId="",nextId="";
  readonly PreviewLifecycle coordinator;bool WorkspaceOpen;
  DateTime previewLeave,hoverSince;readonly Backend backend=new Backend();int checks;
  PreviewLifecycle(){coordinator=this;}
@@ -39,6 +41,10 @@ public sealed class PreviewLifecycle {
   WorkspaceOpen=false;PreviewTick(dockPoint);Check(preview==null,"returning from workspace starts a fresh hover delay");
   hoverSince=DateTime.UtcNow.AddMilliseconds(-450);PreviewTick(dockPoint);Check(preview!=null&&preview.EntryId=="new","normal application previews resume after the workspace closes");
   foreach(var id in new[]{"workspace","empty","removed"}){nextId=id;PreviewTick(dockPoint);hoverSince=DateTime.UtcNow.AddMilliseconds(-450);PreviewTick(dockPoint);Check(preview==null,id+" entry never creates an empty window preview");}
+  nextId="empty";PreviewTick(dockPoint);Check(dockLabel!=null&&dockLabel.Visible,"only hovered app owns the capsule without a window preview");
+  PreviewTick(new Point(900,200));Check(!dockLabel.Visible,"leaving hides the capsule immediately");
+  nextId="empty";draggingDock=true;PreviewTick(dockPoint);Check(!dockLabel.Visible,"dragging suppresses the capsule");draggingDock=false;
+  PreviewTick(dockPoint);WorkspaceOpen=true;PreviewTick(dockPoint);Check(!dockLabel.Visible,"workspace opening hides the capsule");
   Console.WriteLine(checks+" Dock preview lifecycle checks passed.");
  }
 }

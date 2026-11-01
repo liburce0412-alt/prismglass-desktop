@@ -5,11 +5,14 @@ using System.Threading;
 using System.Web.Script.Serialization;
 
 internal static class TestCompanionStream {
- sealed class Fake : ICompanionStreamRuntime {
-  public bool Alive {get;set;} public int starts,stops;public Action duringStart;public string mode;public int monitor;public bool failStop;
+ sealed class Fake : ICompanionStreamRuntime,ICompanionAudioRuntime {
+  public bool AudioAlive {get;set;}public bool failAudio;public int audioStarts;
+  public string StartAudio(string offer){audioStarts++;if(failAudio)throw new IOException();AudioAlive=true;return "v=0\r\n";}public void StopAudio(){AudioAlive=false;}
+  public System.Drawing.Rectangle CaptureBounds {get{return new System.Drawing.Rectangle(-1280,0,1280,720);}} public string Instance {get{return "test-instance";}}
+  public bool Alive {get;set;} public int starts,stops;public Action duringStart;public string mode;public int monitor;public bool failStop,portrait;
   public object Describe(){return new{available=true};}
-  public string Start(string mode,int monitor,string quality,string offer){this.mode=mode;this.monitor=monitor;starts++;Alive=true;if(duringStart!=null)duringStart();return "v=0\r\n";}
-  public void Stop(){stops++;if(failStop){failStop=false;throw new IOException();}Alive=false;}public void Dispose(){Stop();}
+  public string Start(string mode,int monitor,string quality,string offer,bool portrait=false){this.mode=mode;this.monitor=monitor;this.portrait=portrait;starts++;Alive=true;if(duringStart!=null)duringStart();return "v=0\r\n";}
+  public void Stop(){StopAudio();stops++;if(failStop){failStop=false;throw new IOException();}Alive=false;}public void Dispose(){Stop();}
  }
  static int checks;
  static void Check(bool value,string message){if(!value)throw new Exception(message);checks++;Console.WriteLine("PASS "+message);}
@@ -67,14 +70,34 @@ internal static class TestCompanionStream {
   Check(!CompanionMonitorSelection.SameCapture(a,null),"disconnected capture source cannot stay live");
   var backend=new Fake();bool locked=false;var now=DateTime.UtcNow;var first=new CompanionGrant{Active=true,screen=true};var second=new CompanionGrant{Active=true,screen=true};
   using(var stream=new CompanionStream(backend,()=>locked,()=>now,false)){
+   var stopped=new List<CompanionGrant>();stream.Stopped=grant=>stopped.Add(grant);
    Check(stream.Handle("/api/screen/begin",Offer(),new CompanionGrant{Active=true}).Status==403&&backend.starts==0,"old pairings do not inherit screen access");
    var bad=Offer();bad["monitor"]=-1;Check(stream.Handle("/api/screen/begin",bad,first).Status==400&&backend.starts==0,"invalid monitor cannot start capture");
    bad=Offer();bad["monitor"]=4096;Check(stream.Handle("/api/screen/begin",bad,first).Status==400&&backend.starts==0,"monitor identifier above the history bound is rejected");
    bad=Offer();bad["mode"]="unknown";Check(stream.Handle("/api/screen/begin",bad,first).Status==400&&backend.starts==0,"unknown screen mode cannot start capture");
    bad=Offer();bad["mode"]="extend";Check(stream.Handle("/api/screen/begin",bad,first).Status==400&&backend.starts==0,"extension does not accept a physical monitor identifier");
    bad=Offer();bad["quality"]="2160";Check(stream.Handle("/api/screen/begin",bad,first).Status==400,"quality is a fixed allowlist");
+   bad=Offer();bad["portrait"]="true";Check(stream.Handle("/api/screen/begin",bad,first).Status==400&&backend.starts==0,"orientation requires a boolean before capture starts");
    bad=Offer();bad["offer"]="v=0\r\n"+new string('a',50000);Check(stream.Handle("/api/screen/begin",bad,first).Status==400,"offer size is bounded");
+   bad=Offer();bad["instance"]="old-process";Check(stream.Handle("/api/screen/begin",bad,first).Status==409&&backend.starts==0,"stale process identity cannot capture a reassigned monitor ID");
    var started=stream.Handle("/api/screen/begin",Offer(),first);Check(started.Status==200&&backend.Alive&&backend.mode=="mirror"&&backend.monitor==0,"authorized viewer starts physical screen capture");var lease=Lease(started);
+   var audioOffer=new Dictionary<string,object>{{"lease",lease["lease"]},{"sequence",1},{"offer","v=0\r\n"}};
+   Check(stream.Handle("/api/screen/audio/begin",audioOffer,first).Status==403&&backend.audioStarts==0,"screen permission never implicitly captures system sound");
+   first.audio=true;Check(stream.Handle("/api/screen/audio/begin",audioOffer,first).Status==200&&backend.AudioAlive,"explicit audio permission starts the separate stream");
+   first.audio=false;stream.Sweep();Check(!backend.AudioAlive&&backend.Alive,"audio revocation stops capture while retaining authorized video");
+   first.audio=true;audioOffer["sequence"]=2;backend.failAudio=true;Check(stream.Handle("/api/screen/audio/begin",audioOffer,first).Status==503&&backend.Alive&&!backend.AudioAlive,"audio startup failure never tears down video");backend.failAudio=false;
+   audioOffer["sequence"]=3;stream.Handle("/api/screen/audio/begin",audioOffer,first);var audioEnd=new Dictionary<string,object>{{"lease",lease["lease"]},{"sequence",4}};Check(stream.Handle("/api/screen/audio/end",audioEnd,first).Status==200&&!backend.AudioAlive&&backend.Alive,"explicit audio stop leaves video running");
+   Check(stream.Handle("/api/screen/audio/begin",audioOffer,first).Status==409&&!backend.AudioAlive,"late audio begin cannot undo its stop");
+   audioOffer["sequence"]=5;stream.Handle("/api/screen/audio/begin",audioOffer,first);stream.Handle("/api/screen/audio/end",audioEnd,first);Check(backend.AudioAlive,"late stop cannot close a newer audio connection");
+   var audioPing=new Dictionary<string,object>{{"lease",lease["lease"]},{"audioSequence",5},{"audioEnabled",true}};
+   now=now.AddSeconds(10);stream.Handle("/api/screen/ping",audioPing,first);now=now.AddSeconds(10);stream.Sweep();Check(backend.AudioAlive&&backend.Alive,"matching audio heartbeat renews both streams");
+   stream.Handle("/api/screen/ping",lease,first);now=now.AddSeconds(6);stream.Sweep();Check(!backend.AudioAlive&&backend.Alive,"video-only heartbeat cannot keep abandoned audio alive");
+   audioPing["audioSequence"]=6;stream.Handle("/api/screen/ping",audioPing,first);audioOffer["sequence"]=6;Check(stream.Handle("/api/screen/audio/begin",audioOffer,first).Status==200,"heartbeat arriving before begin does not consume the audio sequence");
+   audioPing["audioEnabled"]=false;audioPing["audioSequence"]=4;stream.Handle("/api/screen/ping",audioPing,first);Check(backend.AudioAlive,"old heartbeat cannot close newer audio");audioPing["audioSequence"]=7;stream.Handle("/api/screen/ping",audioPing,first);Check(!backend.AudioAlive&&backend.Alive,"heartbeat confirms audio stop when end response was lost");
+   int points=0;Func<System.Drawing.Rectangle,CompanionReply> point=area=>{points++;return CompanionReply.Json(200,new{ok=true});};
+   Check(stream.WithCapture(second,(string)lease["lease"],point).Status==409&&points==0,"another device cannot use a screen lease for point input");
+   Check(stream.WithCapture(first,"old-lease",point).Status==409&&points==0,"stale screen lease cannot inject a point");
+   Check(stream.WithCapture(first,(string)lease["lease"],point).Status==200&&points==1,"current screen owner can map a point within the locked capture session");
    Check(stream.Handle("/api/screen/begin",Offer(),second).Status==409&&backend.starts==1,"another viewer cannot steal capture");
    Check(stream.Handle("/api/screen/end",lease,second).Status==409&&backend.Alive,"lease belongs to its authenticated grant");
    now=now.AddSeconds(10);Check(stream.Handle("/api/screen/ping",lease,first).Status==200,"heartbeat renews the active lease");now=now.AddSeconds(14);stream.Sweep();Check(backend.Alive,"valid heartbeat preserves capture");now=now.AddSeconds(2);stream.Sweep();Check(!backend.Alive,"missing heartbeat stops capture within fifteen seconds");
@@ -83,10 +106,14 @@ internal static class TestCompanionStream {
    backend.duringStart=()=>first.Active=false;Check(stream.Handle("/api/screen/begin",Offer(),first).Status==423&&!backend.Alive,"revocation during encoder startup never returns a live stream");first.Active=true;backend.duringStart=null;
    started=stream.Handle("/api/screen/begin",Offer(),first);Check(stream.Handle("/api/screen/end",Lease(started),first).Status==200&&!backend.Alive,"explicit stop tears down capture");
    var extension=Offer();extension["mode"]="extend";extension["monitor"]=-1;started=stream.Handle("/api/screen/begin",extension,first);Check(started.Status==200&&backend.mode=="extend"&&backend.monitor==-1,"explicit extension mode starts the managed virtual display");
+   Check(!backend.portrait,"existing pages retain the landscape default");stream.Stop();extension["portrait"]=true;
+   started=stream.Handle("/api/screen/begin",extension,first);Check(started.Status==200&&backend.portrait,"portrait extension intent reaches the display runtime");
    now=now.AddSeconds(16);stream.Sweep();Check(!backend.Alive,"extension lease expiry tears down its runtime");
    var legacy=Offer();legacy.Remove("mode");started=stream.Handle("/api/screen/begin",legacy,first);Check(started.Status==200&&backend.mode=="mirror","cached old pages can only request physical mirroring");stream.Stop();
    var history=Offer();history["monitor"]=4095;started=stream.Handle("/api/screen/begin",history,first);Check(started.Status==200&&backend.monitor==4095,"protocol accepts bounded historical display IDs");stream.Stop();
    started=stream.Handle("/api/screen/begin",extension,first);backend.failStop=true;Check(stream.Handle("/api/screen/end",Lease(started),first).Status==503&&backend.Alive&&stream.IsActive,"failed cleanup keeps the screen active until shutdown is confirmed");stream.Sweep();Check(!backend.Alive&&!stream.IsActive,"watchdog retries cleanup even after the viewer lease was cleared");
+   Check(stopped.Count==backend.starts&&stopped.TrueForAll(grant=>ReferenceEquals(grant,first)),"every ended screen releases its owner input exactly once, including failed cleanup");
+   int notifications=stopped.Count;stream.Stop();Check(stopped.Count==notifications,"idle cleanup never ends another input session");
    backend.duringStart=()=>{throw new IOException();};Check(stream.Handle("/api/screen/begin",Offer(),first).Status==503&&!backend.Alive,"failed startup leaves no capture process");
   }
   string config=CompanionStreamRuntime.RouterConfig("127.0.0.1");Check(config.Contains("webrtcAddress: 127.0.0.1:")&&config.Contains("rtspAddress: 127.0.0.1:")&&config.Contains("webrtcICEServers2: []")&&config.Contains("record: false"),"signaling stays local, no public relay or recording");

@@ -86,6 +86,14 @@ function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,
  $previous=Read-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json')
  $copied=[Collections.Generic.List[string]]::new()
  if($previous){foreach($relative in $previous.files){$copied.Add([string]$relative)}}
+ $retired='Topbar\Main.ini'
+ if($previous -and $previous.product -eq 'PrismGlass.Desktop' -and (Resolve-SetupPath $previous.root) -eq $InstallRoot -and $copied.Contains($retired) -and !(Test-Path -LiteralPath (Join-Path $source $retired))){
+  $old=Resolve-SetupPath (Join-Path $SkinRoot $retired)
+  if(!$old.StartsWith($SkinRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Retired skin escaped its installation directory.'}
+  if(Test-Path -LiteralPath $old){Remove-Item -LiteralPath $old}
+  $folder=Split-Path $old;if((Test-Path -LiteralPath $folder) -and !@(Get-ChildItem -LiteralPath $folder -Force).Count){Remove-Item -LiteralPath $folder}
+  [void]$copied.Remove($retired)
+ }
  $owner=[ordered]@{product='PrismGlass.Desktop';root=$InstallRoot;files=$copied.ToArray()}
  New-Item -ItemType Directory -Path $SkinRoot -Force | Out-Null
  # Record ownership before copying so an interrupted install remains repairable.

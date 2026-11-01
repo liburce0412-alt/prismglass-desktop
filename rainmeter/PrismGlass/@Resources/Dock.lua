@@ -8,14 +8,21 @@ local function decode(s)
 end
 local function option(m,k,v) SKIN:Bang('!SetOption',m,k,tostring(v)) end
 local function tooltip(i)
- if tooltipIndex==i then return end
- if tooltipIndex and tooltipIndex>0 then option('Hit'..tooltipIndex,'ToolTipHidden','1');SKIN:Bang('!UpdateMeter','Hit'..tooltipIndex) end
- tooltipIndex=i
- if i>0 then option('Hit'..i,'ToolTipHidden','0');SKIN:Bang('!UpdateMeter','Hit'..i) end
+ local anchor=items[i] and (items[i].drawX or items[i].cx)
+ local key=tostring(i)..':'..tostring(anchor and math.floor(anchor+.5))
+ if tooltipKey==key then return end
+ tooltipKey=key;tooltipIndex=i
+ -- The native capsule owns the single label; Rainmeter tooltips stay disabled.
+ local f=io.open(root..'dock-label'..suffix..'.txt','w')
+ if f then local e=items[i];f:write(e and e.cx and (e.id..'|'..tostring((e.drawX or e.cx)/tonumber(SKIN:GetVariable('DockWidth')))) or '');f:close() end
 end
-function Initialize() root=SKIN:GetVariable('LiquidRoot');instance=SKIN:GetVariable('DockInstance') or 'primary';if instance=='' then instance='primary' end;suffix=instance=='primary' and '' or '-'..instance;last='';stamp=0;hover=0;tooltipIndex=0;items={};sizes={};drawn={};cell=60;dirty=true;elapsed=0;attentionSeen={};bounce={};iconOpacity=255;iconLease=0;iconPaint=nil;divider=false;dragActive=false;dragPoll=0;motionPoll=0;motionPaused=false;iconSize=tonumber(SKIN:GetVariable('DockIconSize')) or 48;Hover(0) end
+function Initialize() root=SKIN:GetVariable('LiquidRoot');instance=SKIN:GetVariable('DockInstance') or 'primary';if instance=='' then instance='primary' end;suffix=instance=='primary' and '' or '-'..instance;last='';stamp=0;hover=0;waveX=nil;pointerX=nil;waveAmount=0;tooltipIndex=0;tooltipKey=nil;items={};sizes={};drawn={};cell=60;dirty=true;elapsed=0;lastFrame=os.clock();attentionSeen={};bounce={};iconOpacity=255;iconLease=0;iconPaint=nil;divider=false;dividerX=nil;dragActive=false;dragPoll=0;motionPoll=0;motionPaused=false;iconSize=tonumber(SKIN:GetVariable('DockIconSize')) or 48;Hover(0) end
 -- Pointer approach is handled by the host; only WebView frames own the icon fade.
 function Approach() end
+function Pointer(fraction)
+ if type(fraction)~='number' or fraction~=fraction or fraction< -1 or fraction>1 then return end
+ pointerX=fraction>=0 and fraction*tonumber(SKIN:GetVariable('DockWidth')) or nil
+end
 function Hover(i) if not items[i] then i=0 end;if i~=hover then hoverStart=elapsed end;hover=i;if i>0 then Approach() end;tooltip((dragActive or iconOpacity<255) and 0 or i);local f=io.open(root..'dock-hover'..suffix..'.txt','w');if f then f:write(items[i] and items[i].id or '');f:close() end end
 function Press(i) local e=items[i];if not e then return end;tooltip(0);Approach();local f=io.open(root..'dock-drag-request-'..instance..'.txt','w');if f then f:write(os.time()..'|'..e.id);f:close() end end
 local function load()
@@ -50,11 +57,13 @@ local function load()
  SKIN:Bang('!SetVariable','DockWidth',width);SKIN:Bang('!Move',monitorLeft+left,monitorTop+sh-104-offset)
  local diagnostic=io.open(root..'dock-layout'..suffix..'.json','w')
  if diagnostic then diagnostic:write(string.format('{"left":%s,"width":%s,"cell":%s,"count":%s,"dpi":%s}',left,width,cell,#items,dpi));diagnostic:close() end
- local gap=0;divider=false;SKIN:Bang('!HideMeter','Divider');iconPaint=nil
+ local gap=0;divider=false;dividerX=nil;SKIN:Bang('!HideMeter','Divider');iconPaint=nil
+ for i=2,#items do if not items[i].pinned and items[i-1].pinned then divider=i;break end end
+ local inset=divider and 16 or 26
  for i=1,32 do local e=items[i]
   if e then
-   if not e.pinned and i>1 and items[i-1].pinned then gap=20;divider=true;option('Divider','X',16+(i-1)*cell+10);SKIN:Bang('!ShowMeter','Divider') end
-   e.x=16+(i-1)*cell+gap;e.cx=e.x+cell/2
+   if divider==i then gap=20;SKIN:Bang('!ShowMeter','Divider') end
+   e.x=inset+(i-1)*cell+gap;e.cx=e.x+cell/2
    for _,m in ipairs({'Hit'..i,'Icon'..i}) do
     SKIN:Bang('!ShowMeter',m);option(m,'ToolTipHidden','1');option(m,'ToolTipText',m=='Hit'..i and e.name or '')
     option(m,'LeftMouseDownAction','[!CommandMeasure Dock "Press('..i..')"]');option(m,'LeftMouseUpAction','')
@@ -66,7 +75,9 @@ local function load()
    SKIN:Bang(e.count>0 and '!ShowMeter' or '!HideMeter','Dot'..i)
    else for _,m in ipairs({'Hit','Icon','Dot'}) do option(m..i,'ToolTipHidden','1');option(m..i,'ToolTipText','');SKIN:Bang('!HideMeter',m..i) end end
   end
- Hover(items[hoveredSlot] and items[hoveredSlot].id==hoveredId and hoveredSlot or 0)
+ local retained=items[hoveredSlot] and items[hoveredSlot].id==hoveredId and hoveredSlot or 0
+ if retained==0 then waveX=nil;waveAmount=0 end
+ Hover(retained)
 end
 function ReloadLayout() last='';stamp=0;iconSize=tonumber(SKIN:GetVariable('DockIconSize')) or 48;load();dirty=true end
 local function paintIcons()
@@ -109,23 +120,55 @@ local function interaction()
  elseif dragActive then dragActive=false;last='';stamp=0;dirty=true;SKIN:Bang('!HideMeter','DragMarker');SKIN:Bang('!HideMeter','DragHint') end
 end
 function Update()
- elapsed=elapsed+.016
+ -- shortcut: after the Windows CRT clock expires (~24.8 days), use nominal timing until Rainmeter restarts.
+ local nowFrame=os.clock();local dt=nowFrame>lastFrame and math.min(.064,nowFrame-lastFrame) or .016;lastFrame=nowFrame
+ elapsed=elapsed+dt
  interaction()
  local now=os.time();if now~=stamp then stamp=now;load() end
  icons()
+ local active=items[hover] and not motionPaused and not dragActive and iconOpacity==255
+ local destination=active and (pointerX or items[hover].cx) or waveX
+ if destination then waveX=waveX and waveX+(destination-waveX)*(1-math.exp(-50*dt)) or destination end
+ if motionPaused or dragActive then waveAmount=0 else waveAmount=waveAmount+((active and 1 or 0)-waveAmount)*(1-math.exp(-16*dt)) end
+ local base=math.max(16,math.min(iconSize,cell-10))
+ -- Spread neighbors with the wave, reserving enough room for crowded rows.
+ local growth=math.min(base*.85,82-base,math.max(0,(tonumber(SKIN:GetVariable('DockWidth'))-52-base*#items)/math.min(#items,2.5)))
  for i,e in ipairs(items) do
-  local target=math.max(16,math.min(iconSize,cell-10))+(i==hover and not motionPaused and not dragActive and 30 or 0);local size=(sizes[i] or target);size=motionPaused and target or size+(target-size)*.14;sizes[i]=size
+  local distance=waveX and math.abs(e.cx-waveX)/math.max(1,cell*2.2) or 1
+  local influence=distance<1 and (1+math.cos(distance*math.pi))*.5 or 0
+  local target=base+growth*influence*waveAmount;local size=(sizes[i] or target);size=(motionPaused or dragActive) and target or size+(target-size)*(1-math.exp(-32*dt));sizes[i]=size
   local pixels=math.floor(size+.5)
-  local remain=math.max(0,(bounce[e.id] or 0)-elapsed);local jump=math.abs(math.sin(remain*8))*26*math.min(1,remain)
-  local age=elapsed-(hoverStart or 0)
-  if i==hover and age<.65 then jump=math.max(jump,math.abs(math.sin(age*10))*18*math.exp(-age*2.4)) end
+  local remain=math.max(0,(bounce[e.id] or 0)-elapsed);local jump=math.max(math.abs(math.sin(remain*8))*26*math.min(1,remain),8*influence*waveAmount)
   jump=motionPaused and 0 or math.floor(math.min(jump,math.max(0,84-pixels-3)))
   local key=pixels..':'..jump
   if drawn[i]~=key then
    drawn[i]=key;dirty=true
-   option('Icon'..i,'W',pixels);option('Icon'..i,'H',pixels);option('Icon'..i,'X',math.floor(e.cx-pixels/2));option('Icon'..i,'Y',84-pixels-jump)
+   option('Icon'..i,'W',pixels);option('Icon'..i,'H',pixels);option('Icon'..i,'Y',84-pixels-jump)
   end
  end
+ local total=0;for i,e in ipairs(items) do total=total+(sizes[i] or base) end
+ local width=tonumber(SKIN:GetVariable('DockWidth')) or 850
+ local dividerGap=divider and 20 or 0
+ local gap=math.min(math.max(0,cell-base),math.max(0,(width-52-total-dividerGap)/math.max(1,#items-1)));local x=(width-total-gap*math.max(0,#items-1)-dividerGap)/2
+ for i,e in ipairs(items) do
+  if divider==i then x=x+dividerGap end
+  local pixels=math.floor((sizes[i] or base)+.5)
+  local spread=x+pixels/2;local target=e.cx+(spread-e.cx)*waveAmount
+  e.drawX=(motionPaused or dragActive) and e.cx or (e.drawX or e.cx)+(target-(e.drawX or e.cx))*(1-math.exp(-38*dt))
+  x=x+pixels+gap
+ end
+ for i,e in ipairs(items) do
+  local pixels=math.floor((sizes[i] or base)+.5)
+  local left=i==1 and 0 or ((items[i-1].drawX or items[i-1].cx)+e.drawX)/2
+  local right=i==#items and width or (e.drawX+(items[i+1].drawX or items[i+1].cx))/2
+  local key=math.floor(e.drawX*2+.5)..':'..pixels..':'..math.floor(left*2+.5)..':'..math.floor(right*2+.5)
+  if e.positionKey~=key then
+   e.positionKey=key;dirty=true;option('Icon'..i,'X',math.floor(e.drawX-pixels/2));option('Dot'..i,'X',e.drawX)
+   option('Hit'..i,'X',left);option('Hit'..i,'Shape','Rectangle 0,0,'..math.max(1,right-left)..',96 | Fill Color 0,0,0,1 | StrokeWidth 0')
+  end
+ end
+ if divider then local left,right=items[divider-1],items[divider];local nextX=math.floor((left.drawX+sizes[divider-1]/2+right.drawX-sizes[divider]/2)/2+.5);if dividerX~=nextX then dividerX=nextX;option('Divider','X',nextX);dirty=true end end
+ tooltip((dragActive or iconOpacity<255) and 0 or hover)
  if dirty then SKIN:Bang('!UpdateMeter','*');SKIN:Bang('!Redraw');dirty=false end
  return #items
 end

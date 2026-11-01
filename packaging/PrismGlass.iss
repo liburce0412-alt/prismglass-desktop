@@ -2,7 +2,7 @@
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.0.1"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"
@@ -48,6 +48,10 @@ Source: "VerifyDependency.ps1"; Flags: dontcopy
 
 [Tasks]
 Name: desktopicon; Description: "创建桌面快捷方式"
+
+[InstallDelete]
+Type: files; Name: "{app}\rainmeter\PrismGlass\Topbar\Main.ini"
+Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\Topbar"
 
 [Icons]
 Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"

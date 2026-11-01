@@ -50,6 +50,7 @@ internal static class TestCompanionBridge {
   Check(controlBridge.Handle("/api/pointer/begin",Request(),all).Status==403,"old control grant cannot acquire mouse permission");
   var lease=Body(controlBridge.Handle("/api/pointer/begin",Request(),device));
   Check(controlBridge.Handle("/api/pointer",new Dictionary<string,object>{{"leaseId",lease["leaseId"]},{"seq",1},{"kind","move"},{"dx",8},{"dy",3}},device).Status==200&&pointerCalls==1,"pointer fast path reaches injected controls");
+  Check(controlBridge.Handle("/api/pointer",new Dictionary<string,object>{{"leaseId",lease["leaseId"]},{"seq",2},{"kind","point"},{"screenLease","guessed"},{"x",0},{"y",0}},device).Status==409&&pointerCalls==1,"direct point cannot bypass screen ownership through the ordinary pointer route");
   var controlState=Body(controlBridge.Handle("/api/state",Request(),device));
   Check((bool)Object(controlState["permissions"])["pointer"]&&(bool)Object(Object(controlState["controls"])["pointer"])["active"],"state projects current control grants and lease");
   Check(!(bool)Object(controlState["permissions"])["keyboard"],"state keeps mouse and keyboard authorization separate");device.keyboard=true;Check((bool)Object(Body(controlBridge.Handle("/api/state",Request(),device))["permissions"])["keyboard"],"state projects an explicitly enabled keyboard grant");

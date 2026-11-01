@@ -27,7 +27,7 @@ internal sealed class TopIsland : Form {
  public TopIsland(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
  public TopIsland(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();outlineKey="";Publish();});
-  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;Place();view.Dock=DockStyle.Fill;Controls.Add(view);WebViewVisibility.Track(view);SetInitialShape();
+  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;Place();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);SetInitialShape();
   Shown+=async(sender,args)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"island-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(environment);SyncPixelScale();
    var settings=view.CoreWebView2.Settings;settings.IsZoomControlEnabled=false;settings.AreDefaultContextMenusEnabled=false;settings.AreDevToolsEnabled=false;settings.IsStatusBarEnabled=false;
@@ -35,7 +35,7 @@ internal sealed class TopIsland : Form {
    view.CoreWebView2.NavigationStarting+=(s,e)=>{if(!String.Equals(e.Uri,"https://prism-island.local/island.html",StringComparison.Ordinal))e.Cancel=true;};
    view.CoreWebView2.NewWindowRequested+=(s,e)=>e.Handled=true;
    view.CoreWebView2.WebMessageReceived+=(s,e)=>{if(String.Equals(e.Source,"https://prism-island.local/island.html",StringComparison.Ordinal))Receive(e.TryGetWebMessageAsString());};
-   view.CoreWebView2.ProcessFailed+=(s,e)=>Fail("WebView2: "+e.ProcessFailedKind);view.Source=new Uri("https://prism-island.local/island.html");timer.Interval=1000;timer.Tick+=(s,e)=>Tick();timer.Start();
+   view.CoreWebView2.ProcessFailed+=(s,e)=>{if(!WebViewRecovery.KeepAlive(root,e.ProcessFailedKind))Fail("WebView2: "+e.ProcessFailedKind);};view.Source=new Uri("https://prism-island.local/island.html");timer.Interval=1000;timer.Tick+=(s,e)=>Tick();timer.Start();
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready)Tick(true);};
   Deactivate+=(s,e)=>{if(!dragging)Send(new{type="dismiss"});};
@@ -58,7 +58,13 @@ internal sealed class TopIsland : Form {
  void Receive(string text){try{
   if(text=="ready"){ready=true;Place();Publish();if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);if(pendingCompanion!=null)ApplyCompanionState(pendingCompanion);Tick(true);}
   else if(text=="painted"&&!painted){painted=true;NotifyReady();}
-  else if(text.StartsWith("outline:",StringComparison.Ordinal)){var outlines=json.Deserialize<float[][][]>(text.Substring(8));if(outlines.Length==1&&outlines[0].Length>=4){using(var path=new GraphicsPath()){var points=new PointF[outlines[0].Length];for(int i=0;i<points.Length;i++){if(outlines[0][i].Length!=2)return;float x=outlines[0][i][0],y=outlines[0][i][1];if(float.IsNaN(x)||float.IsNaN(y)||float.IsInfinity(x)||float.IsInfinity(y)||Math.Abs(x)>Width+100||Math.Abs(y)>Height+100)return;points[i]=new PointF((float)(Math.Round(x*4)/4),(float)(Math.Round(y*4)/4));}string key=json.Serialize(points);if(key!=outlineKey){path.AddPolygon(points);ReplaceRegion(new Region(path));outlineKey=key;regionUpdates++;}outlineReady=true;NotifyReady();}}}
+  else if(text.StartsWith("outline:",StringComparison.Ordinal)){
+   var outlines=json.Deserialize<float[][][]>(text.Substring(8));if(outlines.Length<1||outlines.Length>2)return;
+   using(var path=new GraphicsPath(FillMode.Winding)){
+    foreach(var outline in outlines){if(outline.Length<4)return;var points=new PointF[outline.Length];for(int i=0;i<points.Length;i++){if(outline[i].Length!=2)return;float x=outline[i][0],y=outline[i][1];if(float.IsNaN(x)||float.IsNaN(y)||float.IsInfinity(x)||float.IsInfinity(y)||Math.Abs(x)>Width+100||Math.Abs(y)>Height+100)return;points[i]=new PointF((float)(Math.Round(x*4)/4),(float)(Math.Round(y*4)/4));}path.StartFigure();path.AddPolygon(points);}
+    string key=json.Serialize(outlines);if(key!=outlineKey){ReplaceRegion(GlassWindow.Clip(path,ClientRectangle));outlineKey=key;regionUpdates++;}outlineReady=true;NotifyReady();
+   }
+  }
   else if(text=="drag:true")dragging=true;
   else if(text=="drag:false")dragging=false;
   else if(text.StartsWith("mode:",StringComparison.Ordinal)){mode=text.Substring(5);if(!preview)File.WriteAllText(Diagnostic("island-state.json"),json.Serialize(new{mode=mode,updated=DateTime.UtcNow.ToString("o")}));}
@@ -66,7 +72,7 @@ internal sealed class TopIsland : Form {
   else if(text.StartsWith("error:",StringComparison.Ordinal))Fail(text.Substring(6));
  }catch(Exception ex){Send(new{type="feedback",message="操作未完成，请重试"});try{File.WriteAllText(Path.Combine(root,preview?"island-preview-error.txt":"island-error.txt"),ex.ToString());}catch{}}}
  void NotifyReady(){if(!readyNotified&&painted&&outlineReady){readyNotified=true;var handler=Ready;if(handler!=null)handler();}}
- void SetInitialShape(){float x=4,y=12,w=Width-8,h=42*scale,d=h;using(var path=new GraphicsPath()){path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddArc(x+w-d,y+h-d,d,d,0,90);path.AddArc(x,y+h-d,d,d,90,90);path.CloseFigure();ReplaceRegion(new Region(path));}}
+ void SetInitialShape(){float x=4,y=12,w=Width-8,h=42*scale,d=h;using(var path=new GraphicsPath()){path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddArc(x+w-d,y+h-d,d,d,0,90);path.AddArc(x,y+h-d,d,d,90,90);path.CloseFigure();ReplaceRegion(GlassWindow.Clip(path,ClientRectangle));}}
  void ReplaceRegion(Region next){var old=Region;Region=next;if(old!=null)old.Dispose();}
  void Tick(){Tick(false);}
  void Tick(bool force){
