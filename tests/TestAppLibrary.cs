@@ -2,17 +2,28 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using System.Web.Script.Serialization;
 class TestAppLibrary {
  static int checks;
  static void Check(bool ok,string name){if(!ok)throw new Exception(name);checks++;}
  static void Reject(Action operation,string name){bool rejected=false;try{operation();}catch{rejected=true;}Check(rejected,name);}
  static void Shortcut(string path,string target,string arguments){
-  object shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")),link=null;
-  try{link=shell.GetType().InvokeMember("CreateShortcut",BindingFlags.InvokeMethod,null,shell,new object[]{path});link.GetType().InvokeMember("TargetPath",BindingFlags.SetProperty,null,link,new object[]{target});link.GetType().InvokeMember("Arguments",BindingFlags.SetProperty,null,link,new object[]{arguments});link.GetType().InvokeMember("Save",BindingFlags.InvokeMethod,null,link,null);}
-  finally{if(link!=null)Marshal.FinalReleaseComObject(link);Marshal.FinalReleaseComObject(shell);}
+  // WScript's ANSI shortcut writer cannot create this Unicode fixture on an English runner.
+  object raw=new ShellLink();try{var link=(IShellLinkW)raw;link.SetPath(target);link.SetArguments(arguments);((IPersistFile)raw).Save(path,true);}finally{Marshal.FinalReleaseComObject(raw);}
+ }
+ [ComImport,Guid("00021401-0000-0000-C000-000000000046")]class ShellLink{}
+ [ComImport,Guid("000214F9-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]interface IShellLinkW{
+  void GetPath([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder path,int count,IntPtr data,uint flags);
+  void GetIDList(out IntPtr value);void SetIDList(IntPtr value);
+  void GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder value,int count);void SetDescription([MarshalAs(UnmanagedType.LPWStr)]string value);
+  void GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder value,int count);void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)]string value);
+  void GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder value,int count);void SetArguments([MarshalAs(UnmanagedType.LPWStr)]string value);
+  void GetHotkey(out short value);void SetHotkey(short value);void GetShowCmd(out int value);void SetShowCmd(int value);
+  void GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)]StringBuilder value,int count,out int index);void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)]string value,int index);
+  void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)]string value,uint reserved);void Resolve(IntPtr hwnd,uint flags);void SetPath([MarshalAs(UnmanagedType.LPWStr)]string value);
  }
  static AppLibraryEntry Found(string path,string target,string args){return new AppLibraryEntry{identity=AppLibrary.Identity(target,args),path=path,target=target,arguments="",name="Fixture",kind="app",exists=true,sources=new List<string>{path}};}
  static void DedupChecks(string fixture){
