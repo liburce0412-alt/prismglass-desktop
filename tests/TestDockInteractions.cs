@@ -29,7 +29,7 @@ internal static class TestDockInteractions {
    Check(DockBackend.SetMinimized(window,true)&&form.WindowState==FormWindowState.Minimized,"shared window state path minimizes a real native window");
    var stale=new DockWindow{handle=window.handle,pid=UInt32.MaxValue,path=window.path};
    Check(!DockBackend.SetMinimized(stale,false)&&form.WindowState==FormWindowState.Minimized&&form.commands==0,"a reused or stale window identity cannot receive restore commands");
-   Check(DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Normal&&form.commands==1,"system-menu restore is processed before reporting success");
+   Check(DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Normal,"restore is complete before reporting success");
    form.WindowState=FormWindowState.Maximized;int commands=form.commands;
    Check(DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Maximized&&form.commands==commands,"already restored maximized windows retain their size");
    Check(DockBackend.SetMinimized(window,true)&&DockBackend.SetMinimized(window,false)&&form.WindowState==FormWindowState.Maximized,"restoring a minimized maximized window retains its maximized state");
@@ -39,7 +39,7 @@ internal static class TestDockInteractions {
   StateWindow remote=null;DockWindow target=null;using(var ready=new ManualResetEventSlim())using(var blocked=new ManualResetEventSlim()){
    var thread=new Thread(()=>{using(remote=new StateWindow{ignoreCommands=true,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Bounds=new Rectangle(-20000,-20000,320,180)}){remote.Shown+=(s,e)=>{var process=Process.GetCurrentProcess();target=new DockWindow{handle=remote.Handle.ToInt64(),pid=(uint)process.Id,path=process.MainModule.FileName};ready.Set();};Application.Run(remote);}});thread.SetApartmentState(ApartmentState.STA);thread.Start();
    try{Check(ready.Wait(5000),"cross-thread window fixture is ready");
-    Check(DockBackend.SetMinimized(target,true)&&DockBackend.SetMinimized(target,false)&&remote.commands>0,"asynchronous restoration remains a fallback for custom system-menu handling on another UI thread");
+    Check(DockBackend.SetMinimized(target,true)&&DockBackend.SetMinimized(target,false),"a window that ignores custom system-menu commands still minimizes and restores");
     DockBackend.SetMinimized(target,true);remote.BeginInvoke(new Action(()=>{blocked.Set();Thread.Sleep(900);}));Check(blocked.Wait(5000),"unresponsive-window fixture entered its controlled delay");
     var elapsed=Stopwatch.StartNew();bool restored=DockBackend.SetMinimized(target,false);Check(!restored&&elapsed.ElapsedMilliseconds<800,"an unresponsive window returns failure within a bounded wait");
    }finally{if(remote!=null&&!remote.IsDisposed)remote.BeginInvoke(new Action(()=>remote.Close()));Check(thread.Join(5000),"cross-thread fixture releases its window and message loop");SetForegroundWindow(previous);}
@@ -49,6 +49,10 @@ internal static class TestDockInteractions {
   if(args.Length!=1||Directory.Exists(args[0]))throw new ArgumentException("Pass a new disposable fixture directory.");
   string root=Path.GetFullPath(args[0]);Directory.CreateDirectory(root);
   WindowStateChecks();
+  var releaseFile=Path.Combine(root,"dock-pointer-release.txt");var releaseTime=DateTime.UtcNow;
+  File.WriteAllText(releaseFile,"pfixture|"+releaseTime.Ticks+"|True");Check(DockBackend.TakePointerRelease(root,"pfixture",releaseTime.AddMilliseconds(50))&&!DockBackend.TakePointerRelease(root,"pfixture",releaseTime.AddMilliseconds(60)),"a pointer release is consumed once by its matching click");
+  File.WriteAllText(releaseFile,"pother|"+releaseTime.Ticks+"|True");Check(!DockBackend.TakePointerRelease(root,"pfixture",releaseTime.AddMilliseconds(50)),"a release cannot activate a different Dock application");
+  File.WriteAllText(releaseFile,"pfixture|"+releaseTime.Ticks+"|True");Check(!DockBackend.TakePointerRelease(root,"pfixture",releaseTime.AddSeconds(1)),"an expired pointer release cannot revive an old click");
   Check(DockBackend.ResolveClick(0,false,false,false)==DockClickAction.Launch,"an app with no live windows launches");
   Check(DockBackend.ResolveClick(1,true,false,false)==DockClickAction.Minimize,"clicking the single foreground window minimizes it");
   Check(DockBackend.ResolveClick(1,false,false,false)==DockClickAction.Activate,"clicking a background window activates it");

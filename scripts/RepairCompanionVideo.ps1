@@ -44,7 +44,8 @@ function Get-VideoPlan([string]$Root,[string]$Local,[string]$Peer){
  if($ip.Count -ne 1 -or !(Test-VideoSubnet $Local $Peer $ip[0].PrefixLength)){throw '电脑和 iPad 不在所选局域网，请重新连接。'}
  $profile=@(Get-NetConnectionProfile -InterfaceIndex $ip[0].InterfaceIndex -ErrorAction Stop)
  if($profile.Count -ne 1 -or $profile[0].NetworkCategory -ne 'Private' -or [string]$ip[0].InterfaceAlias -match '[*?\[\]]'){throw '请在受信任的专用网络使用投屏。'}
- $policy=New-Object -ComObject HNetCfg.FwPolicy2;$owner='PrismGlass.Companion.Video.v1|'+$Root;$rule=Get-VideoRule $policy $program $owner
+ # Windows forbids pipe characters in firewall descriptions, including ownership markers.
+ $policy=New-Object -ComObject HNetCfg.FwPolicy2;$owner='PrismGlass.Companion.Video.v1:'+$Root;$rule=Get-VideoRule $policy $program $owner
  $oldLocal='';$oldPeer='';$oldInterface='';if($rule){$oldLocal=Get-VideoExactAddress $rule.LocalAddresses;$oldPeer=Get-VideoExactAddress $rule.RemoteAddresses;$oldInterface=[string]$rule.Interfaces[0]}
  $configured=$null -ne $rule -and $oldLocal -ceq $Local -and $oldPeer -ceq $Peer -and $oldInterface -ceq [string]$ip[0].InterfaceAlias
  return [pscustomobject]@{ready=$true;configured=$configured;needsApproval=!$configured;issues=@();address=$Local;peer=$Peer;interfaceAlias=[string]$ip[0].InterfaceAlias;program=$program;oldAddress=$oldLocal;oldPeer=$oldPeer;oldInterface=$oldInterface;rule=$rule;policy=$policy;owner=$owner}

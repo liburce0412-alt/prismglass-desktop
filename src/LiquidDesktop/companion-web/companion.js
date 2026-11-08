@@ -21,7 +21,7 @@
   function text(id, value) { var node = $(id), next = value == null ? '' : String(value); if (node.textContent !== next) node.textContent = next; }
   function visible(id, show) { $(id).hidden = !show; }
   function feedback(message, error, kind) { feedbackKind = kind || ''; text('feedback', message); $('feedback').dataset.error = String(!!error); visible('feedback', !!message); }
-  function connection(message, online) { text('connection-status', message); $('connection-dot').dataset.online = String(!!online); }
+  function connection(message, online) { text('connection-status', message); $('connection-dot').dataset.online = String(!!online); text('home-connection-state', message); text('control-connection-state', message); $('home-connection').dataset.online = $('control-connection').dataset.online = String(!!online); }
   function requestId() { var bytes = new Uint8Array(16); crypto.getRandomValues(bytes); return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
   function safeAsset(url) { return typeof url === 'string' && /^\/api\/assets\/[a-zA-Z0-9_-]{1,96}$/.test(url) ? url : ''; }
   function number(value) { return typeof value === 'number' && isFinite(value) ? value : null; }
@@ -92,7 +92,7 @@
     epoch++; clearTimeout(pollTimer); clearTimeout(pairTimer); clearTimeout(searchTimer); requests.forEach(function (c) { c.abort(); }); requests = [];
     Object.keys(assets).forEach(function (key) { var asset = assets[key]; if (asset.controller) asset.controller.abort(); if (asset.blob) URL.revokeObjectURL(asset.blob); });
     assets = Object.create(null); wantedAssets = Object.create(null); assetActive = 0; appNodes = Object.create(null); appPage = 0; composing = false; rememberedContext = {}; touchKey = ''; scene = 'auto'; $('touch-scene').value = 'auto';
-    session = null; state = null; apps = null; ticket = ''; pairing = false; pairDeadline = 0; versionChanged = false; pending = {}; category = ''; folder = ''; appsAt = 0;
+    session = null; state = null; apps = null; ticket = ''; pairing = false; pairDeadline = 0; versionChanged = false; pending = {}; category = ''; folder = ''; appsAt = 0; document.body.dataset.homeReady = 'false';
     noteDirty = false; noteConflict = false; noteRevision = null; taskListKey = ''; appGridKey = ''; taskFilter = 'all'; volumeTail = Promise.resolve();
     setPresentation(false); $('presentation-toggle').disabled = true;
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = true; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
@@ -100,6 +100,7 @@
     ['task-list', 'quick-apps', 'app-grid', 'app-categories', 'app-folders', 'touch-actions', 'touch-extra'].forEach(function (id) { $(id).textContent = ''; });
     ['track-title', 'track-artist', 'lyric-current', 'lyric-next', 'music-source', 'weather-main', 'weather-detail', 'weather-location', 'weather-stamp', 'weather-status', 'countdown', 'apps-status', 'focus-completed', 'home-context', 'touch-context', 'asset-status', 'data-status', 'home-task-count', 'home-task-first', 'home-task-second', 'home-countdown', 'music-elapsed', 'music-duration'].forEach(function (id) { text(id, ''); });
     visible('music-timeline', false); $('music-progress').value = 0;
+    text('control-track', ''); text('control-artist', ''); text('control-music-state', '音乐'); text('control-permissions', '查看连接与权限');
     ['cpu-value', 'memory-value', 'disk-value', 'network-value', 'volume-value'].forEach(function (id) { text(id, '—'); });
     ['task-text', 'note-text', 'app-search'].forEach(function (id) { $(id).value = ''; });
     if (keepPairInput !== true) $('pair-code').value = '';
@@ -188,10 +189,12 @@
   }
   function renderState() {
     if (!state || !session || versionChanged) return;
+    document.body.dataset.homeReady = 'true';
     pruneAssets();
     $('presentation-toggle').disabled = cooling();
     if (document.body.dataset.presentation === 'true' && document.body.dataset.presentationMode === 'lyrics' && !permission('music')) setPresentation(true);
     document.body.dataset.theme = state.theme === 'Astro' ? 'Astro' : 'Sky';
+    if (window.PrismGlassOptics && window.PrismGlassOptics.setStyle) window.PrismGlassOptics.setStyle(state.settings && state.settings.glassStyle || '', state.settings && state.settings.glassOverrides, state.settings && state.settings.glassPresets);
     var w = state.weather || {}, wd = w.data || {}, s = state.system || {}, sd = s.data || {}, v = state.volume || {};
     var weatherAvailable = w.available === true && number(wd.temp) !== null, weatherMetrics = [];
     if (number(wd.feelsLike) !== null) weatherMetrics.push('体感 ' + Math.round(wd.feelsLike) + '°');
@@ -215,6 +218,7 @@
     if (window.PrismCompanionLyrics) window.PrismCompanionLyrics.render(m, $('reduce-motion').checked);
     else { text('lyric-current', m.available ? m.current || '暂无歌词' : ''); text('lyric-next', m.available ? m.next || '' : ''); }
     text('play-button', m.available && m.playing === true ? '暂停' : m.available && m.playing === false ? '播放' : '播放 / 暂停');
+    text('control-track', $('track-title').textContent); text('control-artist', $('track-artist').textContent); text('control-play', $('play-button').textContent); text('control-music-state', m.available ? $('playback-state').textContent || '音乐' : '音乐');
     document.body.dataset.music = m.available ? m.playing === false ? 'paused' : 'active' : 'quiet';
     if (!m.available || !safeAsset(m.cover)) { $('cover').removeAttribute('src'); $('cover').hidden = true; $('cover').dataset.asset = ''; }
     var context = state.context || {}; text('home-context', context.available && context.appName ? '电脑正在使用 · ' + context.appName : '');
@@ -686,6 +690,8 @@
     if (!volumeEditing && !pending.volume && v.available) $('control-volume').value = Math.round(v.data.value);
     $('control-volume').disabled = !permission('control') || !v.available || !!pending.volume || blocked();
     text('control-volume-value', volumeEditing ? $('control-volume').value + '%' : v.available ? percent(v.data.value) : '等待电脑音量');
+    $('control-volume').style.setProperty('--volume-level', (v.available ? Math.max(0, Math.min(100, Number($('control-volume').value))) : 0) + '%');
+    var grants = []; if (permission('music')) grants.push('音乐'); if (permission('control')) grants.push('控制'); if (permission('pointer')) grants.push('触控'); if (permission('power')) grants.push('电源'); text('control-permissions', grants.length ? grants.join(' · ') : '查看共享权限');
     ['desktop-next','desktop-overview','desktop-show','desktop-maximize','desktop-restore','desktop-previous-space','desktop-next-space'].forEach(function (id) { $(id).disabled = !permission('control') || !context.available || !!pending['desktop.execute'] || blocked(); });
     text('desktop-control-status', context.available ? '当前 · ' + context.appName : '等待电脑前台窗口');
     text('control-focus-time', focus.available ? duration(focus.deadline > 0 ? Math.max(0, focus.deadline - (Date.now() + clockOffset) / 1000) : focus.remaining) : '--:--');
@@ -725,7 +731,7 @@
   $('local-widgets').onclick = function () { showPage('widgets'); };
   $('widgets-back').onclick = function () { showPage('home'); };
   $('touch-more').onclick = function () { var open = $('touch-extra').hidden; visible('touch-extra', open); this.setAttribute('aria-expanded', String(open)); if (window.PrismGlassOptics) window.PrismGlassOptics.invalidate(); };
-  $('control-volume').oninput = function () { volumeEditing = true; text('control-volume-value', this.value + '%'); };
+  $('control-volume').oninput = function () { volumeEditing = true; text('control-volume-value', this.value + '%'); this.style.setProperty('--volume-level', this.value + '%'); };
   $('control-volume').onchange = function () { volumeEditing = false; write('volume','/api/action',{action:'volume.set',value:Number(this.value)},'音量已发送，等待电脑读回'); };
   [['desktop-next','next-window'],['desktop-overview','task-view'],['desktop-show','show-desktop'],['desktop-maximize','maximize'],['desktop-restore','restore'],['desktop-previous-space','previous-desktop'],['desktop-next-space','next-desktop']].forEach(function (entry) { $(entry[0]).onclick = function () { var context = state && state.context || {}; if (!context.available || !permission('control')) return; write('desktop.execute','/api/action',{action:'desktop.execute',contextId:context.id,command:entry[1]},'窗口操作已发送'); }; });
   window.addEventListener('companion-widget-navigate', function (event) { if (event.detail && event.detail.page === 'work') showPage('work'); });
@@ -849,8 +855,9 @@
   $('presentation-exit').onclick = function () { setPresentation(false); };
   $('presentation-mode').onchange = function () { setPresentation(document.body.dataset.presentation === 'true'); };
   document.querySelector('.brand').onclick = function (event) { event.preventDefault(); showPage('home'); };
-  function connectionSettings(show) { visible('connection-settings', show); $('manage-button').setAttribute('aria-expanded', String(show)); (show ? $('settings-close') : $('manage-button')).focus(); }
-  $('manage-button').onclick = function () { connectionSettings($('connection-settings').hidden); };
+  var connectionOpener = null;
+  function connectionSettings(show, opener) { if (show) connectionOpener = opener || $('manage-button'); visible('connection-settings', show); ['manage-button','home-connection','control-connection'].forEach(function(id){ $(id).setAttribute('aria-expanded', String(show)); }); (show ? $('settings-close') : connectionOpener || $('manage-button')).focus(); }
+  ['manage-button','home-connection','control-connection'].forEach(function(id){ $(id).onclick = function () { connectionSettings($('connection-settings').hidden, this); }; });
   $('settings-close').onclick = function () { connectionSettings(false); };
   $('connection-settings').onkeydown = function (event) { if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) { event.preventDefault(); connectionSettings(false); } };
   $('reduce-motion').checked = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);

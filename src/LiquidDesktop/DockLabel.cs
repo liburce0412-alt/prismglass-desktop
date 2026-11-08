@@ -1,6 +1,6 @@
 using System;using System.Drawing;using System.Windows.Forms;
 internal sealed class DockLabel:IDisposable {
- readonly DockPlate plate=new DockPlate();readonly IntPtr source;readonly Action<object> send;readonly Func<Rectangle> screen;readonly Timer timer=new Timer{Interval=16};
+ readonly DockPlate plate=new DockPlate();readonly IntPtr source;readonly Action<object> send;readonly Func<Rectangle> screen;readonly Timer timer=new Timer{Interval=8};
  Rectangle bounds;string caption="";bool shown,reduced;float opacity;DateTime frameTime;
  public DockLabel(IntPtr source,Action<object> send,Func<Rectangle> screen){this.source=source;this.send=send;this.screen=screen;timer.Tick+=(s,e)=>Animate();}
  internal static bool TryAnchor(string value,string id,out double fraction){fraction=0;var parts=value.Split('|');return parts.Length==2&&parts[0]==id&&double.TryParse(parts[1],System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out fraction)&&!double.IsNaN(fraction)&&fraction>=0&&fraction<=1;}

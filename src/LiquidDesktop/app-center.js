@@ -128,7 +128,7 @@
   function closeDialog() { if (!modal) return false; modal.remove(); modal = null; if (modalReturn && modalReturn.isConnected) modalReturn.focus(); interaction(); return true; }
   function dialog(title) {
     closeDialog(); modalReturn = document.activeElement;
-    modal = el('div', 'apps-dialog-shade'); const panel = el('div', 'apps-dialog'); panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', title); panel.append(el('h3', '', title)); modal.append(panel); root.append(modal); interaction();
+    modal = el('div', 'apps-dialog-shade'); const panel = el('div', 'apps-dialog'); panel.dataset.glassSurface = 'AppDialog'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', title); panel.append(el('h3', '', title)); modal.append(panel); root.append(modal); interaction();
     modal.addEventListener('click', event => { if (event.target === modal) closeDialog(); });
     panel.addEventListener('keydown', event => { if (event.key !== 'Tab') return; const controls = Array.from(panel.querySelectorAll('button,input,select')).filter(n => !n.disabled); if (!controls.length) return; const at = controls.indexOf(document.activeElement); if (event.shiftKey && at <= 0) { event.preventDefault(); controls[controls.length - 1].focus(); } else if (!event.shiftKey && at === controls.length - 1) { event.preventDefault(); controls[0].focus(); } });
     return panel;

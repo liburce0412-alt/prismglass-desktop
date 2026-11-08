@@ -8,12 +8,12 @@ function Initialize()
  local function check(value,name)report:write((value and 'PASS ' or 'FAIL ')..name..'\n');report:flush();if not value then error(name) end;checks=checks+1 end
  local function write(file,value)local f=assert(io.open(folder..file,'w'));f:write(value);f:close()end
  local options,shown={},{}
- local updates,redraws=0,0
+ local updates,redraws,wildcardUpdates=0,0,0
  local vars={LiquidRoot=folder,Ink='255,255,255',Muted='227,237,249',SCREENAREAWIDTH='1920',SCREENAREAHEIGHT='1080'}
  SKIN={GetVariable=function(_,k)return vars[k]end,Bang=function(_,command,meter,key,value)
   if command=='!SetOption' then options[meter..'.'..key]=value elseif command=='!SetVariable' then vars[meter]=key
   elseif command=='!ShowMeter' then shown[meter]=true elseif command=='!HideMeter' then shown[meter]=false
-  elseif command=='!UpdateMeter' then updates=updates+1 elseif command=='!Redraw' then redraws=redraws+1 end
+  elseif command=='!UpdateMeter' then updates=updates+1;if meter=='*' then wildcardUpdates=wildcardUpdates+1 end elseif command=='!Redraw' then redraws=redraws+1 end
  end}
  local originalTime,originalClock=os.time,os.clock;local fakeTime,fakeClock,frameStep=2000000000,0,.016;os.time=function()return fakeTime end;os.clock=function()fakeClock=fakeClock+frameStep;return fakeClock end
  local ok,err=pcall(function()
@@ -45,7 +45,7 @@ function Initialize()
   check(options['Icon2.ImageAlpha']=='0','newly loaded icons inherit the current hidden opacity')
   check(math.abs((items[1].cx+items[2].cx)/2-tonumber(vars.DockWidth)/2)<.001,'an all-pinned row is centered before magnification')
   SetIconOpacity(255);Hover(1);for i=1,12 do Update() end
-  check(tooltipIndex==1 and options['Hit1.ToolTipHidden']=='1' and options['Icon1.ToolTipHidden']=='1' and options['Icon1.ToolTipText']=='','only the hovered icon owns the native capsule, without duplicate Rainmeter tooltips')
+  check(tooltipIndex==1 and options['Hit1.ToolTipHidden']=='1' and options['Icon1.ToolTipHidden']=='1' and options['Hit1.ToolTipText']=='' and options['Icon1.ToolTipText']=='','only the hovered icon owns the native capsule, without ANSI fallback tooltip text')
   check(tonumber(options['Icon1.W'])>48 and tonumber(options['Icon1.Y'])<84-tonumber(options['Icon1.W']),'hover produces a raised magnification wave')
   check(tonumber(options['Icon2.W'])>48,'neighboring icons participate in the magnification wave')
   Pointer(items[1].cx/tonumber(vars.DockWidth));for i=1,60 do Update() end
@@ -72,6 +72,15 @@ function Initialize()
   frameStep=.016;local startDivider=tonumber(options['Divider.X']);Pointer(items[11].cx/tonumber(vars.DockWidth));Hover(11);local clear=true
   for i=1,80 do Update();local x=tonumber(options['Divider.X']);clear=clear and x>items[10].drawX+sizes[10]/2 and x<items[11].drawX-sizes[11]/2 end
   check(clear and math.abs(startDivider-tonumber(options['Divider.X']))>1,'divider follows the breathing gap without crossing enlarged icons')
+  local resting=sizes[11];Press(11);for i=1,8 do Update() end
+  check(sizes[11]<resting*.97,'pointer down visibly compresses the icon before native launch acknowledgement')
+  Release();for i=1,40 do Update() end;check(math.abs(sizes[11]-resting)<.2,'pointer up springs the icon back without changing its native release command')
+  Hover(0);for i=1,6 do Update() end;local position,velocity=waveAmount,waveAmountVelocity;Hover(11)
+  check(waveAmount==position and waveAmountVelocity==velocity and velocity<0,'rapid reversal retains the current wave position and outgoing velocity')
+  local savedSize,savedVelocity,savedX=sizes[11],sizeVelocity[11],items[11].drawX;ReloadLayout()
+  check(sizes[11]==savedSize and sizeVelocity[11]==savedVelocity and items[11].drawX==savedX,'state refresh keeps the current icon position and spring velocity')
+  Update();local wildcards=wildcardUpdates;for i=1,10 do Update() end
+  check(wildcardUpdates==wildcards,'ordinary motion updates only changed meters rather than every hidden slot')
   local priorElapsed=elapsed;frameStep=-1;Update();check(elapsed>priorElapsed and sizes[11]==sizes[11],'clock overflow retains a finite animation cadence');frameStep=.016
  end)
  if not ok then report:write('ERROR '..tostring(err)..'\n')else report:write('Completed '..checks..' native Lua checks.\n')end

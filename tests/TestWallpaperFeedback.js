@@ -1,9 +1,9 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
 const nodes=new Map(),messages=[],timers=new Map();let timer=0;
-function node(id){if(!nodes.has(id))nodes.set(id,{dataset:{action:id==='refresh'?'refresh':''},style:{},classList:{toggle(){}},events:{},addEventListener(e,f){this.events[e]=f;},setAttribute(k,v){this[k]=v;}});return nodes.get(id);}
+function node(id){if(!nodes.has(id))nodes.set(id,{dataset:{action:id==='refresh'?'refresh':''},style:{},classList:{toggle(){}},events:{},addEventListener(e,f){this.events[e]=f;},append(child){nodes.set(child.id,child);},setAttribute(k,v){this[k]=v;}});return nodes.get(id);}
 const window={chrome:{webview:{postMessage:m=>messages.push(m),addEventListener(){}}},addEventListener(){}};
-const context={window,document:{getElementById:node,querySelector:()=>node('refresh'),querySelectorAll:s=>s==='[data-action]'?[node('refresh')]:[],addEventListener(){}},matchMedia:()=>({matches:false}),PrismGlassRenderer:(c,send,ready)=>ready(()=>{}),setInterval:()=>1,clearInterval(){},requestAnimationFrame:()=>1,cancelAnimationFrame(){},performance:{now:()=>0},setTimeout:f=>{timers.set(++timer,f);return timer;},clearTimeout:id=>timers.delete(id)};
+const context={window,document:{getElementById:node,createElement:()=>node('created-'+nodes.size),querySelector:()=>node('refresh'),querySelectorAll:s=>s==='[data-action]'?[node('refresh')]:[],addEventListener(){}},matchMedia:()=>({matches:false}),PrismGlassRenderer:(c,send,ready)=>ready(()=>{}),setInterval:()=>1,clearInterval(){},requestAnimationFrame:()=>1,cancelAnimationFrame(){},performance:{now:()=>0},setTimeout:f=>{timers.set(++timer,f);return timer;},clearTimeout:id=>timers.delete(id)};
 vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/LiquidDesktop/island.js'),'utf8'),context);
 node('refresh').events.click();assert.ok(messages.includes('action:refresh'));
 window.PrismIsland.receive({type:'wallpaper-refresh',busy:true,message:'正在更新玻璃…'});

@@ -279,7 +279,7 @@ internal sealed class DockLyrics : IDisposable {
      }else if(lookup.IsFaulted){var ignored=lookup.Exception;}
      lookup=null;if(cancellation!=null){cancellation.Dispose();cancellation=null;}retry=now.AddSeconds(attempts<2?30:120);
     }
-    if(media==null)Status("等待播放器提供歌曲信息");
+    if(media==null)Status(netease!=null&&!String.IsNullOrEmpty(netease.Status)?netease.Status:"等待播放器提供歌曲信息");
     else if(!media.timeline)Status("播放器未提供可用进度");
     else if(media.status!="playing")Status("暂停时显示应用图标");
     else if(lines.Count>0)Status((QQMusicLyrics.IsSource(media.source)?"QQ 音乐原曲歌词显示中":"歌词显示中")+" · 鼠标靠近恢复应用");

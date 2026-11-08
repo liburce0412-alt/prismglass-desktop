@@ -172,6 +172,15 @@ internal static class TestCompanionHost {
    var state=Snapshot(stoppedHost);var result=(Dictionary<string,object>)state["result"];
    Check(!(bool)state["busy"]&&(string)result["request"]=="stop-now"&&(bool)result["ok"]&&!((bool)((Dictionary<string,object>)state["service"])["enabled"]),"late connection completion cannot replace a stop acknowledgement or restart service");
   }
+  string idleRoot=Path.Combine(Path.GetDirectoryName(root),"idle-display");Directory.CreateDirectory(Path.Combine(idleRoot,"runtime-data","companion"));
+  using(var idleHost=Host(owner,idleRoot)){
+   int attempts=0;idleHost.RecoverDisplay=()=>{attempts++;if(attempts==1)throw new InvalidOperationException("physical display not ready");return true;};
+   await idleHost.RecoverIdleDisplay();Check(attempts==0,"unconfigured desktop leaves virtual display management untouched");
+   string videoRoot=Path.Combine(idleRoot,"runtime-data","companion");File.WriteAllText(Path.Combine(videoRoot,"screen-stream.json"),"{}");
+   await idleHost.RecoverIdleDisplay();Check(attempts==1&&File.Exists(Path.Combine(videoRoot,"display-recovery-error.txt")),"idle recovery records an early topology failure");
+   await idleHost.RecoverIdleDisplay();Check(attempts==2&&!File.Exists(Path.Combine(videoRoot,"display-recovery-error.txt")),"later desktop maintenance retries and clears the recovered display error");
+   Check(!((bool)((Dictionary<string,object>)Snapshot(idleHost)["service"])["enabled"]),"idle display recovery never starts the companion service");
+  }
   await PairingChecks(owner,root);
   await VideoNetworkChecks(owner,root);
   await IslandChecks(owner,root);

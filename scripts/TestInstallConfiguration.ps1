@@ -14,7 +14,8 @@ public static class RainmeterIniCheck {
 }
 '@
  $dock=Join-Path $destination 'rainmeter/PrismGlass/Dock/Main.ini'
- if([RainmeterIniCheck]::GetPrivateProfileInt('Rainmeter','Update',1000,$dock) -ne 16){throw 'Installed Dock lost its 16 ms refresh setting'}
+ $expectedUpdate=[int]([regex]::Match([IO.File]::ReadAllText((Join-Path $Bundle 'rainmeter/PrismGlass/Dock/Main.ini')),'(?m)^Update=(\d+)\r?$').Groups[1].Value)
+ if([RainmeterIniCheck]::GetPrivateProfileInt('Rainmeter','Update',1000,$dock) -ne $expectedUpdate){throw 'Installed Dock lost its configured refresh setting'}
  $root=[Text.StringBuilder]::new(2048)
  [void][RainmeterIniCheck]::GetPrivateProfileString('Variables','LiquidRoot','',$root,$root.Capacity,$dock)
  if($root.ToString() -ne "$destination\LiquidDesktop\"){throw 'Native INI reader lost the Chinese installation path'}
@@ -22,7 +23,12 @@ public static class RainmeterIniCheck {
  if([IO.File]::ReadAllText($lua) -notmatch 'function Update\(\)'){throw 'Lua script was damaged during preparation'}
  $bytes=[IO.File]::ReadAllBytes($lua)
  if($bytes[0] -ne 255 -or $bytes[1] -ne 254){throw 'Installed Lua must use UTF-16 to enable Unicode conversion in Rainmeter'}
- 'PASS native Windows INI parser reads the installed 16 ms refresh and Unicode path; Lua uses UTF-16 for Unicode strings.' | Tee-Object -FilePath (Join-Path $repo 'artifacts/tests/install-configuration.txt')
+ foreach($image in Get-ChildItem -LiteralPath (Join-Path $Bundle 'rainmeter') -Filter '*.png' -File -Recurse){
+  $relative=[IO.Path]::GetRelativePath($Bundle,$image.FullName)
+  if(![Linq.Enumerable]::SequenceEqual[byte]([IO.File]::ReadAllBytes($image.FullName),[IO.File]::ReadAllBytes((Join-Path $destination $relative)))){throw "Artwork changed during installation: $relative"}
+ }
+ 'PASS artwork remains binary-identical during placeholder replacement.'
+ 'PASS native Windows INI parser reads the configured refresh and Unicode path; Lua uses UTF-16 for Unicode strings.' | Tee-Object -FilePath (Join-Path $repo 'artifacts/tests/install-configuration.txt')
 }finally{
  $resolved=(Resolve-Path -LiteralPath $fixture).Path
  $boundary=[IO.Path]::GetFullPath((Join-Path $repo 'artifacts'))+[IO.Path]::DirectorySeparatorChar

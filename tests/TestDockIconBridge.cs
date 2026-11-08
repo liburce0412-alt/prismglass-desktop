@@ -39,6 +39,14 @@ internal static class TestDockIconBridge {
     typeof(MonitorDock).GetField("skinRoot",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(dock,skins);
     typeof(MonitorDock).GetField("enabled",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(dock,true);
     var initial=Read(Path.Combine(root,"live.txt"));Check(initial[1]==255&&initial[6]>0&&initial[7]>0,"real Image meter loaded its fixture PNG at nonzero dimensions");
+    string tooltip=File.ReadAllText(Path.Combine(root,"tooltip.txt"));Check(tooltip=="","native fallback tooltip is empty instead of a UTF-8 name passed through Lua's ANSI bridge; actual="+tooltip);
+    foreach(var hint in new[]{new[]{"0|0","松手调整顺序 · Esc 取消"},new[]{"1|0","松手取消固定 · 保留原文件"},new[]{"2|1","松手取消 · Esc 返回"},new[]{"0|1","松手固定到 Dock · Esc 取消"}}){
+     long expiry=(long)(DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds+5;
+     File.WriteAllText(Path.Combine(root,"dock-drag-feedback-primary.txt"),expiry+"|1|"+hint[0]);wait.Restart();string actual="";
+     while(wait.ElapsedMilliseconds<2500){try{actual=File.ReadAllText(Path.Combine(root,"hint.txt"));}catch(IOException){}if(actual==hint[1])break;Thread.Sleep(30);}
+     Check(actual==hint[1],"native Rainmeter preserves Chinese drag hint: "+hint[1]+"; actual="+actual);
+    }
+    File.WriteAllText(Path.Combine(root,"dock-drag-feedback-primary.txt"),"");
     var hidden=Change(dock,root,0);Check(hidden[4]>0&&hidden[5]>0,"real UpdateMeter and Redraw completed before hide acknowledgement");
     Thread.Sleep(1200);var renewed=Change(dock,root,0);Check(renewed[3]>hidden[3],"same-opacity command renews the three-second lease");
     var partial=Change(dock,root,64);Check(partial[4]>0&&partial[5]>0,"partial alpha updates and redraws the real meter synchronously");

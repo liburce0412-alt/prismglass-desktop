@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>PrismGlass 材质</title>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}canvas{width:100%;height:100%;display:block}</style>
+<canvas aria-hidden="true"></canvas><script src="glass-materials.js"></script><script src="glass-renderer.js"></script><script>
+'use strict';
+let receive;
+PrismGlassRenderer(document.querySelector('canvas'),message=>chrome.webview.postMessage(message),handler=>receive=handler);
+chrome.webview.addEventListener('message',event=>{
+ const m=event.data;if(m.type==='stop'){dispatchEvent(new CustomEvent('prism-preferences',{detail:{liveGlassBackground:false}}));return;}
+ if(m.type!=='snapshot')return;
+ if(m.reset)dispatchEvent(new CustomEvent('prism-preferences',{detail:{liveGlassBackground:false}}));
+ dispatchEvent(new CustomEvent('prism-preferences',{detail:m.preferences}));receive(m.layout);
+ // The renderer's frame was queued by receive before this acknowledgement.
+ requestAnimationFrame(()=>chrome.webview.postMessage('snapshot:'+m.id));
+});
+</script></html>

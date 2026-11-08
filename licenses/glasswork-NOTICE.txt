@@ -1,0 +1,36 @@
+Glasswork
+Copyright (c) 2026 Kubai087
+
+The code in this repository, and the images in media/ that are renders of
+this project, are licensed under the MIT License (see LICENSE).
+
+The following files are NOT covered by that license:
+
+  media/tahoe-light.mp4, media/tahoe-dark.mp4,
+  media/tahoe-light.webp, media/tahoe-dark.webp
+    cut from the dynamic wallpaper of macOS Tahoe
+  media/sonoma-light.mp4, media/sonoma-dark.mp4,
+  media/sonoma-light.jpg, media/sonoma-dark.jpg
+    cut from the dynamic wallpaper of macOS Sonoma
+  media/ventura-light.jpg, media/ventura-dark.jpg
+    from the dynamic wallpaper of macOS Ventura
+  media/monterey-light.jpg, media/monterey-dark.jpg
+    from the dynamic wallpaper of macOS Monterey
+  media/bigsur-light.jpg, media/bigsur-dark.jpg
+    from the dynamic wallpaper of macOS Big Sur
+
+They are (c) Apple Inc., resized and re-encoded. They are included only so
+the live demo can show the material over them. No license to them is
+granted here; do not reuse or redistribute them, and leave them out of
+anything built on this code. They will be removed on request from the
+rights holder.
+
+Glasswork is an independent project and is not affiliated with, endorsed by
+or sponsored by Apple Inc. Apple, macOS, macOS Tahoe and Liquid Glass are
+trademarks of Apple Inc.
+
+Loaded at run time and not part of this repository:
+
+- Tweakpane and @tweakpane/plugin-essentials (MIT License), from jsDelivr.
+- Random photos from Lorem Picsum (picsum.photos), originally from Unsplash
+  under the Unsplash License, with the photographer credited on the page.

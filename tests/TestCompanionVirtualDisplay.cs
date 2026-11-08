@@ -13,6 +13,7 @@ class TestCompanionVirtualDisplay {
  static bool Virtual(CompanionDisplayTopology.DisplayPath path){return path.target.adapter.low==2;}
  [STAThread]static int Main(string[] args){try{
   if(args.Length==1&&(args[0]=="--describe"||args[0]=="--validate")){
+   var active=CompanionDisplayTopology.Read(2);Console.WriteLine("activeVirtualScreens="+CompanionDisplayTopology.ActiveVirtual(active).Count+"; activeDisplayPaths="+active.paths.Length);Console.WriteLine("physicalFingerprint="+CompanionDisplayTopology.Fingerprint(active,CompanionDisplayTopology.IsVirtual));
    var display=new CompanionVirtualDisplay(AppDomain.CurrentDomain.BaseDirectory);var screens=display.PhysicalMonitors();Console.WriteLine("extensionAvailable="+display.Available+"; physicalLogicalScreens="+screens.Count);foreach(var screen in screens)Console.WriteLine(screen.Id+" "+screen.DeviceName+" "+screen.Name+" "+screen.Bounds);
    if(display.Available){var all=CompanionDisplayTopology.Read(1);var target=CompanionDisplayTopology.FindVirtual(all);var nativePreferred=CompanionDisplayTopology.Preferred(target.target);Console.WriteLine("preferred="+nativePreferred.width+"x"+nativePreferred.height);
     foreach(var mode in CompanionDisplayTopology.SupportedModes(target))Console.WriteLine("supported="+mode.width+"x"+mode.height+"@"+mode.frequency+" rotation="+mode.orientation);
@@ -20,6 +21,15 @@ class TestCompanionVirtualDisplay {
    }
    return 0;
   }
+  string command=System.IO.Path.Combine(Environment.SystemDirectory,"pnputil.exe");
+  string task="<Task xmlns='http://schemas.microsoft.com/windows/2004/02/mit/task'><Principals><Principal><UserId>S-1-5-18</UserId></Principal></Principals><Actions><Exec><Command>"+command+"</Command><Arguments>"+CompanionVirtualDevice.Arguments(false)+"</Arguments></Exec></Actions></Task>";
+  Check(CompanionVirtualDevice.ValidTask(task,false),"device control accepts only the fixed Windows PnPUtil task for MttVDD");
+  Check(!CompanionVirtualDevice.ValidTask(task,true)&&!CompanionVirtualDevice.ValidTask(task.Replace("Root\\MttVDD","PCI\\Physical"),false),"opposite operation and physical-device substitution are rejected");
+  Check(!CompanionVirtualDevice.ValidTask(task.Replace(command,@"C:\Users\example\pnputil.exe"),false)&&!CompanionVirtualDevice.ValidTask(task.Replace("S-1-5-18","S-1-5-19"),false),"user-writable executables and another principal cannot be used as the elevated broker");
+  Check(!CompanionVirtualDevice.ValidTask(task.Replace("</Actions>","<Exec><Command>extra.exe</Command></Exec></Actions>"),false),"additional task actions cannot run alongside the device command");
+  Check(!CompanionVirtualDevice.ValidTask("<!DOCTYPE Task [<!ENTITY x SYSTEM 'file:///private'>]>"+task,false),"task validation does not resolve external XML entities");
+  Check(!CompanionVirtualDevice.ValidTask(null,false)&&!CompanionVirtualDevice.ValidTask(task.Replace("<Actions>","<Triggers><BootTrigger/></Triggers><Actions>"),false),"missing definitions and unsolicited automatic device switches are rejected");
+  Check(CompanionVirtualDevice.TaskName("S-1-5-21-1-2-3-1001",true)!=CompanionVirtualDevice.TaskName("S-1-5-21-1-2-3-1002",true),"device tasks are scoped to the configured desktop user");
   CompanionDisplayTopology.CheckSizes();Check(true,"CCD native structure sizes match Windows ABI");
   Check(Marshal.SizeOf(typeof(CompanionDisplayTopology.DisplayMode))==220&&Marshal.OffsetOf(typeof(CompanionDisplayTopology.DisplayMode),"width").ToInt32()==172,"DEVMODEW enumeration layout matches Windows ABI");
   Check(CompanionDisplayTopology.MatchesVirtualIdentity(@"\\?\DISPLAY#MTT1337#x",@"\\?\ROOT#DISPLAY#0000#{x}",new[]{@"Root\MttVDD"}),"specific driver and monitor pair is recognized");

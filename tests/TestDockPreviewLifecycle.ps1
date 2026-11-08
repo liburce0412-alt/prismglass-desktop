@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference='Stop'
+$ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $source=Get-Content (Join-Path $repo 'src/LiquidDesktop/LiquidDesktop.cs') -Raw
 $start=$source.IndexOf(' void PreviewTick(Point cursor){',[StringComparison]::Ordinal)
@@ -10,10 +10,10 @@ $code=@'
 using System;using System.Drawing;using System.Collections.Generic;
 public sealed class Entry {public string id;public string name="App";public bool system;public List<int> windows=new List<int>{1};}
 public sealed class DockPreview {
- public bool IsDisposed,KeyboardMode,Shown;public string EntryId;public Rectangle Bounds=new Rectangle(200,300,400,200);
+ public bool IsDisposed,KeyboardMode,Shown,Dismissing;public string EntryId;public Rectangle Bounds=new Rectangle(200,300,400,200);
  public DockPreview(string entry,Rectangle dock,bool astro){EntryId=entry;}
  public DockPreview(Entry entry,Rectangle dock,bool astro):this(entry.id,dock,astro){}
- public void Dispose(){IsDisposed=true;}public void Show(){Shown=true;}
+ public void Dispose(){IsDisposed=true;}public void Show(){Shown=true;}public void Dismiss(){Dismissing=true;}public void Revive(){Dismissing=false;}
 }
 public sealed class Backend {public Entry Entry(string id){return id=="removed"?null:new Entry{id=id,system=id=="workspace",windows=id=="empty"?new List<int>():new List<int>{1}};}}
 public sealed class DockLabel {public DockLabel(IntPtr h,Action<object> send,Func<Rectangle> screen){}public bool Visible;public static bool TryAnchor(string value,string id,out double anchor){anchor=.5;return value==id&&id.Length>0;}public void Display(string name,Rectangle dock,double anchor,bool astro){Visible=true;}public void Hide(){Visible=false;}}
@@ -29,12 +29,12 @@ public sealed class PreviewLifecycle {
  public static void Main(){new PreviewLifecycle().Run();}
  void Run(){
   var dockPoint=new Point(400,650);var old=new DockPreview("old",dockRectangle,false);preview=old;hoverId="old";nextId="new";
-  PreviewTick(dockPoint);Check(old.IsDisposed&&preview==null,"new icon immediately disposes the previous app preview");
+  PreviewTick(dockPoint);Check(old.Dismissing&&preview==null,"new icon starts the previous preview exit and releases hover ownership");
   Check(hoverId=="new"&&(DateTime.UtcNow-hoverSince).TotalMilliseconds<100,"new icon retains its own hover delay");
   hoverSince=DateTime.UtcNow.AddMilliseconds(-450);PreviewTick(dockPoint);Check(preview!=null&&preview.EntryId=="new"&&preview.Shown,"new preview opens after its own delay");
   var current=preview;nextId="";PreviewTick(new Point(400,550));Check(preview==current&&!current.IsDisposed,"leaving Dock toward the preview keeps the 400 ms grace period");
   PreviewTick(new Point(400,400));Check(preview==current&&previewLeave>DateTime.UtcNow.AddMilliseconds(300),"entering preview refreshes its leave grace period");
-  previewLeave=DateTime.UtcNow.AddMilliseconds(-1);PreviewTick(new Point(900,200));Check(preview==null&&current.IsDisposed,"leaving both Dock and preview closes after the grace period");
+  previewLeave=DateTime.UtcNow.AddMilliseconds(-1);PreviewTick(new Point(900,200));Check(preview==current&&current.Dismissing,"leaving both Dock and preview starts the exit after the grace period");current.Dispose();PreviewTick(new Point(900,200));Check(preview==null,"completed exit releases the preview reference");
   preview=new DockPreview("keyboard",dockRectangle,false){KeyboardMode=true};nextId="new";PreviewTick(dockPoint);Check(preview.EntryId=="keyboard"&&!preview.IsDisposed,"keyboard preview keeps its existing navigation ownership");
   current=preview;WorkspaceOpen=true;PreviewTick(dockPoint);Check(preview==null&&current.IsDisposed,"opening the workspace dismisses an existing Dock preview");
   hoverId="new";hoverSince=DateTime.UtcNow.AddSeconds(-5);PreviewTick(dockPoint);Check(preview==null&&hoverId=="","idle pointer over Dock cannot create a preview while the workspace is open");

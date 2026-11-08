@@ -21,13 +21,12 @@ Get-ChildItem -LiteralPath $bundle | Copy-Item -Destination $Destination -Recurs
 $RainmeterPath=[IO.Path]::GetFullPath($RainmeterPath)
 [IO.File]::WriteAllText("$Destination/LiquidDesktop/rainmeter-path.txt",$RainmeterPath)
 if($EnableMusicBridge){New-Item -ItemType File "$Destination/music-bridge.enabled" | Out-Null}
-foreach($file in Get-ChildItem "$Destination/rainmeter/PrismGlass" -File -Recurse){
+foreach($file in Get-ChildItem "$Destination/rainmeter/PrismGlass" -File -Recurse | Where-Object Extension -In '.ini','.inc','.lua'){
  $text=[IO.File]::ReadAllText($file.FullName)
  $text=$text.Replace('{{INSTALL_ROOT}}',$Destination).Replace('{{POWERSHELL}}',$pwsh).Replace('{{LATITUDE}}',$Latitude.ToString([Globalization.CultureInfo]::InvariantCulture)).Replace('{{LONGITUDE}}',$Longitude.ToString([Globalization.CultureInfo]::InvariantCulture))
  # Rainmeter uses Windows INI parsing: a UTF-8 BOM hides the first section.
  # Lua also needs UTF-16 to enable Rainmeter's Unicode string conversion.
- $encoding=if($file.Extension -in '.ini','.inc','.lua'){[Text.Encoding]::Unicode}else{[Text.UTF8Encoding]::new($false)}
- [IO.File]::WriteAllText($file.FullName,$text,$encoding)
+ [IO.File]::WriteAllText($file.FullName,$text,[Text.Encoding]::Unicode)
 }
 $pins=@(
  @{id='explorer';name='文件';path=(Join-Path $env:WINDIR 'explorer.exe');arguments='';icon=''},

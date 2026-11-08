@@ -22,3 +22,4 @@ body[data-theme=Astro] .glass{background:rgba(8,16,32,.28)}
 .dock-lyrics-settings .life-note{line-height:1.65;font-size:11px;margin:9px 0 16px}
 .lyrics-timing button{padding:7px 9px;border-radius:10px;background:#b8dcff12;color:inherit;font-size:11px}
 .dock-lyrics-settings button:focus-visible{outline:2px solid #a8d7ff;outline-offset:3px}
+#dock #position-grip{position:absolute;left:24px;top:5px;width:48px;height:14px;z-index:20;padding:0;border:0;border-radius:8px;background:transparent;color:inherit;font-size:12px;line-height:14px;opacity:.5;cursor:move;touch-action:none}#dock #position-grip:hover,#dock #position-grip:focus-visible{opacity:1;background:#ffffff20}

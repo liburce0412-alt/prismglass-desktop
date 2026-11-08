@@ -69,6 +69,17 @@ internal static class TestCompanionStream {
   live.Bounds=a.Bounds;live.Identity=b.Identity;Check(!CompanionMonitorSelection.SameCapture(a,live),"replacement screen at the same coordinates cannot keep an old capture alive");
   Check(!CompanionMonitorSelection.SameCapture(a,null),"disconnected capture source cannot stay live");
   var backend=new Fake();bool locked=false;var now=DateTime.UtcNow;var first=new CompanionGrant{Active=true,screen=true};var second=new CompanionGrant{Active=true,screen=true};
+  var idleBackend=new Fake();var idleStream=new CompanionStream(idleBackend,()=>false,()=>now,false);int recoveries=0;
+  Action recover=()=>recoveries++;
+  Check(idleStream.RecoverIdleDisplay(recover)&&recoveries==1,"idle desktop can recover an orphan display before the companion is opened");
+  idleBackend.duringStart=()=>Check(!idleStream.RecoverIdleDisplay(recover),"startup cannot race idle recovery into shutting down a new display");
+  var idleOffer=Offer();idleOffer["mode"]="extend";idleOffer["monitor"]=-1;
+  Check(idleStream.Handle("/api/screen/begin",idleOffer,first).Status==200,"extension starts after idle recovery");
+  Check(!idleStream.RecoverIdleDisplay(recover)&&recoveries==1,"active extension is never closed by idle display maintenance");
+  idleBackend.failStop=true;try{idleStream.Stop();}catch(IOException){}
+  Check(!idleStream.RecoverIdleDisplay(recover),"unfinished stream cleanup retains its diagnostic and ownership");
+  idleStream.Sweep();Check(idleStream.RecoverIdleDisplay(recover)&&recoveries==2,"idle recovery resumes after cleanup completes");
+  idleStream.Dispose();Check(!idleStream.RecoverIdleDisplay(recover)&&recoveries==2,"disposed stream never changes display state");
   using(var stream=new CompanionStream(backend,()=>locked,()=>now,false)){
    var stopped=new List<CompanionGrant>();stream.Stopped=grant=>stopped.Add(grant);
    Check(stream.Handle("/api/screen/begin",Offer(),new CompanionGrant{Active=true}).Status==403&&backend.starts==0,"old pairings do not inherit screen access");

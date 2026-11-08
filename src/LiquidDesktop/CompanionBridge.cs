@@ -9,7 +9,7 @@ using System.Web.Script.Serialization;
 // Network DTOs are deliberately projected here; desktop messages never cross this boundary.
 internal sealed class CompanionBridge {
  readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;readonly SharedDesktopData shared;readonly DockLyrics lyrics;readonly CompanionContent content;readonly LyricsStyleStore lyricsStyle;
- static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","hiddenCards","hiddenLeftCards"};
+ static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","glassStyle","glassOverrides","glassPresets","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","hiddenCards","hiddenLeftCards"};
  static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"},LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  readonly Func<Func<object>,object> onDesktop;readonly Func<bool> locked;readonly Func<string> streamAddress;readonly object gate=new object();readonly CompanionContext context;readonly CompanionControls controls;
  sealed class Assets {public Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();public string coverId="";public byte[] cover;}
@@ -18,12 +18,13 @@ internal sealed class CompanionBridge {
  readonly Dictionary<string,string> remote=new Dictionary<string,string>(),allowed=new Dictionary<string,string>();
  readonly Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();string appsRevision=Guid.NewGuid().ToString("N"),appsSource="",coverId="",coverSource="";byte[] cover;
  public CompanionBridge(string path,AppLibrary apps,DesktopPreferences settings,SharedDesktopData data,DockLyrics dockLyrics,Func<Func<object>,object> dispatch,Func<bool> isLocked,CompanionContext foreground=null,CompanionControls remoteControls=null,Func<string> streamAddress=null){root=path;library=apps;preferences=settings;shared=data;lyrics=dockLyrics;content=new CompanionContent(path);lyricsStyle=new LyricsStyleStore(path);onDesktop=dispatch;locked=isLocked;this.streamAddress=streamAddress;context=foreground??new CompanionContext();controls=remoteControls??new CompanionControls(isLocked,path);}
- CompanionStream screenStream;
+ CompanionStream screenStream;bool disposed;
  internal bool ScreenActive {get {lock(gate)return screenStream!=null&&screenStream.IsActive;}}
  internal bool AudioActive {get {lock(gate)return screenStream!=null&&screenStream.AudioActive;}}
  internal bool PointerActive {get{return controls.IsActive;}}
  public void StopControls(){controls.CancelAll();if(screenStream!=null)screenStream.Stop();}
- public void Dispose(){controls.Dispose();if(screenStream!=null)screenStream.Dispose();}
+ public void Dispose(){lock(gate){disposed=true;controls.Dispose();if(screenStream!=null)screenStream.Dispose();}}
+ internal bool RecoverIdleDisplay(){lock(gate){if(disposed)return false;Action recover=()=>new CompanionVirtualDisplay(root).RecoverIdle();if(screenStream!=null)return screenStream.RecoverIdleDisplay(recover);recover();return true;}}
  internal static string EntrySignature(AppLibraryEntry entry){return entry.kind+"\n"+entry.path+"\n"+entry.arguments+"\n"+entry.target;}
  public void Allow(Dictionary<string,string> entries){lock(gate){allowed.Clear();foreach(var p in entries)allowed[p.Key]=p.Value;appsSource="";remote.Clear();icons.Clear();PublishAssets();}}
  void PublishAssets(){assetSnapshot=new Assets{icons=new Dictionary<string,byte[]>(icons),coverId=coverId,cover=cover};}

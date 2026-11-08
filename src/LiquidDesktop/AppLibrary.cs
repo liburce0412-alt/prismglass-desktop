@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 
@@ -57,9 +58,57 @@ internal sealed class AppLibrary : IDisposable {
  static string Text(string s){return (s??"").Trim();}
  static string Name(string s){s=Text(s);if(s.Length==0||s.Length>80)throw new ArgumentException("名称需为 1–80 个字符");return s;}
  internal static string Identity(string path,string arguments){path=Text(path);if(!path.StartsWith("shell:",StringComparison.OrdinalIgnoreCase))path=Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);return path.ToLowerInvariant()+"\n"+Text(arguments);}
+ internal static string MatchIdentity(string identity){
+  int split=(identity??"").IndexOf('\n');if(split<0)return identity;string path=identity.Substring(0,split),args=identity.Substring(split+1),pattern=null;
+  // shortcut: Only known launch-source flags are ignored; add a verified app-specific rule for other duplicates.
+  switch(Path.GetFileName(path).ToLowerInvariant()){
+   case "quark.exe":case "quark_cloud_drive.exe":pattern=@"^--launch-from=(desktopicon|startmenu)(\s+|$)";break;
+   case "jianyingpro.exe":pattern=@"^--src[13]$";break;
+   case "lefile.exe":pattern=@"^-origin=(desktop|startmenu)$";break;
+   case "slbrowser.exe":pattern=@"^--from=(desktopshortcut|startmenu)$";break;
+   case "lzmain.exe":pattern=@"^--from=(desktop|startmenu)$";break;
+   case "lenovoappstorenotify.exe":pattern=@"^-c shortcut_(desktop|startmenu)$";break;
+   case "thunderstart.exe":pattern=@"^-StartType:(DesktopIcon|StartMenu)$";break;
+   case "chrome.exe":pattern=@"^--source-shortcut-location=(desktop|start-menu)(\s+|$)";break;
+   case "marvislauncher.exe":pattern="^--from \"[24]\"(?= --launch-proc-name \"Marvis.exe\"$)";break;
+   case "ksolaunch.exe":pattern=@"(?<=^/prometheus /fromksolaunch )/from=(desktop_shortcut|startmenu)$";break;
+  }
+  if(pattern!=null)args=Regex.Replace(args,pattern,"").Trim();
+  if(args.Length==0&&Path.GetExtension(path).Equals(".url",StringComparison.OrdinalIgnoreCase)&&File.Exists(path)){
+   // WScript can return a cached URL after the shortcut file has changed.
+   try{bool section=false;foreach(string raw in File.ReadAllLines(path,Encoding.Default)){
+    string line=raw.Trim();if(line.StartsWith("[",StringComparison.Ordinal)){section=line.Equals("[InternetShortcut]",StringComparison.OrdinalIgnoreCase);continue;}
+    int equals=line.IndexOf('=');if(!section||equals<1||!line.Substring(0,equals).Trim().Equals("URL",StringComparison.OrdinalIgnoreCase))continue;
+    string url=line.Substring(equals+1).Trim();Uri parsed;if(Uri.TryCreate(url,UriKind.Absolute,out parsed))return "url:\n"+url;break;
+   }}catch{}
+  }
+  return path+"\n"+args;
+ }
  static string EntryId(string identity){return "app:"+Convert.ToBase64String(Encoding.UTF8.GetBytes(identity));}
+ static void UpdateLaunch(AppLibraryEntry entry,AppLibraryEntry found){
+  if(!String.Equals(entry.path,found.path,StringComparison.OrdinalIgnoreCase))entry.path=found.path;
+  if(!String.Equals(entry.target,found.target,StringComparison.OrdinalIgnoreCase))entry.target=found.target;
+  entry.arguments=found.arguments;entry.kind=found.kind;if(!entry.manual)entry.name=found.name;
+ }
  internal static void Merge(AppLibrarySnapshot s,IEnumerable<AppLibraryEntry> discovered){
-  foreach(var found in discovered){if(s.excluded.Contains(found.identity))continue;var e=s.entries.FirstOrDefault(x=>x.identity==found.identity);if(e==null){found.id=EntryId(found.identity);found.category="uncategorized";found.folder="";found.alias="";found.order=s.entries.Count+s.folders.Count;s.entries.Add(found);e=found;}else{e.exists=e.exists||found.exists;if(found.exists&&!Exists(e.path))e.path=found.path;e.target=found.target;e.kind=found.kind;if(!e.manual)e.name=found.name;}
+  var keys=new Dictionary<string,string>();Func<string,string> key=identity=>{string value;if(!keys.TryGetValue(identity,out value)){value=MatchIdentity(identity);keys[identity]=value;}return value;};
+  var excluded=new HashSet<string>(s.excluded.Select(key));var foundEntries=discovered.Where(e=>!excluded.Contains(key(e.identity))).ToList();var foundKeys=new HashSet<string>(foundEntries.Select(e=>key(e.identity)));
+  var retargeted=new HashSet<AppLibraryEntry>();
+  // A changed shortcut keeps its library placement, but its changed launch signature still requires sharing approval.
+  foreach(var e in s.entries.Where(e=>e.kind=="app"&&!foundKeys.Contains(key(e.identity)))){
+   var replacement=foundEntries.FirstOrDefault(x=>x.exists&&String.Equals(x.path,e.path,StringComparison.OrdinalIgnoreCase));
+   if(replacement!=null&&Path.GetExtension(e.path).Equals(".lnk",StringComparison.OrdinalIgnoreCase)){retargeted.Add(e);e.identity=replacement.identity;UpdateLaunch(e,replacement);e.exists=true;}
+  }
+  foreach(var group in s.entries.GroupBy(e=>key(e.identity)).Where(g=>g.Count()>1).ToList()){
+   var ordered=group.OrderByDescending(e=>e.manual).ThenByDescending(e=>!String.IsNullOrEmpty(e.folder)).ThenByDescending(e=>!String.IsNullOrEmpty(e.category)&&e.category!="uncategorized").ThenBy(e=>e.order).ToList();var placement=ordered[0];var keep=ordered.FirstOrDefault(e=>!retargeted.Contains(e)&&EntryExists(e))??placement;
+   if(keep!=placement){keep.category=placement.category;keep.folder=placement.folder;keep.order=placement.order;keep.alias=placement.alias;if(placement.manual){keep.manual=true;keep.name=placement.name;}}
+   foreach(var duplicate in group.Where(e=>e!=keep)){foreach(var source in duplicate.sources)if(!keep.sources.Contains(source,StringComparer.OrdinalIgnoreCase))keep.sources.Add(source);if(String.IsNullOrEmpty(keep.alias))keep.alias=duplicate.alias;s.entries.Remove(duplicate);}
+  }
+  foreach(var found in foundEntries){var e=s.entries.FirstOrDefault(x=>key(x.identity)==key(found.identity));if(e==null){found.id=EntryId(found.identity);found.category="uncategorized";found.folder="";found.alias="";found.order=s.entries.Count+s.folders.Count;s.entries.Add(found);e=found;}else{
+    e.exists=e.exists||found.exists;
+    bool changed=foundEntries.Any(x=>String.Equals(x.path,e.path,StringComparison.OrdinalIgnoreCase)&&key(x.identity)!=key(e.identity));
+    if(String.Equals(e.path,found.path,StringComparison.OrdinalIgnoreCase)||(found.exists&&(!EntryExists(e)||changed)))UpdateLaunch(e,found);
+   }
    foreach(var source in found.sources)if(!e.sources.Contains(source,StringComparer.OrdinalIgnoreCase))e.sources.Add(source);
   }
  }
@@ -77,7 +126,9 @@ internal sealed class AppLibrary : IDisposable {
  static void Release(object obj){if(obj!=null&&Marshal.IsComObject(obj))Marshal.FinalReleaseComObject(obj);}
  static AppLibraryEntry Entry(string path,object shortcuts){
   path=Path.GetFullPath(path);var target=path;string arguments="",name=Path.GetFileNameWithoutExtension(path);bool directory=Directory.Exists(path);
-  if(Path.GetExtension(path).Equals(".lnk",StringComparison.OrdinalIgnoreCase)&&shortcuts!=null){object link=null;try{link=Call(shortcuts,"CreateShortcut",path);string resolved=Convert.ToString(Get(link,"TargetPath"));arguments=Convert.ToString(Get(link,"Arguments"));if(!String.IsNullOrEmpty(resolved))target=resolved;}catch{}finally{Release(link);}}
+  if(Path.GetExtension(path).Equals(".lnk",StringComparison.OrdinalIgnoreCase)&&shortcuts!=null){object link=null;try{link=Call(shortcuts,"CreateShortcut",path);string resolved=Convert.ToString(Get(link,"TargetPath"));arguments=Convert.ToString(Get(link,"Arguments"));if(!String.IsNullOrEmpty(resolved))target=resolved;}catch{}finally{Release(link);}
+   if(target==path){object shell=null,folder=null,item=null;try{shell=Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));folder=Call(shell,"NameSpace",Path.GetDirectoryName(path));item=Call(folder,"ParseName",Path.GetFileName(path));string resolved=Convert.ToString(Call(item,"ExtendedProperty","System.Link.TargetParsingPath"));if(Path.IsPathRooted(resolved)&&(File.Exists(resolved)||Directory.Exists(resolved))){target=resolved;string extra=Convert.ToString(Call(item,"ExtendedProperty","System.Link.Arguments"));if(!String.IsNullOrEmpty(extra))arguments=extra;}}catch{}finally{Release(item);Release(folder);Release(shell);}}
+  }
   return new AppLibraryEntry{identity=Identity(target,arguments),name=directory?Path.GetFileName(path):name,path=path,target=target,arguments="",exists=(File.Exists(path)||directory)&&(target==path||File.Exists(target)||Directory.Exists(target)),kind=directory?"directory":new[]{".lnk",".url",".exe",".appref-ms"}.Contains(Path.GetExtension(path).ToLowerInvariant())?"app":"file",sources=new List<string>{path}};
  }
  static IEnumerable<string> Files(string path,bool recursive){
@@ -88,8 +139,8 @@ internal sealed class AppLibrary : IDisposable {
    try{shell=Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));folder=Call(shell,"NameSpace","shell:AppsFolder");if(folder!=null){items=Call(folder,"Items");int count=Convert.ToInt32(Get(items,"Count"));for(int i=0;i<count;i++){object item=null;try{item=Call(items,"Item",i);string id=Convert.ToString(Call(item,"ExtendedProperty","System.AppUserModel.ID"));if(String.IsNullOrEmpty(id)||!id.Contains("!"))continue;var path="shell:AppsFolder\\"+id;result.Add(new AppLibraryEntry{identity=Identity(path,""),name=Convert.ToString(Get(item,"Name")),path=path,target=path,arguments="",kind="uwp",exists=true,sources=new List<string>{path}});}catch{}finally{Release(item);}}}}catch{}
   }finally{Release(items);Release(folder);Release(shell);Release(shortcuts);}
  }
- public void Add(string path){if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("找不到所选项目",path);object shortcuts=null;AppLibraryEntry entry;try{shortcuts=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));entry=Entry(path,shortcuts);}finally{Release(shortcuts);}lock(gate){var s=Read();if(!String.IsNullOrEmpty(s.error))throw new InvalidOperationException(s.error);s.excluded.Remove(entry.identity);entry.manual=true;Merge(s,new[]{entry});var current=s.entries.First(e=>e.identity==entry.identity);current.manual=true;current.exists=entry.exists;Commit(s);}GetIcon(path);}
- public void Repair(string id,string path){if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("找不到所选项目",path);lock(gate){var s=Read();var e=s.entries.FirstOrDefault(x=>x.id==id);if(e==null)throw new ArgumentException("项目已移除");object shortcuts=null;AppLibraryEntry replacement;try{shortcuts=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));replacement=Entry(path,shortcuts);}finally{Release(shortcuts);}if(s.entries.Any(x=>x.id!=id&&x.identity==replacement.identity))throw new InvalidOperationException("所选目标已在应用库中");s.excluded.Add(e.identity);e.identity=replacement.identity;e.path=replacement.path;e.target=replacement.target;e.arguments=replacement.arguments;e.sources=replacement.sources;e.kind=replacement.kind;e.manual=true;e.exists=replacement.exists;Commit(s);}GetIcon(path);}
+ public void Add(string path){if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("找不到所选项目",path);object shortcuts=null;AppLibraryEntry entry;try{shortcuts=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));entry=Entry(path,shortcuts);}finally{Release(shortcuts);}lock(gate){var s=Read();if(!String.IsNullOrEmpty(s.error))throw new InvalidOperationException(s.error);string key=MatchIdentity(entry.identity);s.excluded.RemoveAll(x=>MatchIdentity(x)==key);entry.manual=true;Merge(s,new[]{entry});var current=s.entries.First(e=>MatchIdentity(e.identity)==key);current.manual=true;current.exists=current.exists||entry.exists;Commit(s);}GetIcon(path);}
+ public void Repair(string id,string path){if(!File.Exists(path)&&!Directory.Exists(path))throw new FileNotFoundException("找不到所选项目",path);lock(gate){var s=Read();var e=s.entries.FirstOrDefault(x=>x.id==id);if(e==null)throw new ArgumentException("项目已移除");object shortcuts=null;AppLibraryEntry replacement;try{shortcuts=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));replacement=Entry(path,shortcuts);}finally{Release(shortcuts);}if(s.entries.Any(x=>x.id!=id&&MatchIdentity(x.identity)==MatchIdentity(replacement.identity)))throw new InvalidOperationException("所选目标已在应用库中");s.excluded.Add(e.identity);e.identity=replacement.identity;e.path=replacement.path;e.target=replacement.target;e.arguments=replacement.arguments;e.sources=replacement.sources;e.kind=replacement.kind;e.manual=true;e.exists=replacement.exists;Commit(s);}GetIcon(path);}
  public void Apply(string command,string id,string target,string name){lock(gate){var s=Read();if(!String.IsNullOrEmpty(s.error))throw new InvalidOperationException(s.error);var e=s.entries.FirstOrDefault(x=>x.id==id);var f=s.folders.FirstOrDefault(x=>x.id==id);var c=s.categories.FirstOrDefault(x=>x.id==id);
   switch(command){
    case "categoryCreate":s.categories.Add(new AppLibraryCategory{id="category:"+Guid.NewGuid().ToString("N"),name=Name(name),order=s.categories.Count});break;

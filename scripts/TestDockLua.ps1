@@ -1,10 +1,10 @@
-﻿param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe',[ValidateSet('lyrics','drag')][string]$Case='lyrics')
+﻿param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe',[ValidateSet('lyrics','drag','trash')][string]$Case='lyrics')
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $fixture=Join-Path $repo ('artifacts/lua-'+[guid]::NewGuid().ToString('N'))
 $skin=Join-Path $fixture 'Skins/DockTest'
-$testScript=if($Case -eq 'drag'){'TestDockDragLua.lua'}else{'TestDockLua.lua'}
-$expected=if($Case -eq 'drag'){'Completed 25 native Dock interaction Lua checks.'}else{'Completed 33 native Lua checks.'}
+$testScript=if($Case -eq 'trash'){'TestDockTrashLua.lua'}elseif($Case -eq 'drag'){'TestDockDragLua.lua'}else{'TestDockLua.lua'}
+$expected=if($Case -eq 'trash'){'Completed 6 native Trash Lua checks.'}elseif($Case -eq 'drag'){'Completed 25 native Dock interaction Lua checks.'}else{'Completed 38 native Lua checks.'}
 $evidence=Join-Path $repo ("artifacts/tests/dock-$Case-lua-checks.txt")
 $process=$null
 New-Item -ItemType Directory -Force -Path $skin,(Split-Path $evidence) | Out-Null

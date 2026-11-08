@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$CacheRoot,[string]$CaptureRoot='artifacts/release-1.0.0/weather-ui',[switch]$CaptureOnly,[string]$WeatherFixture='')
+param([Parameter(Mandatory=$true)][string]$CacheRoot,[string]$CaptureRoot='artifacts/release-1.0.0/weather-ui',[switch]$CaptureOnly,[switch]$EnvironmentOnly,[string]$WeatherFixture='')
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $out=Join-Path $repo 'artifacts/weather-ui-runtime'
@@ -9,7 +9,7 @@ $sdk=Join-Path $CacheRoot 'webview2-1.0.4191.47'
 $process=$null
 New-Item -ItemType Directory -Force -Path $app,$companion,$captures | Out-Null
 try{
- Get-ChildItem -LiteralPath "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.js','.html','.css'} | Copy-Item -Destination $app
+ Get-ChildItem -LiteralPath "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.js','.html','.css','.png'} | Copy-Item -Destination $app
  Copy-Item "$repo/src/LiquidDesktop/companion-web/*" $companion -Force
  Copy-Item "$repo/src/LiquidDesktop/lyrics-style.js","$repo/src/LiquidDesktop/dock-lyrics.css","$repo/tests/CompanionUiFixture.js" $companion -Force
  if($WeatherFixture){Copy-Item -LiteralPath $WeatherFixture -Destination (Join-Path $app 'weather-source-evidence.json')}
@@ -18,7 +18,9 @@ try{
  Set-Content -LiteralPath "$captures/ui-checks.txt" -Value '' -Encoding utf8
  & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo /target:exe /platform:x64 "/out:$out/TestWeatherUi.exe" /r:System.Drawing.dll /r:System.Windows.Forms.dll "/r:$out/Microsoft.Web.WebView2.Core.dll" "/r:$out/Microsoft.Web.WebView2.WinForms.dll" (Join-Path $repo 'tests/TestWeatherUi.cs')
  if($LASTEXITCODE -ne 0){throw 'Weather UI test compilation failed'}
- $process=Start-Process -FilePath "$out/TestWeatherUi.exe" -ArgumentList ('"'+$app+'" "'+$captures+'" '+$CaptureOnly.IsPresent) -WindowStyle Hidden -PassThru
+ $testArguments='"'+$app+'" "'+$captures+'" '+$CaptureOnly.IsPresent
+ if($EnvironmentOnly){$testArguments+=' --environment-only'}
+ $process=Start-Process -FilePath "$out/TestWeatherUi.exe" -ArgumentList $testArguments -WindowStyle Hidden -PassThru
  if(!$process.WaitForExit(60000)){throw 'Weather UI checks timed out'}
  if($process.ExitCode -ne 0){throw "Weather UI checks failed; inspect $captures/ui-checks.txt"}
  Get-Content -LiteralPath "$captures/ui-checks.txt"

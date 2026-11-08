@@ -44,7 +44,7 @@ assert.doesNotMatch(help[3], /<script|https?:\/\//);
 const scripts = Array.from(html.matchAll(/<script\b[^>]*src="([^"]+)"/g), m => m[1]);
 for (const script of scripts) {
   assert.match(script, /^\/[a-z0-9-]+\.js$/);
-  const directory = script === '/lyrics-style.js' ? path.dirname(web) : web;
+  const directory = ['/lyrics-style.js', '/glass-materials.js'].includes(script) ? path.dirname(web) : web;
   const source = fs.readFileSync(path.join(directory, script.slice(1)), 'utf8');
   assert.doesNotMatch(source, /serviceWorker\s*\.\s*register\s*\(|\bcaches\s*\.\s*open\s*\(/);
 }

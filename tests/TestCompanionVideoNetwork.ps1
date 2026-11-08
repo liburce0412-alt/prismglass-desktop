@@ -30,6 +30,8 @@ try{
  Check ((Get-VideoExactAddress '192.168.1.90-192.168.1.90') -eq '192.168.1.90') 'Windows exact-IP ranges normalize correctly'
  $plan=Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $false
  Check ($plan.needsApproval -and !$plan.configured -and $script:rules.Count -eq 0 -and $script:applyChecks -eq 0) 'missing-rule preflight creates nothing and requests approval'
+ $owner=(Get-VideoPlan $app '192.168.1.50' '192.168.1.90').owner
+ Check ($owner.Length -gt 0 -and !$owner.Contains('|')) 'ownership marker meets Windows firewall description character restrictions'
  $script:category='Public';Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true} 'public network is never silently changed or enabled';$script:category='Private'
  Reject {Invoke-VideoRepair $app '10.0.0.10' '10.0.0.20' $true} 'stale local address is rejected before mutation'
  $created=Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true

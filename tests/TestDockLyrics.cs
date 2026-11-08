@@ -38,6 +38,13 @@ internal static class TestDockLyrics {
   qq.smtc=false;Check(qq.ControlRequest(root,0xB3,now)==null,"legacy metadata retains the existing media-key fallback");qq.smtc=true;
   qq.source="player\" -Control next";request=qq.ControlRequest(root,0xB3,now);Check(!request.Arguments.Contains(qq.source)&&request.Arguments.Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(qq.source))),"player identifiers cannot inject helper arguments");
   bool rejectedControl=false;try{qq.ControlRequest(root,0x41,now);}catch(ArgumentException){rejectedControl=true;}Check(rejectedControl,"unsupported transport keys are rejected");
+  int positionOffset,durationOffset;
+  Check(NetEaseSession.TryLayout("3.1.41.205529",41054208,37747192,out positionOffset,out durationOffset)&&positionOffset==0x21A74D8&&durationOffset==0x2214778,"verified older NetEase keeps both original clock fields");
+  Check(NetEaseSession.TryLayout("3.1.43.205627",41058304,37749240,out positionOffset,out durationOffset)&&positionOffset==0x21A84D8&&durationOffset==0,"verified newer NetEase uses its position field and exact queue duration");
+  Check(!NetEaseSession.TryLayout("3.1.43.205628",41058304,37749240,out positionOffset,out durationOffset)&&positionOffset==0&&durationOffset==0,"unknown player version never reads a guessed layout");
+  Check(!NetEaseSession.TryLayout("3.1.43.205627",41058305,37749240,out positionOffset,out durationOffset)&&!NetEaseSession.TryLayout("3.1.43.205627",41058304,37749241,out positionOffset,out durationOffset),"both module dimensions must match the verified player build");
+  Check(NetEaseSession.UnsupportedStatus("3.1.44").Contains("3.1.44")&&NetEaseSession.UnsupportedStatus("3.1.44").Contains("尚未适配"),"unsupported player reports the version instead of silently waiting for metadata");
+  Check(!NetEaseSession.ValidClock(32,0,0)&&!NetEaseSession.ValidClock(32,Double.NaN,Double.NaN),"newer player still requires a valid matching queue duration");
   Check(NetEaseSession.ValidClock(32,120.02,120),"NetEase clock matches exact queue duration");
   Check(!NetEaseSession.ValidClock(32,240,120),"mismatched NetEase clock is rejected");
   Check(!NetEaseSession.ValidClock(Double.NaN,120,120)&&!NetEaseSession.ValidClock(Double.PositiveInfinity,120,120),"invalid native numbers never become lyrics");

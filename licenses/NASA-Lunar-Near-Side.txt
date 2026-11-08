@@ -1,0 +1,17 @@
+NASA Lunar Near Side
+Credit: NASA/Goddard Space Flight Center/Arizona State University
+Source page: https://science.nasa.gov/resource/lunar-near-side/
+Image served by NASA: https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/l/lro_nearside.jpg?fit=clip&w=512
+Retrieved: 2026-11-07
+Bundled file: rainmeter/PrismGlass/@Resources/AmbientArt/lunar-near-side.jpg
+
+The image is used as factual lunar-surface texture in a local moon-phase display.
+It was resized by NASA's image service; no local pixel edits were made. PrismGlass
+adds a round clip and independently estimated illumination at runtime. The display
+is not a NASA forecast or endorsement, and does not model libration or terrain shadows.
+
+NASA Images and Media Usage Guidelines:
+https://www.nasa.gov/nasa-brand-center/images-and-media/
+NASA permits factual use without implied endorsement and requests source credit.
+NASA material is not relicensed under PrismGlass's MIT license. Logos and identifiers
+are not included. Retain this attribution with redistribution.

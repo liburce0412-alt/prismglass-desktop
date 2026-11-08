@@ -33,13 +33,13 @@ internal static class WorkspacePlacement {
 }
 
 internal sealed class WorkspaceWindow : Form {
- readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;
+ readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;readonly PhotoCards photos;bool photoBusy;
  readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly JavaScriptSerializer json=new JavaScriptSerializer{MaxJsonLength=16777216};
  readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();readonly WidgetBackend widgets;
  CancellationTokenSource weatherSearch;List<WeatherPlace> weatherResults=new List<WeatherPlace>();string weatherObserved;int weatherRequest;string requestedSection="";
  CancellationTokenSource releaseCheck;ReleaseUpdateState releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion};
  CancellationTokenSource npuOperation;bool npuCapturing,npuVisible;string npuText="";
- bool ready,closed,reading,interacting,picker,runtimePaused;int generation;string page="apps",widgetKey="",preferenceKey="";Screen display;Rectangle dockAnchor;object runtime;
+ bool ready,closed,reading,interacting,picker,runtimePaused;int generation;long wallpaperVersion;string page="apps",widgetKey="",preferenceKey="";Screen display;Rectangle dockAnchor;object runtime;
  public event Action SettingsChanged;
  CompanionHost companion;
  public CompanionHost Companion {get{return companion;}set{if(companion!=null)companion.ManagementChanged-=OnCompanionChanged;companion=value;if(companion!=null)companion.ManagementChanged+=OnCompanionChanged;}}
@@ -54,7 +54,7 @@ internal sealed class WorkspaceWindow : Form {
  public bool IsOpen {get{return Visible&&!closed&&WindowState!=FormWindowState.Minimized;}}
  public bool IsInteracting {get{return interacting||picker;}}
  public WorkspaceWindow(string directory,AppLibrary apps,DesktopPreferences settings){
-  root=directory;library=apps;preferences=settings;widgets=new WidgetBackend(root);pixels=new WebViewPixelScale(view,()=>PublishLayout());Text="PrismGlass · 应用与设置";
+  root=directory;library=apps;preferences=settings;photos=new PhotoCards(root);widgets=new WidgetBackend(root);pixels=new WebViewPixelScale(view,()=>PublishLayout());Text="PrismGlass · 应用与设置";
   FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=true;TopMost=true;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(23,37,57);MinimumSize=new Size(560,420);
   view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);display=Screen.PrimaryScreen;Place();
   Shown+=async(s,e)=>{if(ready)return;try{
@@ -73,18 +73,18 @@ internal sealed class WorkspaceWindow : Form {
   dismissal.Tick+=(s,e)=>{var active=GetForegroundWindow();if(!Visible||page!="apps"||ContainsFocus||active==Handle){dismissal.Stop();return;}if(active!=IntPtr.Zero&&!IsInteracting&&!DockActive(active)){dismissal.Stop();Hide();}};
   VisibleChanged+=(s,e)=>{if(!Visible){generation++;interacting=false;CancelWeatherSearch();if(!npuCapturing)ClearNpu();Send(new{type="visibility",visible=false});}else if(ready){Send(new{type="visibility",visible=true});Publish();}};
   FormClosing+=(s,e)=>{if(!closed&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();}};
-  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(page=="settings"){PublishLyrics();PublishCompanion();}}};timer.Start();
+  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(wallpaperVersion!=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks)PublishLayout();if(page=="settings"){PublishLyrics();PublishCompanion();}}};timer.Start();
   Resize+=(s,e)=>{view.Visible=Visible&&WindowState!=FormWindowState.Minimized;Shape();if(ready){Send(new{type="visibility",visible=IsOpen});PublishLayout();}};
   Move+=(s,e)=>{if(!placing&&Visible&&WindowState!=FormWindowState.Minimized){display=Screen.FromControl(this);if(page=="settings")settingsBounds=Bounds;if(ready)PublishLayout();}};
  }
  protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=WindowState!=FormWindowState.Minimized;}
- void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){const int d=64;path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();var old=Region;Region=GlassWindow.Clip(path,ClientRectangle);if(old!=null)old.Dispose();}}
+ void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){GlassWindow.Round(path,0,0,Width,Height,32);var old=Region;Region=GlassWindow.Clip(path,ClientRectangle);if(old!=null)old.Dispose();}}
  void Place(){placing=true;try{var bounds=WorkspacePlacement.Calculate(display.WorkingArea,display.Bounds,dockAnchor,page=="apps");if(page=="settings"&&!settingsBounds.IsEmpty){display=Screen.FromRectangle(settingsBounds);var area=display.WorkingArea;bounds=new Rectangle(Math.Max(area.Left,Math.Min(settingsBounds.Left,area.Right-bounds.Width)),Math.Max(area.Top,Math.Min(settingsBounds.Top,area.Bottom-bounds.Height)),Math.Min(bounds.Width,area.Width),Math.Min(bounds.Height,area.Height));}MinimumSize=new Size(Math.Min(560,bounds.Width),Math.Min(420,bounds.Height));Bounds=bounds;Shape();pixels.Sync();}finally{placing=false;}}
- public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;if(next=="toggle-apps"&&IsOpen&&page=="apps"){Hide();return;}if(next=="toggle-apps")next="apps";dismissal.Stop();display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="components"||next=="welcome"||next=="weather"||next=="updates"||next=="companion"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
+ public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;if(next=="toggle-apps"&&IsOpen&&page=="apps"){Hide();return;}if(next=="toggle-apps")next="apps";dismissal.Stop();display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="glass"||next=="components"||next=="welcome"||next=="weather"||next=="updates"||next=="companion"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
  void PublishCompanion(){if(Companion==null||!IsOpen||!companionVisible)return;string key=json.Serialize(Companion.ManagementSnapshot());if(key!=companionKey){companionKey=key;Send(new{type="companion",value=json.DeserializeObject(key)});}}
  public void PublishRuntime(object value,bool motionPaused=false){runtime=value;runtimePaused=motionPaused;if(IsOpen){Send(new{type="runtime",value=runtime});PublishLayout();}}
  void Send(object message){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));}
- void PublishLayout(){var b=display.Bounds;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks});}
+ void PublishLayout(){var b=display.Bounds;wallpaperVersion=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=wallpaperVersion.ToString()});}
  void Publish(){PublishLayout();PublishSettings(true);PublishLyrics(true);PublishWeather();PublishStartup();PublishUpdates();Send(new{type="page",page=page,section=requestedSection});requestedSection="";Send(new{type="apps",snapshot=library.GetSnapshot()});if(runtime!=null)Send(new{type="runtime",value=runtime});}
  void PublishStartup(){Send(new{type="startup",value=LoginStartup.Read(root)});}
  void ClearNpu(){if(npuOperation!=null)npuOperation.Cancel();npuText="";Send(new{type="npu-result",text="",busy=npuOperation!=null,message=npuOperation==null?"":"正在取消…"});}
@@ -116,11 +116,36 @@ internal sealed class WorkspaceWindow : Form {
   catch(Exception ex){if(!operation.IsCancellationRequested&&!closed&&IsOpen)Send(new{type="weather-results",request=request,places=new WeatherPlace[0],error=ex is HttpRequestException?"无法连接城市服务，请检查网络后重试。":ex.Message});}
   finally{if(weatherSearch==operation)weatherSearch=null;operation.Dispose();}
  }
- void PublishSettings(bool force=false){preferences.Reload();var snapshot=preferences.Snapshot();string key=json.Serialize(snapshot);if(force||key!=preferenceKey){preferenceKey=key;Send(new{type="settings",snapshot=snapshot});PublishLayout();}}
+ void PublishSettings(bool force=false){preferences.Reload();var snapshot=(Dictionary<string,object>)preferences.Snapshot();try{snapshot["photoCards"]=photos.ReadAll();}catch(Exception ex){snapshot["photoCards"]=new PhotoCard[0];snapshot["photoError"]=ex.Message;}snapshot["photoBusy"]=photoBusy;string key=json.Serialize(snapshot);if(force||key!=preferenceKey){preferenceKey=key;Send(new{type="settings",snapshot=snapshot});PublishLayout();}}
+ async void ManagePhotos(Dictionary<string,object> message){
+  if(photoBusy||!IsOpen||page!="settings")return;photoBusy=true;picker=true;PublishSettings(true);
+  var imported=new List<string>();var errors=new List<string>();
+  try{
+   string command=Value(message,"command"),id=Value(message,"id");
+   if(command=="remove"){
+    if(Array.IndexOf(PhotoCards.Slots,id)<0)throw new ArgumentException("照片卡片无效。");
+    preferences.Reload();var selected=new List<string>(preferences.Current.desktopWidgets);selected.Remove(id);preferences.Apply(new Dictionary<string,object>{{"desktopWidgets",selected}},preferences.Revision);photos.Remove(id);
+   }else{
+    if(command!="add"&&command!="replace")throw new ArgumentException("照片操作无效。");
+    if(command=="replace"&&Array.IndexOf(PhotoCards.Slots,id)<0)throw new ArgumentException("照片卡片无效。");
+    int available=PhotoCards.Slots.Length-photos.ReadAll().Count;if(command=="add"&&available==0)throw new IOException("最多可添加 6 张独立照片，请先移除一张。");
+    string[] files;using(var dialog=new OpenFileDialog{Title=command=="add"?"添加桌面照片":"更换这张照片",Filter="照片（JPG、PNG）|*.jpg;*.jpeg;*.png",Multiselect=command=="add",CheckFileExists=true,DereferenceLinks=false}){if(dialog.ShowDialog(this)!=DialogResult.OK)return;files=dialog.FileNames;}
+    if(command=="add"&&files.Length>available)throw new IOException("还可添加 "+available+" 张照片，请减少选择数量。");
+    await Task.Run(()=>{foreach(string file in files)try{string slot=command=="replace"?id:photos.FirstEmpty();photos.Import(slot,file);imported.Add(slot);}catch(Exception ex){errors.Add(Path.GetFileName(file)+"："+ex.Message);}});
+    preferences.Reload();var selected=new List<string>(preferences.Current.desktopWidgets);if(command=="add")foreach(var slot in imported)if(!selected.Contains(slot))selected.Add(slot);
+    if(imported.Count>0&&command=="add")preferences.Apply(new Dictionary<string,object>{{"desktopWidgets",selected}},preferences.Revision);
+   }
+   var handler=SettingsChanged;if(handler!=null)handler();
+   if(errors.Count>0)throw new IOException((imported.Count>0?"已添加 "+imported.Count+" 张。":"")+String.Join("\n",errors));
+   Send(new{type="saved",scope="photos",message=command=="remove"?"已移除照片卡，原图未改动":command=="replace"?"照片已更换":"照片已显示，可在桌面拖动摆放"});
+  }catch(Exception ex){Send(new{type="error",scope="photos",message=ex.Message});}
+  finally{photoBusy=false;picker=false;if(!closed)PublishSettings(true);}
+ }
  void PublishLyrics(bool force=false){var state=SharedData==null?widgets.Read():SharedData.ReadWidgets();string key=json.Serialize(state);if(force||key!=widgetKey){widgetKey=key;Send(state);}}
  async void RefreshApps(bool force){if(reading)return;if(!force&&!library.NeedsRefresh){Send(new{type="apps",snapshot=library.GetSnapshot()});return;}reading=true;int ticket=++generation;Send(new{type="apps-loading",loading=true});try{await Task.Run(()=>library.Refresh());if(!closed&&(ticket==generation||IsOpen)){Send(new{type="apps",snapshot=library.GetSnapshot()});Send(new{type="saved",scope="apps",message="应用库已更新"});}}catch(Exception ex){if(!closed)Send(new{type="error",scope="apps",message=ex.Message});}finally{reading=false;if(!closed)Send(new{type="apps-loading",loading=false});}}
  static string Value(Dictionary<string,object> message,string key){object value;return message.TryGetValue(key,out value)?Convert.ToString(value):"";}
  void Receive(string text){string scope="";try{
+  if(text!=null&&text.StartsWith("optical-",StringComparison.Ordinal))return;
   if(text=="ready"){ready=true;Publish();RefreshApps(false);return;}
   if(text=="painted")return;
   if(text!=null&&text.StartsWith("error:",StringComparison.Ordinal)){File.WriteAllText(Path.Combine(root,"workspace-error.txt"),text);return;}
@@ -134,6 +159,7 @@ internal sealed class WorkspaceWindow : Form {
    object patch,revision;if(!message.TryGetValue("changes",out patch)||!(patch is Dictionary<string,object>)||!message.TryGetValue("revision",out revision))throw new ArgumentException("设置内容不完整，请重新打开。");
    preferences.Apply((Dictionary<string,object>)patch,Convert.ToInt64(revision));PublishSettings(true);Send(new{type="saved",scope="settings",message="已保存"});var handler=SettingsChanged;if(handler!=null)handler();return;
   }
+  if(action=="photos"){ManagePhotos(message);return;}
   if(action=="companion"){if(Companion!=null){Companion.DialogOwner=this;companionVisible=true;Companion.Manage(message);PublishCompanion();}return;}
   if(action=="npu-read"){npuVisible=page=="settings";Send(new{type="npu-status",value=NpuText.Describe(root)});return;}
   if(action=="npu-capture"){CaptureText();return;}
@@ -156,7 +182,7 @@ internal sealed class WorkspaceWindow : Form {
   if(command=="pick"||command=="pickFolder"||command=="repair"){
    var repairing=command=="repair"?library.Find(id):null;
    picker=true;try{string path=null;if(command=="pickFolder"||repairing!=null&&repairing.kind=="directory"){using(var dialog=new FolderBrowserDialog{Description="选择要收录的文件夹",ShowNewFolderButton=false})if(dialog.ShowDialog(this)==DialogResult.OK)path=dialog.SelectedPath;}
-    else using(var dialog=new OpenFileDialog{Title=command=="repair"?"重新定位入口":"添加应用、快捷方式或文件",CheckFileExists=true,Filter="应用、快捷方式和文件|*.*"})if(dialog.ShowDialog(this)==DialogResult.OK)path=dialog.FileName;
+    else using(var dialog=new OpenFileDialog{Title=command=="repair"?"重新定位入口":"添加应用、快捷方式或文件",CheckFileExists=true,DereferenceLinks=false,Filter="应用、快捷方式和文件|*.*"})if(dialog.ShowDialog(this)==DialogResult.OK)path=dialog.FileName;
     if(path!=null){if(command=="repair")library.Repair(id,path);else library.Add(path);Send(new{type="apps",snapshot=library.GetSnapshot()});}
    }finally{picker=false;Activate();}return;
   }

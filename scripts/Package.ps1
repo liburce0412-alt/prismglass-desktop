@@ -1,13 +1,13 @@
 ﻿param(
  [string]$BundleRoot=(Join-Path $PSScriptRoot '../dist/PrismGlass'),
  [string]$OutputRoot=(Join-Path $PSScriptRoot '../artifacts/release'),
- [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='1.1.0',
+ [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$')][string]$Version='1.1.1',
  [Alias('CompilerPath')][string]$Compiler
 )
 $ErrorActionPreference='Stop'
 function Test-PrivateBundlePath([string]$Path) {
  $Path=$Path.Replace('/','\')
- return $Path -match '(^|\\)(runtime-data|music-data|dock-icons|artifacts|outputs|companion-setup)(\\|$)' -or
+ return $Path -match '(^|\\)(runtime-data|music-data|photo-cards|dock-icons|artifacts|outputs|companion-setup)(\\|$)' -or
   $Path -match '\.(pfx|p12|pem|key|cer|crt|log)$' -or
   $Path -match '(^|\\)(devices\.bin|(?:prismglass-install|install-record|desktop-settings|app-library|companion-settings|lyrics-settings|quota-cache|weather-cache|readiness|dock-click)\.json|installer-runtime\.ini|skin-catalog-pending\.flag|(?:skin-path|rainmeter-path|weather-location)\.txt)$' -or
   $Path -match '(^|\\)[^\\]*-state(?:\.[^\\]+)?$'

@@ -14,3 +14,4 @@ body[data-glass-ready=true]{--surface:rgba(235,244,255,.055)}
 body[data-glass-ready=true][data-theme=Astro]{--surface:rgba(8,16,32,.045)}
 
 body[data-glass-ready=true] #panel{background:transparent;border-color:transparent;box-shadow:none}
+#shelf #position-grip{position:absolute;left:440px;top:6px;width:48px;height:16px;z-index:20;padding:0;border:0;border-radius:8px;background:transparent;color:inherit;font-size:12px;line-height:16px;opacity:.5;cursor:move;touch-action:none}#shelf #position-grip:hover,#shelf #position-grip:focus-visible{opacity:1;background:#ffffff20}

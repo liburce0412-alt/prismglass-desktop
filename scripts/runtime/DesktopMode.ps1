@@ -23,7 +23,9 @@ function Update-PrismGlassSkinCatalog([string]$Executable,[string]$PendingFile,[
 }
 function Stop-PrismGlassSkins([string]$Executable){
  if(!(Get-Process Rainmeter -ErrorAction SilentlyContinue)){return}
- foreach($config in @('Dock','Focus','Music','System','Weather','Clock','Calendar','Battery','Folders','Tools','Topbar')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
+ foreach($config in @('Dock','Focus','Music','System','Weather','Clock','Calendar','Battery','Folders','Tools','BreathingOrb','DigitalClock','Moon','Photo','Photo2','Photo3','Photo4','Photo5','Photo6','Topbar')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
+ # An upgrade also closes retired skins that the previous version may have left active.
+ foreach($config in @('Starlight','MoodNote')){& $Executable '!DeactivateConfig' ('PrismGlass\'+$config)}
  $configured=Join-Path $PSScriptRoot 'LiquidDesktop/skin-path.txt'
  $skins=if([IO.File]::Exists($configured)){[IO.Path]::GetFullPath([IO.File]::ReadAllText($configured).Trim())}else{Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter/Skins/PrismGlass'}
  if(Test-Path -LiteralPath $skins){foreach($folder in Get-ChildItem -LiteralPath $skins -Directory -Filter 'Dock-monitor-*'){

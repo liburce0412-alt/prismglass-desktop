@@ -1,7 +1,7 @@
 using System;using System.IO;using System.Drawing;using System.Threading.Tasks;using System.Windows.Forms;using Microsoft.Web.WebView2.Core;using Microsoft.Web.WebView2.WinForms;
 internal sealed class WeatherUiTestForm:Form {protected override bool ShowWithoutActivation{get{return true;}}}
 internal static class TestWeatherUi {
- static Form form;static WebView2 view;static string root,output,sourceEvidence;static int checks;static bool captureOnly;
+ static Form form;static WebView2 view;static string root,output,sourceEvidence;static int checks;static bool captureOnly,environmentOnly;
  [System.Runtime.InteropServices.DllImport("user32.dll")]static extern bool SetProcessDPIAware();
  [System.Runtime.InteropServices.DllImport("user32.dll")]static extern uint GetDpiForWindow(IntPtr window);
  static Task<string> Eval(string script){return view.CoreWebView2.ExecuteScriptAsync(script);}
@@ -18,6 +18,23 @@ internal static class TestWeatherUi {
  }
  static Task DesktopWeather(string state){return Eval("window.fixtureWeather="+Weather(state)+";chrome.webview.dispatchEvent(new MessageEvent('message',{data:{type:'widgets',weather:fixtureWeather,sourceStatus:{weather:{available:"+(state=="unavailable"||state=="expired"?"false":"true")+",updatedAt:fixtureWeather.updatedAt,reason:fixtureWeather.reason||''}},system:{cpu:12},music:{title:'等待播放',artist:'',cover:'',playing:false},focus:{available:false}}}))");}
  static async Task CompanionWeather(string state){bool available=state!="unavailable"&&state!="expired";await Eval("var w="+Weather(state)+";__fixture.state.weather={available:"+(available?"true":"false")+",updatedAt:"+(available?"w.updatedAt":"0")+",reason:w.reason||'',data:"+(available?"w":"null")+"};document.querySelector('#reconnect').click()");await Wait("document.querySelector('#connection-status').textContent==='已连接电脑'");}
+ static async Task EnvironmentChecks(){
+  await Message("{type:'layout',width:1920,height:1080,viewWidth:490,viewHeight:680,x:60,y:180,scale:1,theme:'Sky',wallpaper:1,paused:false}");await Message("{type:'open',mode:'weather'}");await Task.Delay(400);
+  await DesktopWeather("fresh");
+  await Eval("window.scene=document.querySelector('.weather-environment');window.sceneWeather={...fixtureWeather,sunrise:'2026-11-07T06:00',sunset:'2026-11-07T18:00',utcOffsetSeconds:28800};window.sceneNoon=Date.parse('2026-11-07T04:00Z')");
+  int[] codes={0,3,63,73,45,0};string[] kinds={"clear","cloud","rain","snow","fog","clear"};
+  for(int i=0;i<codes.Length;i++){
+   await Eval("PrismWeatherScene.update({...sceneWeather,code:"+codes[i]+"},true,sceneNoon"+(i==5?"+43200000":"")+")");await Task.Delay(150);
+   await Assert("scene.dataset.code==='"+kinds[i]+"'&&scene.dataset.period==='"+(i==5?"night":"day")+"'&&getComputedStyle(scene.querySelector('.weather-sky')).backgroundImage.includes('weather-scenes.png')","real environment selects "+(i==5?"night":kinds[i])+" from weather code and city sunlight");
+   await Capture("environment-"+(i==5?"night":kinds[i]));
+  }
+  await Assert("(()=>{const d=document.querySelector('#detail'),b=document.querySelector('[data-action=weather-settings]').getBoundingClientRect();return b.bottom<=d.getBoundingClientRect().bottom&&b.bottom<=innerHeight&&scene.querySelectorAll('.weather-precipitation i').length===18})()","expanded atmosphere and real weather details fit the panel with bounded precipitation layers");
+  await Message("{type:'motion',paused:true}");await Assert("scene.dataset.active==='false'&&getComputedStyle(scene.querySelector('.weather-sky')).animationPlayState==='paused'","runtime pause stops sky and precipitation motion");
+  await Message("{type:'motion',paused:false}");await Message("{type:'preferences',snapshot:{reducedMotion:true}}");await Assert("scene.dataset.active==='false'","reduced motion stops environment animations");
+  await DesktopWeather("unavailable");await Assert("scene.dataset.code==='unknown'&&document.querySelector('#weather-temp').textContent==='—'","unavailable weather does not show a fabricated clear sky or temperature");
+  await Assert("__errors.length===0","weather environment preserves the real panel scripts");
+  File.AppendAllText(Path.Combine(output,"ui-checks.txt"),"Completed "+checks+" focused weather environment checks."+Environment.NewLine);
+ }
  static async Task Run(){
   if(File.Exists(Path.Combine(root,"weather-source-evidence.json")))sourceEvidence=File.ReadAllText(Path.Combine(root,"weather-source-evidence.json"));
   using(var bitmap=new Bitmap(1920,1080))using(var g=Graphics.FromImage(bitmap))using(var brush=new System.Drawing.Drawing2D.LinearGradientBrush(new Rectangle(0,0,1920,1080),Color.FromArgb(26,43,73),Color.FromArgb(143,169,200),35)){g.FillRectangle(brush,0,0,1920,1080);bitmap.Save(Path.Combine(root,"wallpaper.png"));}
@@ -26,6 +43,7 @@ internal static class TestWeatherUi {
   view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-companion-test.local",Path.Combine(root,"companion-web"),CoreWebView2HostResourceAccessKind.DenyCors);
   await view.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("window.__errors=[];addEventListener('error',e=>__errors.push(e.message));window.__messages=[];const originalPost=chrome.webview.postMessage.bind(chrome.webview);chrome.webview.postMessage=x=>{__messages.push(x);originalPost(x)};if(location.hostname==='prism-companion-test.local'){"+File.ReadAllText(Path.Combine(root,"companion-web","CompanionUiFixture.js"))+"}");
   view.Source=new Uri("https://prism-weather-test.local/sidedock.html");await Wait("!!document.querySelector('#weather-temp')&&__messages.includes('ready')");
+  if(environmentOnly){await EnvironmentChecks();return;}
   foreach(string theme in new[]{"Sky","Astro"}){
    await Message("{type:'layout',width:1920,height:1080,viewWidth:490,viewHeight:680,x:60,y:180,scale:1,theme:'"+theme+"',wallpaper:1}");
    if(theme=="Sky")await Message("{type:'open',mode:'weather'}");await Task.Delay(500);
@@ -80,5 +98,5 @@ internal static class TestWeatherUi {
   await Assert("__fixture.writes.length===0","companion weather review performs no computer writes");
   File.AppendAllText(Path.Combine(output,"ui-checks.txt"),captureOnly?"Capture-only baseline; semantic assertions skipped."+Environment.NewLine:"Completed "+checks+" weather UI checks. PC WebView2, isolated fixture data; no real-device acceptance."+Environment.NewLine);
  }
- [STAThread]static void Main(string[] args){SetProcessDPIAware();root=Path.GetFullPath(args[0]);output=Path.GetFullPath(args[1]);captureOnly=Boolean.Parse(args[2]);Directory.CreateDirectory(output);Application.EnableVisualStyles();form=new WeatherUiTestForm{ClientSize=new Size(490,680),FormBorderStyle=FormBorderStyle.None,StartPosition=FormStartPosition.Manual,Location=new Point(-16000,-16000),ShowInTaskbar=false,Opacity=0};view=new WebView2{Dock=DockStyle.Fill};form.Controls.Add(view);form.Shown+=async(s,e)=>{try{await Run();}catch(Exception ex){File.AppendAllText(Path.Combine(output,"ui-checks.txt"),ex.ToString());Environment.ExitCode=1;}finally{view.Dispose();form.Close();}};Application.Run(form);}
+ [STAThread]static void Main(string[] args){SetProcessDPIAware();root=Path.GetFullPath(args[0]);output=Path.GetFullPath(args[1]);captureOnly=Boolean.Parse(args[2]);environmentOnly=Array.IndexOf(args,"--environment-only")>=0;Directory.CreateDirectory(output);Application.EnableVisualStyles();form=new WeatherUiTestForm{ClientSize=new Size(490,680),FormBorderStyle=FormBorderStyle.None,StartPosition=FormStartPosition.Manual,Location=new Point(-16000,-16000),ShowInTaskbar=false,Opacity=0};view=new WebView2{Dock=DockStyle.Fill};form.Controls.Add(view);form.Shown+=async(s,e)=>{try{await Run();}catch(Exception ex){File.AppendAllText(Path.Combine(output,"ui-checks.txt"),ex.ToString());Environment.ExitCode=1;}finally{view.Dispose();form.Close();}};Application.Run(form);}
 }

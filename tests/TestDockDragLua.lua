@@ -20,7 +20,7 @@ function Initialize()
   local rows='workspace\tQXBwcw==\tR3JpZA==\t0\t0\t1\t0\npexplorer\tRmlsZXM=\tSWNvbkE=\t1\t0\t1\t0\np23\tRWRnZQ==\tSWNvbkI=\t0\t0\t1\t0\n'
   write('dock-state.txt',rows);write('lyrics-monitor-1.txt',fakeTime+3 ..'|0|1\n\n\n');Update()
   check(#items==3 and items[1].id=='workspace' and items[2].id=='pexplorer','system and legacy nonnumeric pin IDs remain visible')
-  check(options['Icon2.LeftMouseDownAction']=='[!CommandMeasure Dock "Press(2)"]' and options['Icon2.LeftMouseUpAction']=='','real icon press starts the transaction without a second launch on mouse-up')
+  check(options['Icon2.LeftMouseDownAction']=='[!CommandMeasure Dock "Press(2)"]' and options['Icon2.LeftMouseUpAction']:find('"--dock-release" "pexplorer"',1,true)~=nil,'pointer release transfers foreground permission while the native drag transaction owns the click')
   Press(2);check(read('dock-drag-request-monitor-1.txt')==fakeTime..'|pexplorer','Rainmeter routes a real press to its own native Dock instance')
   Hover(2);check(read('dock-hover-monitor-1.txt')=='pexplorer','window-preview hover is isolated per monitor')
   check(read('dock-layout-monitor-1.json'):find('"dpi":1.25',1,true)~=nil and moved[1]<0,'monitor placement and diagnostics preserve negative coordinates and DPI scale')
@@ -46,7 +46,7 @@ function Initialize()
   write('dock-state.txt','workspace\tQXBwcw==\tR3JpZA==\t0\t0\t1\t0\np23\tRWRnZQ==\tSWNvbkI=\t0\t0\t1\t0\npexplorer\tRmlsZXM=\tSWNvbkE=\t1\t0\t1\t0\n');fakeTime=fakeTime+1;Update()
   check(items[2].id=='pexplorer','background application refresh does not shift hit targets during a drag')
   write('dock-drag-feedback-monitor-1.txt',fakeTime+2 ..'|0|1|0');for i=1,5 do Update() end
-  check(not shown.DragMarker and options['DragHint.Text']:find('保留原文件',1,true)~=nil,'dragging outside clearly describes unpinning without file deletion')
+  check(not shown.DragMarker and options['DragHint.Text']=='#DockHintUnpin#','dragging outside selects the Unicode unpin hint without file deletion')
   write('dock-drag-feedback-monitor-1.txt','');for i=1,5 do Update() end
   check(not dragActive and not shown.DragHint and items[2].id=='p23','ending the drag clears feedback and applies the committed order')
   Hover(2);for i=1,12 do Update() end

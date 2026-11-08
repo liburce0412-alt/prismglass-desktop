@@ -4,33 +4,42 @@ using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using System.Xml;
 using Microsoft.Win32;
 
 internal sealed class CompanionPhysicalMonitor {public int Id;public string Name,DeviceName,Identity;public Rectangle Bounds;public bool Primary;}
 
 // Only the explicitly supported MttVDD target is managed; physical paths are copied verbatim.
 internal sealed class CompanionVirtualDisplay {
- readonly string journal;readonly object gate=new object();bool owned;CompanionDisplayTopology.DisplayPath extensionTarget;
- internal CompanionVirtualDisplay(string root){journal=Path.Combine(root,"runtime-data","companion","virtual-display-icons.json");}
- internal bool Available {get{try{var all=CompanionDisplayTopology.Read(1);CompanionDisplayTopology.FindVirtual(all);return true;}catch{return false;}}}
- internal string UnavailableReason {get{try{CompanionDisplayTopology.FindVirtual(CompanionDisplayTopology.Read(1));return "";}catch(InvalidOperationException ex){return ex.Message;}catch{return "无法读取显示器状态，请在电脑检查虚拟显示驱动。";}}}
+ readonly string journal;readonly CompanionVirtualDevice device;readonly object gate=new object();bool owned;CompanionDisplayTopology.DisplayPath extensionTarget;
+ internal CompanionVirtualDisplay(string root){journal=Path.Combine(root,"runtime-data","companion","virtual-display-icons.json");device=new CompanionVirtualDevice(root);}
+ internal bool Available {get{try{if(device.Managed&&device.Disabled)return true;var all=CompanionDisplayTopology.Read(1);CompanionDisplayTopology.FindVirtual(all);return true;}catch{return false;}}}
+ internal string UnavailableReason {get{try{if(device.Managed&&device.Disabled)return "";CompanionDisplayTopology.FindVirtual(CompanionDisplayTopology.Read(1));return "";}catch(InvalidOperationException ex){return ex.Message;}catch{return "无法读取显示器状态，请在电脑检查虚拟显示驱动。";}}}
  internal List<CompanionPhysicalMonitor> PhysicalMonitors(){return CompanionDisplayTopology.PhysicalMonitors(CompanionDisplayTopology.Read(2));}
  internal Rectangle BeginExtension(bool portrait=false){lock(gate){
   if(owned)throw new InvalidOperationException("副屏已在使用，请先关闭原来的副屏。");
-  RecoverIdle();var current=CompanionDisplayTopology.Read(1);var target=CompanionDisplayTopology.FindVirtual(current);
-  var preferred=CompanionDisplayTopology.Preferred(target.target);
-  bool rotate=portrait!=(preferred.height>preferred.width)&&CompanionDisplayTopology.SupportsQuarterTurn(preferred,CompanionDisplayTopology.SupportedModes(target));
-  var plan=CompanionDisplayTopology.EnableValidated(current,target,preferred,rotate);
-  SaveIcons();owned=true;extensionTarget=target;
-  try{CompanionDisplayTopology.ApplyChecked(current,plan,false);RestoreIcons(false);return CompanionDisplayTopology.WaitVirtualBounds(target,true);}
+  RecoverIdle();string physical=CompanionDisplayTopology.Fingerprint(CompanionDisplayTopology.Read(2),CompanionDisplayTopology.IsVirtual);SaveIcons();owned=true;
+  try{
+   device.SetEnabled(true);
+   var current=CompanionDisplayTopology.Read(1);
+   if(device.Managed)for(int i=0;i<50&&!current.paths.Any(path=>path.target.available&&CompanionDisplayTopology.IsVirtual(path));i++){Thread.Sleep(100);current=CompanionDisplayTopology.Read(1);}
+   if(CompanionDisplayTopology.Fingerprint(CompanionDisplayTopology.Read(2),CompanionDisplayTopology.IsVirtual)!=physical)throw new InvalidOperationException("实体屏幕配置已变化，副屏启动已取消。");
+   var target=CompanionDisplayTopology.FindVirtual(current);extensionTarget=target;
+   var preferred=CompanionDisplayTopology.Preferred(target.target);
+   bool rotate=portrait!=(preferred.height>preferred.width)&&CompanionDisplayTopology.SupportsQuarterTurn(preferred,CompanionDisplayTopology.SupportedModes(target));
+   var plan=CompanionDisplayTopology.EnableValidated(current,target,preferred,rotate);
+   CompanionDisplayTopology.ApplyChecked(current,plan,false);RestoreIcons(false);return CompanionDisplayTopology.WaitVirtualBounds(target,true);
+  }
   catch{try{StopExtension();}catch{throw new InvalidOperationException("副屏启动失败，自动恢复也未完成；请在电脑关闭副屏后重试。");}throw;}
  }}
  internal bool ExtensionMatches(Rectangle bounds){lock(gate){if(!owned)return false;var current=CompanionDisplayTopology.Read(2);var active=CompanionDisplayTopology.ActiveVirtual(current);return active.Count==1&&CompanionDisplayTopology.SameCaptureTarget(extensionTarget,bounds,current,active[0]);}}
- internal void StopExtension(){lock(gate){if(!owned&&!File.Exists(journal))return;Disable();owned=false;}}
+ internal void StopExtension(){lock(gate){if(!owned&&!File.Exists(journal)&&!device.Managed)return;Disable();owned=false;}}
  internal void RecoverIdle(){lock(gate){Disable();owned=false;}}
  void Disable(){
   var current=CompanionDisplayTopology.Read(2);var selected=CompanionDisplayTopology.ActiveVirtual(current);
@@ -39,6 +48,14 @@ internal sealed class CompanionVirtualDisplay {
    if(!File.Exists(journal))SaveIcons();
    var plan=CompanionDisplayTopology.Disable(current,selected[0]);
    CompanionDisplayTopology.ApplyChecked(current,plan,true);CompanionDisplayTopology.WaitVirtualBounds(selected[0],false);
+  }
+  if(device.Managed&&!device.Disabled){
+   current=CompanionDisplayTopology.Read(2);
+   if(CompanionDisplayTopology.PhysicalMonitors(current).Count==0)throw new InvalidOperationException("没有活动的实体屏幕，不能停用虚拟显示设备。");
+   if(!File.Exists(journal))SaveIcons();
+   string expected=CompanionDisplayTopology.Fingerprint(current,CompanionDisplayTopology.IsVirtual);
+   device.SetEnabled(false);
+   if(CompanionDisplayTopology.Fingerprint(CompanionDisplayTopology.Read(2),CompanionDisplayTopology.IsVirtual)!=expected)throw new InvalidOperationException("实体屏幕配置已变化，已保留桌面位置记录。");
   }
   RestoreIcons(true);
  }
@@ -65,6 +82,65 @@ internal sealed class CompanionVirtualDisplay {
  internal static DesktopIcons.Position[] VisiblePositions(DesktopIcons.Position[] values,Rectangle[] bounds){
   if(values==null||values.Length>10000)throw new InvalidOperationException("桌面位置恢复记录无效。");
   return values.Where(item=>item!=null&&!String.IsNullOrEmpty(item.path)&&item.path.Length<=32768&&bounds.Any(area=>area.Contains(item.x,item.y))).ToArray();
+ }
+}
+
+// The elevated tasks run only Windows' protected PnPUtil, with a fixed MttVDD hardware ID.
+internal sealed class CompanionVirtualDevice {
+ const string HardwareId=@"Root\MttVDD";
+ readonly string marker;readonly string sid=WindowsIdentity.GetCurrent().User.Value;
+ internal CompanionVirtualDevice(string root){marker=Path.Combine(root,"runtime-data","companion","virtual-device-managed.json");}
+ internal bool Managed {get{
+  if(!File.Exists(marker))return false;
+  if(new FileInfo(marker).Length>4096)throw new InvalidOperationException("虚拟屏开关配置无效。");
+  var record=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(marker));
+  object user,hardware;return record!=null&&record.TryGetValue("userSid",out user)&&String.Equals(user as string,sid,StringComparison.Ordinal)&&record.TryGetValue("hardwareId",out hardware)&&String.Equals(hardware as string,HardwareId,StringComparison.OrdinalIgnoreCase);
+ }}
+ [DllImport("cfgmgr32.dll",CharSet=CharSet.Unicode)]static extern uint CM_Locate_DevNodeW(out uint node,string id,uint flags);
+ [DllImport("cfgmgr32.dll")]static extern uint CM_Get_DevNode_Status(out uint status,out uint problem,uint node,uint flags);
+ internal bool Disabled {get{
+  var matches=new List<string>();using(var devices=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY")){
+   if(devices!=null)foreach(string name in devices.GetSubKeyNames())using(var device=devices.OpenSubKey(name)){
+    var ids=device==null?null:device.GetValue("HardwareID") as string[];
+    if(ids!=null&&ids.Any(id=>String.Equals(id,HardwareId,StringComparison.OrdinalIgnoreCase)))matches.Add(@"ROOT\DISPLAY\"+name);
+   }
+  }
+  if(matches.Count!=1)throw new InvalidOperationException("需要恰好一个 MttVDD 虚拟显示设备，未修改其他显示驱动。");
+  uint node,status,problem;if(CM_Locate_DevNodeW(out node,matches[0],0)!=0||CM_Get_DevNode_Status(out status,out problem,node,0)!=0)throw new InvalidOperationException("虚拟显示设备正在变化，请稍后重试。");
+  if(problem!=0&&problem!=22)throw new InvalidOperationException("虚拟显示设备报告错误："+problem);
+  return problem==22;
+ }}
+ internal static string TaskName(string user,bool enabled){return "PrismGlass-Vdd-"+(enabled?"Enable-":"Disable-")+new SecurityIdentifier(user).Value;}
+ internal static string Arguments(bool enabled){return (enabled?"/enable-device":"/disable-device")+" /deviceid \""+HardwareId+"\"";}
+ internal static bool ValidTask(string xml,bool enabled){
+  if(String.IsNullOrEmpty(xml))return false;
+  try{var document=new XmlDocument{XmlResolver=null};using(var reader=XmlReader.Create(new StringReader(xml),new XmlReaderSettings{DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=65536}))document.Load(reader);
+   var namespaces=new XmlNamespaceManager(document.NameTable);namespaces.AddNamespace("t","http://schemas.microsoft.com/windows/2004/02/mit/task");
+   var actions=document.SelectNodes("/t:Task/t:Actions/*",namespaces);var user=document.SelectSingleNode("/t:Task/t:Principals/t:Principal/t:UserId",namespaces);
+   if(actions.Count!=1||actions[0].LocalName!="Exec"||user==null||user.InnerText!="S-1-5-18"||document.SelectNodes("/t:Task/t:Triggers/*",namespaces).Count!=0)return false;
+   var command=actions[0].SelectSingleNode("t:Command",namespaces);var arguments=actions[0].SelectSingleNode("t:Arguments",namespaces);
+   return command!=null&&arguments!=null&&String.Equals(command.InnerText,Path.Combine(Environment.SystemDirectory,"pnputil.exe"),StringComparison.OrdinalIgnoreCase)&&arguments.InnerText==Arguments(enabled);
+  }catch(XmlException){return false;}
+ }
+ static object Call(object target,string name,params object[] args){return target.GetType().InvokeMember(name,BindingFlags.InvokeMethod,null,target,args);}
+ static object Get(object target,string name){return target.GetType().InvokeMember(name,BindingFlags.GetProperty,null,target,null);}
+ static void Release(object target){if(target!=null&&Marshal.IsComObject(target))Marshal.FinalReleaseComObject(target);}
+ internal void SetEnabled(bool enabled){
+  if(!Managed)return;
+  object scheduler=null,folder=null,task=null,other=null,running=null;
+  try{
+   scheduler=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));Call(scheduler,"Connect");folder=Call(scheduler,"GetFolder",@"\");
+   task=Call(folder,"GetTask",TaskName(sid,enabled));other=Call(folder,"GetTask",TaskName(sid,!enabled));
+   if(!ValidTask((string)Get(task,"Xml"),enabled)||!ValidTask((string)Get(other,"Xml"),!enabled))throw new InvalidOperationException("虚拟屏管理任务不符合固定设备范围，请在电脑重新配置。");
+   var deadline=DateTime.UtcNow.AddSeconds(20);
+   while(Convert.ToInt32(Get(other,"State"))==2||Convert.ToInt32(Get(other,"State"))==4){if(DateTime.UtcNow>=deadline)throw new TimeoutException("上一次虚拟屏切换尚未完成。");Thread.Sleep(100);}
+   if(Disabled==!enabled)return;
+   running=Call(task,"Run",new object[]{null});
+   while(Convert.ToInt32(Get(running,"State"))==2||Convert.ToInt32(Get(running,"State"))==4){if(DateTime.UtcNow>=deadline)throw new TimeoutException("虚拟屏开关执行超时，请在电脑检查。");Thread.Sleep(100);Call(running,"Refresh");}
+   int result=Convert.ToInt32(Get(task,"LastTaskResult"));if(result!=0)throw new InvalidOperationException("Windows 未完成虚拟屏切换，错误码："+result);
+   while(Disabled==enabled){if(DateTime.UtcNow>=deadline)throw new TimeoutException("虚拟显示设备尚未就绪。");Thread.Sleep(100);}
+  }catch(TargetInvocationException ex){throw new InvalidOperationException("虚拟屏管理任务不可用，请在电脑重新配置。",ex.InnerException);}
+  finally{Release(running);Release(other);Release(task);Release(folder);Release(scheduler);}
  }
 }
 

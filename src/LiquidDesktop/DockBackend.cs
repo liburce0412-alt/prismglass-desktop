@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using System.Xml;
@@ -27,8 +28,14 @@ internal sealed class DockForegroundHistory {
  internal void Invalidate(){current=0;application=null;previous=null;dock=false;}
 }
 internal sealed class DockBackend {
+ internal static Func<ContextMenuStrip> CreateMenu=()=>new ContextMenuStrip();
+ internal static Func<DockEntry,DockClickAction,DockWindow,bool> Animate;
+ internal static Func<DockWindow,bool> AnimateRestore;
+ internal static Func<DockWindow,bool> Activating;
  const string OverflowId="r2147483647";
  const string WorkspaceId="workspace";
+ const string TrashId="trash";
+ Task<long?> trashRead;DateTime nextTrashRead;long? trashCount;
  readonly string root;DockPin[] pins;DateTime pinsStamp;readonly JavaScriptSerializer json=new JavaScriptSerializer();
  readonly Dictionary<string,int> order=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
  readonly Dictionary<string,string> icons=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
@@ -36,6 +43,7 @@ internal sealed class DockBackend {
  readonly HashSet<long> attention=new HashSet<long>();public void Attention(long h){attention.Add(h);}
  DockDrag drag;DateTime requestPoll;string externalToken="";
  static DockPreview applicationPicker;
+ static Form activationWindow;static System.Windows.Forms.Timer activationExpiry;
  static readonly DockForegroundHistory foregroundHistory=new DockForegroundHistory();
  sealed class DockDrag {public string id,instance,token;public DockPin external;public Point start,release;public bool moved,released;public DateTime releasedAt;public IDisposable hold;public List<DockEntry> entries;public string feedback="",feedbackInstance="";}
  internal sealed class ExternalDragRequest {public string token;public long expires;public DockPin entry;public bool ended,cancelled;}
@@ -54,16 +62,34 @@ internal sealed class DockBackend {
  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h,int cmd);
  [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out UIntPtr result);
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")] static extern IntPtr GetLastActivePopup(IntPtr h);
+ [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(uint pid);
  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h,uint flags,StringBuilder path,ref uint size);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)]static extern int GetApplicationUserModelId(IntPtr process,ref uint length,StringBuilder id);
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+ [DllImport("advapi32.dll")]static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
+ [DllImport("advapi32.dll")]static extern bool GetTokenInformation(IntPtr token,int kind,IntPtr buffer,uint capacity,out uint length);
+ [DllImport("advapi32.dll")]static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+ [DllImport("advapi32.dll")]static extern IntPtr GetSidSubAuthority(IntPtr sid,uint index);
+ static readonly int integrity=Integrity((uint)Process.GetCurrentProcess().Id);
+ static int Integrity(uint pid){
+  var process=OpenProcess(0x1000,false,pid);IntPtr token=IntPtr.Zero,buffer=IntPtr.Zero;
+  try{uint length;if(process==IntPtr.Zero||!OpenProcessToken(process,8,out token))return 0;GetTokenInformation(token,25,IntPtr.Zero,0,out length);if(length<IntPtr.Size||length>65536)return 0;buffer=Marshal.AllocHGlobal((int)length);if(!GetTokenInformation(token,25,buffer,length,out length))return 0;var sid=Marshal.ReadIntPtr(buffer);int count=Marshal.ReadByte(GetSidSubAuthorityCount(sid));return count==0?0:Marshal.ReadInt32(GetSidSubAuthority(sid,(uint)count-1));}
+  finally{if(buffer!=IntPtr.Zero)Marshal.FreeHGlobal(buffer);if(token!=IntPtr.Zero)CloseHandle(token);if(process!=IntPtr.Zero)CloseHandle(process);}
+ }
+ internal static bool CanManage(DockWindow window){int level=Integrity(window.pid);return integrity>0&&level>0&&level<=integrity;}
  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h,int attr,out int value,int size);
  [StructLayout(LayoutKind.Sequential)] struct SIZE {public int x,y;}
  [ComImport,Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IImageFactory {[PreserveSig]int GetImage(SIZE size,int flags,out IntPtr bitmap);}
  [DllImport("shell32.dll",CharSet=CharSet.Unicode,PreserveSig=false)] static extern void SHCreateItemFromParsingName(string path,IntPtr context,ref Guid guid,[MarshalAs(UnmanagedType.Interface)]out IImageFactory item);
  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+ [StructLayout(LayoutKind.Sequential)]struct RecycleInfo {public uint size;public long bytes,items;}
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]struct StockIconInfo {public uint size;public IntPtr icon;public int image,index;[MarshalAs(UnmanagedType.ByValTStr,SizeConst=260)]public string path;}
+ [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SHQueryRecycleBin(string root,ref RecycleInfo info);
+ [DllImport("shell32.dll")]static extern int SHGetStockIconInfo(int id,uint flags,ref StockIconInfo info);
+ [DllImport("user32.dll")]static extern bool DestroyIcon(IntPtr icon);
  [StructLayout(LayoutKind.Sequential)] struct BITMAPINFO {public uint size;public int width,height;public ushort planes,bits;public uint compression,imageSize;public int x,y;public uint used,important;}
  [DllImport("gdi32.dll")]static extern IntPtr CreateCompatibleDC(IntPtr h);
  [DllImport("gdi32.dll")]static extern bool DeleteDC(IntPtr h);
@@ -157,7 +183,7 @@ internal sealed class DockBackend {
  }
  static string ApplicationId(uint pid){var h=OpenProcess(0x1000,false,pid);if(h==IntPtr.Zero)return "";try{uint length=0;GetApplicationUserModelId(h,ref length,null);if(length==0||length>1024)return "";var value=new StringBuilder((int)length);return GetApplicationUserModelId(h,ref length,value)==0?value.ToString():"";}finally{CloseHandle(h);}}
   internal static bool Matches(DockPin pin,DockWindow window){string target=LaunchIdentity(pin.path,pin.arguments)[0];if(target.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase))return String.Equals(target.Substring(17),window.appId,StringComparison.OrdinalIgnoreCase);return String.Equals(target,window.path,StringComparison.OrdinalIgnoreCase)||String.Equals(PhysicalPath(target),PhysicalPath(window.path),StringComparison.OrdinalIgnoreCase);}
- static List<DockWindow> ReadWindows(){
+ internal static List<DockWindow> ReadWindows(){
   var all=new List<DockWindow>();var paths=new Dictionary<uint,string>();var appIds=new Dictionary<uint,string>();
   EnumWindows((h,p)=>{
    if(!IsWindowVisible(h))return true;long style=GetWindowLongPtr(h,-20).ToInt64();if((style&0x80)!=0||(style&0x08000000)!=0)return true;
@@ -187,43 +213,67 @@ internal sealed class DockBackend {
   }
   entries=entries.Where(e=>e.pinned).Concat(entries.Where(e=>!e.pinned).OrderBy(e=>Int32.Parse(e.id.Substring(1)))).ToList();
   attention.RemoveWhere(h=>!all.Any(w=>w.handle==h));foreach(var e in entries){if(e.active)foreach(var w in e.windows)attention.Remove(w.handle);e.attention=e.windows.Any(w=>attention.Contains(w.handle));}
-  var displayed=DisplayEntries(entries,OverflowIcon());
-  var overflow=displayed.FirstOrDefault(e=>e.id==OverflowId);if(overflow!=null)entries.Add(overflow);
+  entries.Add(TrashEntry());var displayed=DisplayEntries(entries,OverflowIcon());
+  var overflow=displayed.FirstOrDefault(e=>e.id==OverflowId);if(overflow!=null)entries.Insert(entries.Count-1,overflow);
   string data=json.Serialize(entries);if(data==previous)return;previous=data;
   AtomicWrite(Path.Combine(root,"dock-state.json"),data);
   var lines=new StringBuilder();foreach(var e in displayed)lines.AppendLine(e.id+"\t"+B64(e.name)+"\t"+B64(e.icon)+"\t"+e.windows.Count+"\t"+(e.active?"1":"0")+"\t"+(e.pinned?"1":"0")+"\t"+(e.attention?"1":"0"));
   AtomicWrite(Path.Combine(root,"dock-state.txt"),lines.ToString());
  }
  internal static List<DockEntry> DisplayEntries(List<DockEntry> entries,string icon){
-  if(entries.Count<=32)return new List<DockEntry>(entries);
-  var visible=entries.Take(31).ToList();var remainder=entries.Skip(31).ToList();
-  visible.Add(new DockEntry{id=OverflowId,name="更多应用 · "+remainder.Count,icon=icon,path="",arguments="",windows=remainder.SelectMany(e=>e.windows).ToList(),active=remainder.Any(e=>e.active),attention=remainder.Any(e=>e.attention)});return visible;
+  var trash=entries.FirstOrDefault(e=>e.id==TrashId);var apps=entries.Where(e=>e.id!=TrashId&&e.id!=OverflowId).ToList();int capacity=trash==null?32:31;
+  var visible=apps.Take(apps.Count>capacity?capacity-1:capacity).ToList();var remainder=apps.Skip(visible.Count).ToList();
+  if(remainder.Count>0)visible.Add(new DockEntry{id=OverflowId,name="更多应用 · "+remainder.Count,icon=icon,path="",arguments="",windows=remainder.SelectMany(e=>e.windows).ToList(),active=remainder.Any(e=>e.active),attention=remainder.Any(e=>e.attention)});if(trash!=null)visible.Add(trash);return visible;
  }
+ internal static long? RecycleCount(){var info=new RecycleInfo{size=(uint)Marshal.SizeOf(typeof(RecycleInfo))};return SHQueryRecycleBin(null,ref info)==0&&info.items>=0?(long?)info.items:null;}
+ internal static DockEntry TrashEntry(string icon,long? count){return new DockEntry{id=TrashId,name="回收站"+(count.HasValue?(count.Value==0?" · 空":" · "+count.Value+" 项"):""),icon=icon,path="explorer.exe",arguments="shell:RecycleBinFolder",system=true};}
+ DockEntry TrashEntry(){
+  if(trashRead!=null&&trashRead.IsCompleted){if(trashRead.Status==TaskStatus.RanToCompletion&&trashRead.Result.HasValue)trashCount=trashRead.Result;else if(trashRead.IsFaulted){var ignored=trashRead.Exception;}trashRead=null;}
+  if(trashRead==null&&DateTime.UtcNow>=nextTrashRead){nextTrashRead=DateTime.UtcNow.AddSeconds(3);trashRead=Task.Run((Func<long?>)RecycleCount);}
+  return TrashEntry(TrashIcon(trashCount.HasValue&&trashCount.Value>0),trashCount);
+ }
+ string TrashIcon(bool full){var path=Path.Combine(root,"dock-icons",full?"trash-full.png":"trash-empty.png");if(File.Exists(path))return path;var stock=new StockIconInfo{size=(uint)Marshal.SizeOf(typeof(StockIconInfo))};try{if(SHGetStockIconInfo(full?32:31,0x104,ref stock)!=0||stock.icon==IntPtr.Zero)throw new IOException("无法读取回收站图标。");using(var icon=Icon.FromHandle(stock.icon))using(var bitmap=icon.ToBitmap())bitmap.Save(path,ImageFormat.Png);}catch{using(var bitmap=SystemIcons.Application.ToBitmap())bitmap.Save(path,ImageFormat.Png);}finally{if(stock.icon!=IntPtr.Zero)DestroyIcon(stock.icon);}return path;}
  internal static DockEntry WorkspaceEntry(string icon){return new DockEntry{id=WorkspaceId,name="应用中心",icon=icon,path="",arguments="",pinned=true,system=true};}
  string WorkspaceIcon(){var path=Path.Combine(root,"dock-icons","workspace.png");if(!File.Exists(path)){using(var bitmap=new Bitmap(128,128))using(var g=Graphics.FromImage(bitmap))using(var brush=new SolidBrush(Color.FromArgb(232,243,255))){g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;for(int y=0;y<3;y++)for(int x=0;x<3;x++)g.FillEllipse(brush,17+x*34,17+y*34,25,25);bitmap.Save(path,ImageFormat.Png);}}return path;}
  string OverflowIcon(){var path=Path.Combine(root,"dock-icons","more-apps.png");if(!File.Exists(path)){using(var bitmap=new Bitmap(64,64))using(var g=Graphics.FromImage(bitmap))using(var brush=new SolidBrush(Color.FromArgb(224,235,248)))using(var ink=new SolidBrush(Color.FromArgb(39,59,83))){g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;g.FillEllipse(brush,2,2,60,60);for(int i=0;i<3;i++)g.FillEllipse(ink,14+i*14,28,8,8);bitmap.Save(path,ImageFormat.Png);}}return path;}
  static void MoreMenu(string root){
-  var entries=new JavaScriptSerializer().Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json"))).Where(e=>e.id!=OverflowId).Skip(31).ToList();
-  using(Hold(root))using(var owner=new Form())using(var menu=new ContextMenuStrip()){
+  var all=new JavaScriptSerializer().Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json")));var entries=all.Where(e=>e.id!=OverflowId&&e.id!=TrashId).Skip(all.Any(e=>e.id==TrashId)?30:31).ToList();
+  using(Hold(root))using(var owner=new Form())using(var menu=CreateMenu()){
    owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;
    foreach(var entry in entries){var id=entry.id;menu.Items.Add(entry.name,null,(s,e)=>Click(root,id,false));}
-   menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);Application.Run(owner);
+   menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);if(Application.MessageLoop)owner.ShowDialog();else Application.Run(owner);
   }
  }
  static string B64(string s){return Convert.ToBase64String(Encoding.UTF8.GetBytes(s));}
- static bool Valid(DockWindow w){if(w==null||w.handle==0||w.pid==0||String.IsNullOrEmpty(w.path))return false;uint pid;GetWindowThreadProcessId(new IntPtr(w.handle),out pid);return pid==w.pid&&String.Equals(ProcessPath(pid),w.path,StringComparison.OrdinalIgnoreCase);}
+ internal static bool Valid(DockWindow w){if(w==null||w.handle==0||w.pid==0||String.IsNullOrEmpty(w.path))return false;uint pid;GetWindowThreadProcessId(new IntPtr(w.handle),out pid);return pid==w.pid&&String.Equals(ProcessPath(pid),w.path,StringComparison.OrdinalIgnoreCase);}
  public static void Activate(DockWindow w){
+  if(Activating!=null&&Activating(w))return;
+  if(AnimateRestore!=null&&AnimateRestore(w))return;
+  ActivateImmediate(w);
+ }
+ internal static void HoldActivation(){
+  if(activationWindow==null){
+   activationWindow=new Form{Text="PrismGlass 窗口切换",FormBorderStyle=FormBorderStyle.None,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Size=new Size(1,1),Opacity=0};
+   activationExpiry=new System.Windows.Forms.Timer{Interval=1500};activationExpiry.Tick+=(s,e)=>ReleaseActivation();Application.ApplicationExit+=(s,e)=>{activationExpiry.Dispose();activationWindow.Dispose();};
+  }
+  // Consume only the permission from this explicit click before asynchronous capture can lose it.
+  activationWindow.Location=Cursor.Position;activationWindow.Show();activationWindow.Activate();activationExpiry.Stop();activationExpiry.Start();
+ }
+ static void ReleaseActivation(){if(activationExpiry!=null)activationExpiry.Stop();if(activationWindow!=null&&!activationWindow.IsDisposed)activationWindow.Hide();}
+ internal static void ActivateImmediate(DockWindow w){
+  try{
   if(!Valid(w))throw new InvalidOperationException("窗口已经关闭或变化，请重新选择应用。");var h=new IntPtr(w.handle);
   if(!SetMinimized(w,false))throw new InvalidOperationException("窗口暂时无法还原，请从 Windows 任务栏打开后重试。");
-  SetForegroundWindow(h);
+  var popup=GetLastActivePopup(h);uint popupPid;GetWindowThreadProcessId(popup,out popupPid);SetForegroundWindow(popup!=IntPtr.Zero&&popupPid==w.pid&&IsWindowVisible(popup)?popup:h);
   for(int i=0;i<10&&!Foreground(w,false);i++)Thread.Sleep(10);
   if(!Valid(w)||!Foreground(w,false))throw new InvalidOperationException("Windows 暂未允许切到该窗口，请从任务栏选择它后重试。");
+  }finally{ReleaseActivation();}
  }
  internal static bool SetMinimized(DockWindow w,bool minimized){
   if(!Valid(w))return false;var h=new IntPtr(w.handle);if(IsIconic(h)==minimized)return true;
-  // System-menu commands work for windows that reject cross-process ShowWindow calls.
-  UIntPtr result;SendMessageTimeout(h,0x112,new IntPtr(minimized?0xF020:0xF120),IntPtr.Zero,2,250,out result);
-  if(IsIconic(h)!=minimized&&ShowWindowAsync(h,minimized?6:9))for(int i=0;i<20&&IsIconic(h)!=minimized;i++)Thread.Sleep(10);
+  ShowWindowAsync(h,minimized?6:9);for(int i=0;i<6&&IsIconic(h)!=minimized;i++)Thread.Sleep(5);
+  // Custom application chrome may handle only the system-menu command.
+  if(IsIconic(h)!=minimized){UIntPtr result;SendMessageTimeout(h,0x112,new IntPtr(minimized?0xF020:0xF120),IntPtr.Zero,2,120,out result);for(int i=0;i<12&&IsIconic(h)!=minimized;i++)Thread.Sleep(5);}
   return Valid(w)&&IsIconic(h)==minimized;
  }
  internal static DockClickAction ResolveClick(int windows,bool foreground,bool minimized,bool forceNew){
@@ -266,6 +316,8 @@ internal sealed class DockBackend {
   var action=ResolveClick(windows.Count,active!=null,false,forceNew);
   if(folder!=null)try{AtomicWrite(Path.Combine(folder,"dock-click.json"),new JavaScriptSerializer().Serialize(new{at=DateTime.UtcNow.ToString("o"),id=entry.id,action=action.ToString(),windows=windows.Count,foreground=GetForegroundWindow().ToInt64(),target=active==null?0:active.handle}));}catch(IOException){}catch(UnauthorizedAccessException){}
   if(folder!=null)foregroundHistory.Invalidate(); // A Dock activation belongs to one click only.
+  if(action==DockClickAction.Activate||action==DockClickAction.ChooseWindow)HoldActivation();
+  if(Animate!=null&&Animate(entry,action,active??windows.FirstOrDefault()))return;
   if(action==DockClickAction.Launch){Launch(entry.path,entry.arguments);return;}
   if(action==DockClickAction.Minimize){if(!SetMinimized(active,true))throw new InvalidOperationException("窗口暂时无法最小化，请使用该应用自己的最小化按钮。");return;}
   if(action==DockClickAction.Activate){Activate(windows[0]);return;}
@@ -284,21 +336,45 @@ internal sealed class DockBackend {
   Interact(null,new DockEntry{path=path,arguments=arguments??"",name=name,pinned=true,windows=WindowsFor(path,arguments)},false);
  }
  public DockEntry Entry(string id){if(previous.Length==0)return null;var e=json.Deserialize<List<DockEntry>>(previous).FirstOrDefault(x=>x.id==id);if(e!=null)e.windows=e.windows.Where(Valid).ToList();return e;}
+ internal static uint ResidentProcess(string root){
+  try{
+   var beat=Path.Combine(root,"heartbeat.txt");if(!File.Exists(beat)||Math.Abs((DateTime.UtcNow-File.GetLastWriteTimeUtc(beat)).TotalSeconds)>=5)return 0;
+   var ready=Path.Combine(root,"readiness.json");if(!File.Exists(ready)||new FileInfo(ready).Length>65536)return 0;
+   var data=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(ready));object process,window;uint pid,owner;long handle;
+   if(data==null||!data.TryGetValue("pid",out process)||!data.TryGetValue("window",out window)||!UInt32.TryParse(Convert.ToString(process),out pid)||!Int64.TryParse(Convert.ToString(window),out handle)||pid==0||pid==UInt32.MaxValue||handle==0)return 0;
+   var h=new IntPtr(handle);GetWindowThreadProcessId(h,out owner);if(owner!=pid||!String.Equals(ProcessPath(pid),Application.ExecutablePath,StringComparison.OrdinalIgnoreCase))return 0;
+   var title=new StringBuilder(128);GetWindowText(h,title,title.Capacity);return title.ToString()=="PrismGlass Desktop"?pid:0;
+  }catch(IOException){return 0;}catch(UnauthorizedAccessException){return 0;}catch(ArgumentException){return 0;}
+ }
  public static void Click(string root,string id,bool forceNew){
+  if(Animate==null){uint resident=ResidentProcess(root);if(resident!=0){bool foregroundGranted=AllowSetForegroundWindow(resident);AtomicWrite(Path.Combine(root,"dock-action-"+Guid.NewGuid().ToString("N")+".json"),new JavaScriptSerializer().Serialize(new{id=id,force=forceNew,foregroundGranted=foregroundGranted}));return;}}
   if(id==WorkspaceId){AtomicWrite(Path.Combine(root,"workspace.request"),"toggle-apps");return;}
+  if(id==TrashId){Process.Start(new ProcessStartInfo("explorer.exe","shell:RecycleBinFolder"){UseShellExecute=true});return;}
   if(id==OverflowId){MoreMenu(root);return;}
   try{var entries=new JavaScriptSerializer().Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json")));var entry=entries.FirstOrDefault(e=>e.id==id);if(entry==null)return;
    entry.windows=WindowsFor(entry.path,entry.arguments);
    Interact(root,entry,forceNew);
   }catch(Exception ex){File.WriteAllText(Path.Combine(root,"dock-error.txt"),ex.Message);AtomicWrite(Path.Combine(root,"dock-notice.txt"),ex.Message);}
  }
+ public static void ReleasePointer(string root,string id){
+  if(String.IsNullOrEmpty(id)||id.Length>100||!id.All(c=>Char.IsLetterOrDigit(c)||c=='-'||c=='_'))return;
+  uint resident=ResidentProcess(root);if(resident==0)return;
+  bool granted=AllowSetForegroundWindow(resident);
+  AtomicWrite(Path.Combine(root,"dock-pointer-release.txt"),id+"|"+DateTime.UtcNow.Ticks+"|"+granted);
+ }
+ internal static bool TakePointerRelease(string root,string id,DateTime now){
+  string file=Path.Combine(root,"dock-pointer-release.txt");if(!File.Exists(file))return false;
+  string value=File.ReadAllText(file);File.Delete(file);var parts=value.Split('|');long ticks;
+  return parts.Length==3&&parts[0]==id&&Int64.TryParse(parts[1],out ticks)&&ticks>0&&ticks<=now.Ticks&&now.Ticks-ticks<=TimeSpan.FromMilliseconds(750).Ticks;
+ }
 
  public static void Menu(string root,string id){
-  if(id==WorkspaceId){using(Hold(root))using(var owner=new Form())using(var menu=new ContextMenuStrip()){owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;menu.Items.Add("应用中心",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"apps"));menu.Items.Add("PrismGlass 设置",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"settings"));menu.Items.Add("Windows 设置",null,(s,e)=>Process.Start(new ProcessStartInfo("ms-settings:"){UseShellExecute=true}));menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);Application.Run(owner);}return;}
+  if(id==TrashId)return;
+  if(id==WorkspaceId){using(Hold(root))using(var owner=new Form())using(var menu=CreateMenu()){owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;menu.Items.Add("应用中心",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"apps"));menu.Items.Add("PrismGlass 设置",null,(s,e)=>AtomicWrite(Path.Combine(root,"workspace.request"),"settings"));menu.Items.Add("Windows 设置",null,(s,e)=>Process.Start(new ProcessStartInfo("ms-settings:"){UseShellExecute=true}));menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);if(Application.MessageLoop)owner.ShowDialog();else Application.Run(owner);}return;}
   if(id==OverflowId){MoreMenu(root);return;}
   try{
    var serializer=new JavaScriptSerializer();var entry=serializer.Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json"))).FirstOrDefault(e=>e.id==id);if(entry==null)return;
-   using(Hold(root))using(var owner=new Form())using(var menu=new ContextMenuStrip()){
+   using(Hold(root))using(var owner=new Form())using(var menu=CreateMenu()){
     owner.FormBorderStyle=FormBorderStyle.None;owner.ShowInTaskbar=false;owner.StartPosition=FormStartPosition.Manual;owner.Bounds=new Rectangle(Cursor.Position,new Size(1,1));owner.Opacity=0;
     owner.ContextMenuStrip=menu;menu.Font=new Font("Microsoft YaHei UI",10);menu.Items.Add(entry.name).Enabled=false;
     menu.Items.Add("打开 / 切换窗口",null,(s,e)=>Click(root,id,false));
@@ -308,7 +384,7 @@ internal sealed class DockBackend {
     Action<int> change=direction=>{try{if(direction==0){if(entry.pinned)Unpin(root,id);else Pin(root,entry.path,entry.arguments,entry.name,entry.icon);}else MoveBy(root,id,direction);}catch(Exception ex){MessageBox.Show(ex.Message,"Dock 设置未保存",MessageBoxButtons.OK,MessageBoxIcon.Warning);}};
     menu.Items.Add(entry.pinned?"从 Dock 取消固定":"固定到 Dock",null,(s,e)=>change(0));
     if(entry.pinned){menu.Items.Add("向左移动",null,(s,e)=>change(-1));menu.Items.Add("向右移动",null,(s,e)=>change(1));}
-    menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);Application.Run(owner);
+    menu.Closed+=(s,e)=>owner.Close();owner.Shown+=(s,e)=>menu.Show(Cursor.Position);if(Application.MessageLoop)owner.ShowDialog();else Application.Run(owner);
    }
   }catch(Exception ex){File.WriteAllText(Path.Combine(root,"dock-error.txt"),ex.ToString());}
  }
@@ -369,7 +445,8 @@ internal sealed class DockBackend {
  ExternalDragRequest ExternalRequest(){try{var file=Path.Combine(root,"dock-external-drag.json");return File.Exists(file)?json.Deserialize<ExternalDragRequest>(File.ReadAllText(file)):null;}catch(IOException){return null;}catch(ArgumentException){return null;}}
  static string SafeInstance(string instance){if(String.IsNullOrEmpty(instance)||instance.Length>80||instance.Any(c=>!Char.IsLetterOrDigit(c)&&c!='-'&&c!='_'))throw new ArgumentException("Invalid Dock instance");return instance;}
  internal static string BeforeAt(IList<DockEntry> entries,string source,float localX,float cell,float dpi,out int slot){
-  slot=0;for(int i=0;i<entries.Count;i++){var entry=entries[i];if(!entry.pinned)break;if(entry.system){slot=i+1;continue;}if(entry.id==source)continue;if(localX<(16+(i+.5f)*cell)*dpi){slot=i;return entry.id;}slot=i+1;}return "";
+  float inset=entries.Any(e=>e.id==TrashId)?26-10*(entries.Any(e=>!e.pinned&&e.id!=TrashId)?2:1):16;
+  slot=0;for(int i=0;i<entries.Count;i++){var entry=entries[i];if(!entry.pinned)break;if(entry.system){slot=i+1;continue;}if(entry.id==source)continue;if(localX<(inset+(i+.5f)*cell)*dpi){slot=i;return entry.id;}slot=i+1;}return "";
  }
  string DragBefore(Rectangle bounds,string instance,Point point,out int slot){
   float dpi=1,cell=(bounds.Width-52f)/Math.Max(1,drag.entries.Count);
@@ -410,7 +487,7 @@ internal sealed class DockBackend {
   if(escape){EndDrag();return false;}
   if(drag.external!=null){var external=ExternalRequest();if(external==null||external.token!=drag.token||external.cancelled||external.expires<UnixTime()){EndDrag();return false;}}
   if(!drag.moved&&(Math.Abs(point.X-drag.start.X)>=SystemInformation.DragSize.Width||Math.Abs(point.Y-drag.start.Y)>=SystemInformation.DragSize.Height))drag.moved=true;
-  if(drag.id==WorkspaceId&&drag.moved){EndDrag();return false;}
+  if((drag.id==WorkspaceId||drag.id==TrashId)&&drag.moved){EndDrag();return false;}
   if(!down&&!drag.released){drag.released=true;drag.release=point;drag.releasedAt=now;}
   if(drag.released)point=drag.release;
   var target=docks.FirstOrDefault(d=>d.Value.Contains(point));bool inside=target.Key!=null;
@@ -420,7 +497,7 @@ internal sealed class DockBackend {
   if(!drag.released)return true;
   if(drag.external!=null){var external=ExternalRequest();if(!external.ended){if((now-drag.releasedAt).TotalSeconds<1)return true;EndDrag();return false;}}
   var current=drag;
-  if(!current.moved){EndDrag();if(inside)Click(root,current.id,false);return false;}
+  if(!current.moved){if(inside&&!TakePointerRelease(root,current.id,DateTime.UtcNow)&&(now-current.releasedAt).TotalMilliseconds<350)return true;EndDrag();if(inside)Click(root,current.id,false);return false;}
   if(current.external!=null){if(inside)Pin(root,current.external.path,current.external.arguments,current.external.name,current.external.icon,before);}
   else {var entry=current.entries.FirstOrDefault(e=>e.id==current.id);if(entry!=null&&entry.id!=OverflowId){if(inside){if(entry.pinned)Move(root,entry.id,before);else Pin(root,entry.path,entry.arguments,entry.name,entry.icon,before);}else if(entry.pinned)Unpin(root,entry.id);}}
   EndDrag();return false;

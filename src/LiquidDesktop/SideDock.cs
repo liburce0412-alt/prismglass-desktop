@@ -19,6 +19,8 @@ internal sealed class SideDock : Form {
  readonly JavaScriptSerializer json=new JavaScriptSerializer();
  readonly SideDockData source;readonly WidgetBackend widgets;readonly SharedDesktopData shared;readonly string instance;
  readonly Timer timer=new Timer();
+ readonly ComponentPosition position;Rectangle defaultBounds;
+ public bool IsRepositioning {get{return position!=null&&position.Dragging;}}
  bool ready,painted,reading,closed;string theme="",layout="";float scale=1;float panelWidth,panelHeight,railHeight=668;
  DateTime visibilityRead=DateTime.MinValue,visibilityStamp=DateTime.MinValue;string visibilityState="";
  DateTime widgetRead=DateTime.MinValue,dataRead=DateTime.MinValue,heartbeat=DateTime.MinValue;string lastWidgets="";bool automaticPause;
@@ -37,6 +39,7 @@ internal sealed class SideDock : Form {
  public SideDock(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();ApplyRegion();layout="";PublishLayout();});
   root=directory;preview=isPreview;shared=data;instance=screenInstance;source=shared==null?new SideDockData(root):null;widgets=shared==null?new WidgetBackend(root):shared.Widgets;
+  position=new ComponentPosition(root,preview?"left-preview":"left",()=>Bounds,next=>{Bounds=next;layout="";PublishLayout();},message=>Send(new{type="action-error",message=message}));
   Text=preview?"PrismGlass SideDock · 验证":"PrismGlass SideDock";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;
   screen=Screen.PrimaryScreen.Bounds;Place();BackColor=Color.FromArgb(18,34,46);ApplyRegion();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);
   Shown+=async(s,e)=>{try{
@@ -55,14 +58,15 @@ internal sealed class SideDock : Form {
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready){widgetRead=DateTime.MinValue;dataRead=DateTime.MinValue;Tick();}};
   Deactivate+=DismissOnDeactivate;
-  FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();view.Dispose();};
+  FormClosed+=(s,e)=>{closed=true;position.Dispose();timer.Stop();timer.Dispose();view.Dispose();};
  }
  void Fail(string text){try{File.WriteAllText(Diagnostic("side-error.txt"),text);}catch{}Close();}
- void DismissOnDeactivate(object sender,EventArgs e){Send(new{type="dismiss"});}
+ void DismissOnDeactivate(object sender,EventArgs e){if(!IsRepositioning)Send(new{type="dismiss"});}
  void SyncPixelScale(){pixels.Sync();}
  void Place(){
   scale=Math.Min(1.25f,Math.Min((screen.Height-240)/680f,(screen.Width-48)/852f));scale=Math.Max(.5f,scale);
-  Bounds=new Rectangle(screen.Left+(preview?80:16),screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),(int)Math.Ceiling(852*scale),(int)Math.Ceiling(680*scale));
+  defaultBounds=new Rectangle(screen.Left+(preview?80:16),screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),(int)Math.Ceiling(852*scale),(int)Math.Ceiling(680*scale));
+  position.Arrange(defaultBounds,screen,new Point((int)(4*scale),(int)(4*scale)),new Rectangle((int)(4*scale),(int)(4*scale),(int)(88*scale),(int)(railHeight*scale)));
 
  }
  public void Open(string mode,Point at){widgetRead=DateTime.MinValue;lastWidgets="";pendingMode=mode;if(ready){Send(new{type="open",mode=mode});pendingMode=null;}}
@@ -106,6 +110,7 @@ internal sealed class SideDock : Form {
  }
  void Receive(string text){
   try{
+   if(position.Receive(text))return;
    if(text=="ready"){ready=true;layout="";lastWidgets="";widgetRead=DateTime.MinValue;theme=ReadTheme();PublishLayout();PublishVisibility(true);if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);Tick();if(pendingMode!=null){Send(new{type="open",mode=pendingMode});pendingMode=null;}}
    else if(text=="painted")painted=true;
    else if(text.StartsWith("panel:"))musicOpen=text=="panel:music";
@@ -138,14 +143,14 @@ internal sealed class SideDock : Form {
   finally{reading=false;}
  }
  static void Round(GraphicsPath p,float x,float y,float w,float h,float radius){
-  float d=Math.Min(radius*2,Math.Min(w,h));if(w<=0||h<=0)return;
-  p.StartFigure();p.AddArc(x,y,d,d,180,90);p.AddArc(x+w-d,y,d,d,270,90);p.AddArc(x+w-d,y+h-d,d,d,0,90);p.AddArc(x,y+h-d,d,d,90,90);p.CloseFigure();
+  GlassWindow.Round(p,x,y,w,h,radius);
  }
  void ApplyRegion(){
   using(var path=new GraphicsPath()){
    if(railHeight>0)Round(path,4*scale,4*scale,88*scale,railHeight*scale,28*scale);
    if(panelWidth>1){Round(path,108*scale,panelTop*scale,panelWidth*scale,panelHeight*scale,28*scale);}
    var previous=Region;Region=GlassWindow.Clip(path,ClientRectangle);if(previous!=null)previous.Dispose();
+   if(path.PointCount>0)position.Arrange(defaultBounds,screen,new Point((int)(4*scale),(int)(4*scale)),Rectangle.Ceiling(path.GetBounds()));
   }
  }
 }

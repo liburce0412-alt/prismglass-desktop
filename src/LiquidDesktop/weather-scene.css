@@ -1,0 +1,31 @@
+/* A single local photograph atlas supplies the atmosphere. Motion uses clipped,
+   compositor-only transforms; no second canvas or per-frame pixel generation. */
+.landscape.weather-environment{height:284px;isolation:isolate;contain:paint;position:relative;overflow:hidden;margin:0 0 18px;border:0;border-radius:20px;background:#1c3045;box-shadow:none;--sky-x:0%;--sky-y:0%;--sun-x:70%}
+.weather-environment::before{display:none!important}.landscape.weather-environment[data-code]::after{content:"";position:absolute;inset:0;width:100%;height:100%;transform:none;animation:none;z-index:3;background:linear-gradient(180deg,#07192b08 15%,#06132100 38%,#03112266 100%);pointer-events:none}
+.weather-environment .weather-sky{position:absolute;inset:-3%;background-image:url('weather-scenes.png');background-size:200% 300%;background-position:var(--sky-x) var(--sky-y);animation:weather-cloud-drift 30s ease-in-out infinite alternate;will-change:transform}
+.weather-environment[data-code=cloud]{--sky-x:100%}.weather-environment[data-code=rain]{--sky-y:50%}.weather-environment[data-code=snow]{--sky-x:100%;--sky-y:50%}.weather-environment[data-code=fog],.weather-environment[data-code=unknown]{--sky-y:100%}
+.weather-environment[data-code=clear][data-period=night]{--sky-x:100%;--sky-y:100%}
+.weather-environment[data-period=night]:not([data-code=clear]) .weather-sky{filter:brightness(.42) saturate(.7)}
+.weather-environment[data-period=dusk] .weather-sky{filter:sepia(.18) saturate(1.12)}
+.weather-environment[data-code=unknown] .weather-sky{opacity:.3;filter:saturate(.35)}
+.weather-environment .weather-light{position:absolute;inset:0;z-index:1;background:radial-gradient(ellipse at var(--sun-x) 16%,#fff6cb61,transparent 54%);mix-blend-mode:screen;animation:weather-light-breathe 9s ease-in-out infinite alternate;pointer-events:none}
+.weather-environment[data-code=rain] .weather-light,.weather-environment[data-code=unknown] .weather-light{display:none}
+.weather-environment[data-code=cloud] .weather-light{opacity:.5}.weather-environment[data-code=snow] .weather-light,.weather-environment[data-code=fog] .weather-light{opacity:.3}
+.weather-environment[data-period=night] .weather-light{background:radial-gradient(ellipse at 83% 18%,#b8d6ff35,transparent 50%);opacity:.55}
+.weather-environment .weather-precipitation{position:absolute;inset:-28px 0 0;z-index:2;pointer-events:none;display:none;overflow:hidden}
+.weather-environment[data-code=rain] .weather-precipitation,.weather-environment[data-code=snow] .weather-precipitation{display:block}
+.weather-precipitation i{position:absolute;left:var(--x);top:-20px;width:1px;height:18px;background:linear-gradient(transparent,#e5f5ffad);animation:weather-rain-fall var(--duration) linear var(--delay) infinite;opacity:.52}
+.weather-precipitation i:nth-child(3n){opacity:.22;width:2px;filter:blur(.5px)}
+.weather-environment[data-code=snow] .weather-precipitation i{width:3px;height:3px;border-radius:50%;background:#f9fdff;animation-name:weather-snow-fall;animation-duration:calc(var(--duration)*5);opacity:.8}
+.weather-environment[data-code=snow] .weather-precipitation i:nth-child(3n){width:5px;height:5px;filter:blur(1px);opacity:.6}
+.weather-environment #weather-scene-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+[data-widget-page=weather] .weather-header{position:relative;z-index:4;margin:-169px 20px 0;min-height:132px;text-shadow:0 2px 12px #04172b80}
+[data-widget-page=weather] #weather-city{font-size:16px;color:#fff}[data-widget-page=weather] #weather-temp{font-weight:300;font-size:64px;line-height:1.12;letter-spacing:-.055em;color:#fff}
+[data-widget-page=weather] .weather-conditions{color:#f4f8ff}[data-widget-page=weather] .weather-conditions p{color:inherit}
+[data-widget-page=weather] .weather-range{margin-top:18px}
+.weather-environment[data-active=false] *,.motion-paused .weather-environment *,.prism-reduced-motion .weather-environment *{animation-play-state:paused!important;will-change:auto}
+@keyframes weather-cloud-drift{from{transform:translateX(-.6%) scale(1.015)}to{transform:translateX(.6%) scale(1.04)}}
+@keyframes weather-light-breathe{from{transform:translateX(-1%);opacity:.64}to{transform:translateX(1%);opacity:1}}
+@keyframes weather-rain-fall{from{transform:translate3d(10px,-20px,0)}to{transform:translate3d(-30px,340px,0)}}
+@keyframes weather-snow-fall{0%{transform:translate3d(0,-20px,0)}50%{transform:translate3d(17px,160px,0)}100%{transform:translate3d(-7px,340px,0)}}
+@media(prefers-reduced-motion:reduce){.weather-environment *{animation:none!important;will-change:auto}}

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#545a9b">
+  <title>PrismGlass · 玻璃编辑器</title>
+  <link rel="stylesheet" href="glass-editor.css">
+  <script src="glass-materials.js" defer></script><script src="glass-editor-renderer.js" defer></script>
+  <script src="glass-editor.js" defer></script>
+</head>
+<body data-background="wallpaper" data-renderer="loading">
+  <canvas id="scene" aria-hidden="true"></canvas>
+  <canvas id="glass-canvas" aria-hidden="true"></canvas>
+  <svg class="icon-library" aria-hidden="true"><defs>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+    <symbol id="icon-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/></symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></symbol>
+    <symbol id="icon-browser" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6Z"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="icon-drag" viewBox="0 0 24 24"><path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01"/></symbol>
+  </defs></svg>
+  <div class="lab-shell">
+    <header class="lab-header">
+      <a class="brand" href="#compare" aria-label="PrismGlass 玻璃选型"><span class="brand-mark" aria-hidden="true">◇</span><span>PrismGlass</span></a>
+      <span class="preview-badge"><i aria-hidden="true"></i>独立预览，不改桌面</span>
+    </header>
+    <main>
+      <div class="control-deck" aria-label="预览设置">
+          <label class="background-control" for="background-mode"><span>预览背景</span><select id="background-mode"><option value="wallpaper">当前壁纸</option><option value="light">浅色</option><option value="dark">深色</option><option value="grid">网格</option></select></label>
+          <label class="switch-control"><input id="dynamic-background" type="checkbox" checked><span class="switch-track" aria-hidden="true"></span><span>动态背景</span></label>
+
+          <label class="switch-control reduce-control"><input id="reduce-motion" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span>减少动画</span></label>
+          <button id="reset-defaults" class="reset-button" type="button">重置预览</button>
+        </div>
+      <section id="detail" class="detail-section" aria-labelledby="detail-title">
+        <div class="section-heading"><div><p class="section-number">01 / 调整</p><h2 id="detail-title">让玻璃跟着你的偏好</h2></div><p class="section-note">移动鼠标 · 拖动面板 · 调整参数</p></div>
+                        <div class="base-presets" role="group" aria-label="基础材质"><button type="button" data-select-preset="I"><span>I</span>经典液态</button><button type="button" data-select-preset="J"><span>J</span>Glasswork</button><button type="button" data-select-preset="G"><span>G</span>磨砂</button></div><div class="editor-workbench"><aside class="material-editor" aria-label="当前材质参数">
+          <div class="editor-picker"><label for="edit-preset">正在调整</label><select id="edit-preset"></select></div>
+                    <div class="preset-management"><button id="save-preset" type="button">另存预设</button><button id="rename-preset" type="button">重命名</button><button id="delete-preset" type="button">删除</button></div>
+          <form id="preset-name-form" hidden><label id="preset-name-label" for="preset-name">保存为我的预设</label><input id="preset-name" maxlength="48" autocomplete="off" required><p id="preset-name-error" role="alert"></p><div><button type="submit">保存</button><button id="cancel-preset-name" type="button">取消</button></div></form><div class="editor-tuning-heading"><span id="tuning-state">预设参数</span><button id="reset-material" type="button">还原当前款</button></div>
+          <div id="material-fields" class="material-fields"></div>
+          <p class="tuning-hint">拖动预览，松手保存</p>
+        </aside>        <div id="preview-stage" class="preview-stage" aria-label="选中样式在桌面上的效果">
+          <div class="stage-marker stage-marker-top" aria-hidden="true">小组件 / 面板 / Dock</div>
+          <section id="preview-widget" class="glass-surface preview-widget" data-glass-preset="I" data-glass-shape="card" aria-label="小组件预览">
+            <div class="sample-top"><span class="sample-city">此刻</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></div>
+            <div class="sample-temperature">09:41</div>
+            <div class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></div>
+          </section>
+          <section id="preview-panel" class="glass-surface preview-panel" data-glass-preset="I" data-glass-shape="panel" aria-label="可拖动弹出面板预览">
+            <div id="preview-drag-handle" class="preview-panel-header" tabindex="0" role="button" aria-label="拖动面板位置"><span>控制中心</span><svg aria-hidden="true"><use href="#icon-drag"/></svg></div>
+            <div class="preview-panel-content">
+              <div class="panel-status-row"><span class="panel-icon"><svg aria-hidden="true"><use href="#icon-music"/></svg></span><span><strong>慢一点，也很好</strong><small>音乐卡片 · 示例</small></span><span class="decorative-play" aria-hidden="true">Ⅱ</span></div>
+              <div class="panel-divider"></div>
+              <div class="panel-level-title"><span>声音</span><span>65%</span></div>
+              <div class="panel-level" aria-hidden="true"><i></i></div>
+              <div class="panel-quick-row" aria-hidden="true"><span><svg><use href="#icon-grid"/></svg>应用</span><span><svg><use href="#icon-sun"/></svg>外观</span><span><svg><use href="#icon-settings"/></svg>设置</span></div>
+            </div>
+          </section>
+          <nav id="preview-dock" class="glass-surface preview-dock" data-glass-preset="I" data-glass-shape="dock" aria-label="Dock 材质预览">
+            <span class="dock-icon dock-apps"><svg aria-hidden="true"><use href="#icon-grid"/></svg></span><span class="dock-icon dock-browser"><svg aria-hidden="true"><use href="#icon-browser"/></svg></span><span class="dock-icon dock-folder"><svg aria-hidden="true"><use href="#icon-folder"/></svg></span><span class="dock-icon dock-music"><svg aria-hidden="true"><use href="#icon-music"/></svg></span><span class="dock-divider" aria-hidden="true"></span><span class="dock-icon dock-settings"><svg aria-hidden="true"><use href="#icon-settings"/></svg></span>
+          </nav>
+        </div>
+        </div>
+      </section>
+
+      <details id="compare" class="comparison-section more-presets"><summary>更多预设 <span>保留原有七款</span></summary><section aria-labelledby="compare-title">
+        <div class="section-heading"><div><p class="section-number">02 / 比较</p><h1 id="compare-title">更多玻璃预设</h1></div><p class="section-note">同一背景 · 同一尺寸 · 同一内容</p></div>
+
+        <div class="preset-grid" role="group" aria-label="更多玻璃样式">          <article class="preset-option" data-preset-option="A">
+            <div class="preset-caption"><h2><span class="preset-code">A</span>清透</h2><button class="choose-button" type="button" data-select-preset="A" aria-pressed="true"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-A" class="glass-surface preset-surface" data-glass-preset="A" data-glass-shape="card" data-select-preset="A" type="button" aria-label="选择 A · 清透" aria-pressed="true">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">通透，轻盈</p>
+          </article>
+          <article class="preset-option" data-preset-option="B">
+            <div class="preset-caption"><h2><span class="preset-code">B</span>柔雾</h2><button class="choose-button" type="button" data-select-preset="B" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-B" class="glass-surface preset-surface" data-glass-preset="B" data-glass-shape="card" data-select-preset="B" type="button" aria-label="选择 B · 柔雾" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">柔和，漫散射</p>
+          </article>
+          <article class="preset-option" data-preset-option="C">
+            <div class="preset-caption"><h2><span class="preset-code">C</span>厚边</h2><button class="choose-button" type="button" data-select-preset="C" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-C" class="glass-surface preset-surface" data-glass-preset="C" data-glass-shape="card" data-select-preset="C" type="button" aria-label="选择 C · 厚边" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">饱满，边缘折射</p>
+          </article>
+          <article class="preset-option" data-preset-option="D">
+            <div class="preset-caption"><h2><span class="preset-code">D</span>中性灰</h2><button class="choose-button" type="button" data-select-preset="D" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-D" class="glass-surface preset-surface" data-glass-preset="D" data-glass-shape="card" data-select-preset="D" type="button" aria-label="选择 D · 中性灰" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">克制，低饱和</p>
+          </article>
+          <article class="preset-option" data-preset-option="E">
+            <div class="preset-caption"><h2><span class="preset-code">E</span>棱彩</h2><button class="choose-button" type="button" data-select-preset="E" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-E" class="glass-surface preset-surface" data-glass-preset="E" data-glass-shape="card" data-select-preset="E" type="button" aria-label="选择 E · 棱彩" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">轻微色散</p>
+          </article>
+          <article class="preset-option" data-preset-option="F">
+            <div class="preset-caption"><h2><span class="preset-code">F</span>轻乳白</h2><button class="choose-button" type="button" data-select-preset="F" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-F" class="glass-surface preset-surface" data-glass-preset="F" data-glass-shape="card" data-select-preset="F" type="button" aria-label="选择 F · 轻乳白" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">浅亮，温润</p>
+          </article>
+          <article class="preset-option" data-preset-option="H">
+            <div class="preset-caption"><h2><span class="preset-code">H</span>暖晶</h2><button class="choose-button" type="button" data-select-preset="H" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-check"/></svg><span>选这款</span></button></div>
+            <button id="preset-H" class="glass-surface preset-surface" data-glass-preset="H" data-glass-shape="card" data-select-preset="H" type="button" aria-label="选择 H · 暖晶" aria-pressed="false">
+              <span class="sample-top"><span class="sample-city">此刻</span><span class="sample-label">示例</span><svg aria-hidden="true"><use href="#icon-sun"/></svg></span>
+              <span class="sample-temperature">09:41</span>
+              <span class="sample-bottom"><span>星期六</span><span>11 月 7 日 · 示例</span></span>
+            </button>
+            <p class="preset-description">暖光，清澈</p>
+          </article>        </div>
+        <p id="render-status" class="render-status" role="status">正在准备玻璃预览…</p>
+      </section>
+            </details>
+    </main>
+  </div>
+  <aside class="selection-bar" aria-live="polite" aria-atomic="true"><div class="selection-current"><span class="selection-caption">当前选择</span><strong><span id="selection-code">A</span><span class="selection-separator" aria-hidden="true">/</span><span id="selection-name">清透</span></strong></div><p><span id="editor-save-status">独立预览，不改桌面</span></p><a href="#compare">更多预设<span aria-hidden="true">↓</span></a></aside>
+</body>
+</html>

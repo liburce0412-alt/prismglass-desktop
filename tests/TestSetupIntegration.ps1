@@ -18,6 +18,7 @@ function Check([bool]$Condition,[string]$Name){if(!$Condition){throw "FAIL: $Nam
 function Reject([scriptblock]$Action,[string]$Name){$failed=$false;try{& $Action | Out-Null}catch{$failed=$true};Check $failed $Name}
 foreach($private in @('prismglass-install.json','install-record.json','installer-runtime.ini','LiquidDesktop/desktop-settings.json','LiquidDesktop/app-library.json','LiquidDesktop/companion-settings.json','LiquidDesktop/lyrics-settings.json','LiquidDesktop/devices.bin','LiquidDesktop/readiness.json','LiquidDesktop/weather-cache.json','LiquidDesktop/runtime-data/settings.json','companion-setup/setup-record.json','LiquidDesktop/desktop-state.json','companion-key.pfx')){Check (Test-PrivateBundlePath $private) ("Package rejects private file: $private")}
 foreach($public in @('LiquidDesktop/desktop.js','LiquidDesktop/PrismGlass.ico','LiquidDesktop/companion-web/manifest.webmanifest','LiquidDesktop/pins.json','LICENSE','VERSION')){Check (!(Test-PrivateBundlePath $public)) ("Package accepts product file: $public")}
+foreach($private in @('LiquidDesktop/photo-cards/Photo.txt','LiquidDesktop/photo-cards/0123456789abcdef0123456789abcdef.png')){Check (Test-PrivateBundlePath $private) ("Package rejects imported photo data: $private")}
 $fixture=Join-Path $repo ('artifacts/tests/setup-'+[guid]::NewGuid().ToString('N'))
 try{
  $install=Join-Path $fixture '安装 空格🙂';$skinBase=Join-Path $fixture '自定义皮肤';$skin=Join-Path $skinBase 'PrismGlass';$rainmeter=Join-Path $fixture 'Rainmeter.exe';$settings=Join-Path $fixture 'Rainmeter.ini'

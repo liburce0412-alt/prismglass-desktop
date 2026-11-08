@@ -9,7 +9,7 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
-// NetEase 3.1.41 does not publish SMTC. Read its two playback-clock doubles,
+// These NetEase versions do not publish SMTC. Read their playback-clock doubles,
 // only for the verified module layout; never scan memory, inject or write to it.
 internal sealed class NetEaseSession : IDisposable {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr window,StringBuilder text,int count);
@@ -18,28 +18,40 @@ internal sealed class NetEaseSession : IDisposable {
  [DllImport("kernel32.dll")]static extern bool ReadProcessMemory(SafeProcessHandle process,IntPtr address,byte[] buffer,IntPtr size,out IntPtr read);
  readonly string data;readonly AutoResetEvent wake=new AutoResetEvent(false);readonly byte[] bytes=new byte[8];
  volatile bool enabled,disposed;Thread worker;SafeProcessHandle processHandle;
- IntPtr handle;long module;string title="";MediaSnapshot track;
+ IntPtr handle;long module;int positionOffset,durationOffset;string title="";MediaSnapshot track;volatile string status="";
  readonly PlaybackClock playback=new PlaybackClock();DateTime metadataAt=DateTime.MinValue;
  public NetEaseSession(string directory){data=directory;}
+ public string Status {get{return status;}}
  public void Enable(bool value){
   if(enabled==value||disposed)return;
   enabled=value;if(worker==null&&value){worker=new Thread(Run){IsBackground=true,Name="PrismGlass NetEase playback"};worker.Start();}
   wake.Set();
  }
  static string Caption(IntPtr h){var text=new StringBuilder(1024);GetWindowText(h,text,text.Capacity);return text.ToString();}
- void Reset(){if(processHandle!=null)processHandle.Dispose();processHandle=null;handle=IntPtr.Zero;module=0;title="";track=null;playback.Reset();}
+ void Reset(){if(processHandle!=null)processHandle.Dispose();processHandle=null;handle=IntPtr.Zero;module=0;positionOffset=durationOffset=0;title="";track=null;playback.Reset();}
+ internal static bool TryLayout(string version,int imageBytes,long fileBytes,out int position,out int duration){
+  position=duration=0;
+  // shortcut: Each new player build needs layout verification; unknown builds stay unread.
+  if(version=="3.1.41.205529"&&imageBytes==41054208&&fileBytes==37747192){position=0x21A74D8;duration=0x2214778;return true;}
+  // onPlayProgress's position was verified statically and against live advancing samples.
+  // This build uses the already title/artist-matched queue duration, not an unverified RVA.
+  if(version=="3.1.43.205627"&&imageBytes==41058304&&fileBytes==37749240){position=0x21A84D8;return true;}
+  return false;
+ }
+ internal static string UnsupportedStatus(string version){return "网易云 "+version+" 的播放进度尚未适配";}
  void Locate(){
   if(handle!=IntPtr.Zero&&IsWindow(handle))return;
-  Reset();
+  Reset();status="";
   foreach(var process in Process.GetProcessesByName("cloudmusic")){
    using(process){try{
     var h=process.MainWindowHandle;if(h==IntPtr.Zero||!Caption(h).Contains(" - "))continue;
-    if(process.MainModule.FileVersionInfo.FileVersion!="3.1.41.205529")continue;
+    string version=process.MainModule.FileVersionInfo.FileVersion;
+    status=UnsupportedStatus(version);
     foreach(ProcessModule image in process.Modules){
-     if(!String.Equals(image.ModuleName,"cloudmusic.dll",StringComparison.OrdinalIgnoreCase)||image.ModuleMemorySize!=41054208||new FileInfo(image.FileName).Length!=37747192)continue;
+     if(!String.Equals(image.ModuleName,"cloudmusic.dll",StringComparison.OrdinalIgnoreCase)||!TryLayout(version,image.ModuleMemorySize,new FileInfo(image.FileName).Length,out positionOffset,out durationOffset))continue;
      processHandle=OpenProcess(0x1010,false,process.Id);
-     if(processHandle.IsInvalid){Reset();break;}
-     handle=h;module=image.BaseAddress.ToInt64();return;
+     if(processHandle.IsInvalid){Reset();status="网易云播放进度暂时无法读取";break;}
+     handle=h;module=image.BaseAddress.ToInt64();status="";return;
     }
    }catch{Reset();}}
   }
@@ -95,8 +107,7 @@ internal sealed class NetEaseSession : IDisposable {
   if(caption!=title){title=caption;track=Metadata(title);metadataAt=now;playback.Reset();}
   if(track!=null&&track.duration<=0&&(now-metadataAt).TotalSeconds>=2){track=Metadata(title);metadataAt=now;}
   if(track==null)return null;
-  // Layout facts: cloudmusic.dll image 41054208 bytes, file 37747192 bytes.
-  double position=Clock(35288280),duration=Clock(35735416);
+  double position=Clock(positionOffset),duration=durationOffset==0?track.duration:Clock(durationOffset);
   if(Caption(handle)!=title||!ValidClock(position,duration,track.duration)){playback.Reset();return null;}
   bool playing=playback.Observe(position,now);
   return new MediaSnapshot{source=track.source,title=track.title,artist=track.artist,album=track.album,duration=duration,position=position,status=playing?"playing":"paused",timeline=playback.Ready,rate=playback.Advanced?1:0,sampledAt=MediaSnapshot.Unix(now)};

@@ -21,7 +21,7 @@ foreach($script in @('TestCompanionServer.ps1','TestCompanionDiscovery.ps1','Tes
 & (Join-Path $repo 'tests/TestCompanionVideoNetwork.ps1')
 & (Join-Path $repo 'tests/TestSetupIntegration.ps1')
 & (Join-Path $repo 'tests/TestDesktopModeFailure.ps1')
-& $csc /nologo ("/out:"+(Join-Path $out 'TestWallpaperRefresh.exe')) (Join-Path $repo 'tests/TestWallpaperRefresh.cs') (Join-Path $repo 'src/LiquidDesktop/WallpaperRefresh.cs')
+& $csc /nologo /r:System.Drawing.dll ("/out:"+(Join-Path $out 'TestWallpaperRefresh.exe')) (Join-Path $repo 'tests/TestWallpaperRefresh.cs') (Join-Path $repo 'src/LiquidDesktop/WallpaperRefresh.cs')
 if($LASTEXITCODE -ne 0){throw 'Wallpaper test compilation failed'}
 & (Join-Path $out 'TestWallpaperRefresh.exe')
 if($LASTEXITCODE -ne 0){throw 'Wallpaper sampling checks failed'}

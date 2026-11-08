@@ -1,5 +1,5 @@
 using System;using System.Collections.Generic;using System.Drawing;using System.IO;using System.Runtime.InteropServices;using System.Threading;using System.Windows.Forms;
-internal static class RuntimePaths {public static string Rainmeter {get{throw new Exception("The fixture must never command the user's Rainmeter instance.");}}}
+internal static class RuntimePaths {public static string Recorder;public static string Rainmeter {get{if(Recorder!=null)return Recorder;throw new Exception("The fixture must never command the user's Rainmeter instance.");}}}
 internal sealed class MonitorPreferences {public bool enabled=true,dock=true;public int dockOffset=18;}
 internal static class TestDesktopWidgets {
  [StructLayout(LayoutKind.Sequential)]struct Rect {public int l,t,r,b;}
@@ -9,7 +9,61 @@ internal static class TestDesktopWidgets {
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  static int checks;static void Check(bool pass,string name){if(!pass)throw new Exception(name);checks++;Console.WriteLine("PASS "+name);}
  static Rectangle Bounds(IntPtr h){Rect r;GetWindowRect(h,out r);return Rectangle.FromLTRB(r.l,r.t,r.r,r.b);}
+ static int CheckCatalogRecovery(){
+  string root=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"widget-catalog-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(Path.Combine(root,"BreathingOrb"));
+  string log=Path.Combine(root,"commands.txt");
+  try{
+   File.WriteAllText(Path.Combine(root,"skin-path.txt"),root);File.WriteAllText(Path.Combine(root,"BreathingOrb","Main.ini"),"[Rainmeter]");
+   Environment.SetEnvironmentVariable("PRISMGLASS_WIDGET_COMMAND_LOG",log);RuntimePaths.Recorder=System.Reflection.Assembly.GetExecutingAssembly().Location;
+   using(var widgets=new DesktopWidgets(root)){
+    var selected=new[]{"BreathingOrb"};widgets.Sync(selected,true);
+    Check(File.ReadAllLines(log).Length==1&&File.ReadAllLines(log)[0].StartsWith("!ActivateConfig"),"unopened installed card first receives an ordinary activation");
+    var retry=(Dictionary<string,DateTime>)typeof(DesktopWidgets).GetField("retries",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).GetValue(widgets);retry["BreathingOrb"]=DateTime.MinValue;
+    widgets.Sync(selected,true);Check(File.ReadAllLines(log).Length==2&&File.ReadAllLines(log)[1]=="!RefreshApp","failed activation refreshes the catalog once for installed cards");
+    Check(!MonitorDock.SkinCatalogReady,"catalog registration has a separate delayed readiness boundary");
+    widgets.Sync(selected,true);Check(File.ReadAllLines(log).Length==2,"activation waits for asynchronous catalog registration");
+    typeof(MonitorDock).GetField("catalogReady",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic).SetValue(null,DateTime.MinValue);
+    widgets.Sync(selected,true);Check(File.ReadAllLines(log).Length==3&&File.ReadAllLines(log)[2].StartsWith("!ActivateConfig"),"card activation retries after catalog registration");
+    retry["BreathingOrb"]=DateTime.MinValue;widgets.Sync(selected,true);
+    Check(File.ReadAllLines(log).Length==4&&File.ReadAllLines(log)[3].StartsWith("!ActivateConfig"),"persistent activation failure never loops global refreshes");
+    bool missing=false;try{widgets.Sync(new[]{"Calendar"},true);}catch(IOException){missing=true;}
+    Check(missing&&File.ReadAllLines(log).Length==4,"missing installed files report an actionable error without global refresh");
+   }
+   Console.WriteLine("Completed "+checks+" widget catalog checks.");return 0;
+  }finally{RuntimePaths.Recorder=null;Environment.SetEnvironmentVariable("PRISMGLASS_WIDGET_COMMAND_LOG",null);Directory.Delete(root,true);}
+ }
  [STAThread]static int Main(string[] args){try{
+  if(args.Length>0&&args[0].StartsWith("!",StringComparison.Ordinal)){File.AppendAllText(Environment.GetEnvironmentVariable("PRISMGLASS_WIDGET_COMMAND_LOG"),String.Join(" ",args)+Environment.NewLine);return 0;}
+  if(args.Length==1&&args[0]=="--catalog")return CheckCatalogRecovery();
+  if(Array.IndexOf(args,"--new-cards")>=0||Array.IndexOf(args,"--photos-only")>=0){
+   bool photoMode=Array.IndexOf(args,"--photos-only")>=0;
+   string fixture=Path.GetFullPath(args[0]);var names=photoMode?new[]{"Photo","Photo2","Photo3"}:new[]{"BreathingOrb","DigitalClock","Moon","Photo"};
+   var cards=new Dictionary<string,IntPtr>();
+   foreach(var name in names){
+    IntPtr h=IntPtr.Zero;string path=Path.Combine(fixture,"Skins","PrismGlass",name,"Main.ini");
+    for(int i=0;i<80;i++){h=FindWindow("RainmeterMeterWindow",path);if(h!=IntPtr.Zero)break;Thread.Sleep(40);}
+    uint pid;GetWindowThreadProcessId(h,out pid);Check(h!=IntPtr.Zero&&pid==UInt32.Parse(args[1]),name+" loads in the isolated native Rainmeter profile");cards[name]=h;
+   }
+   using(var widgets=new DesktopWidgets(fixture)){
+    foreach(var name in names){
+     widgets.Sync(new[]{name},true);Thread.Sleep(120);var h=cards[name];
+     var expected=new Size(244,196);if(photoMode){var metadata=File.ReadAllLines(Path.Combine(fixture,"LiquidDesktop","photo-cards",name+".txt"));expected=new Size(Int32.Parse(metadata[1]),Int32.Parse(metadata[2]));}
+     Check(IsWindowVisible(h)&&Bounds(h).Size==expected,name+" shows with its actual source-proportioned native card bounds");
+     if(Array.IndexOf(args,"--capture-ambient")>=0){
+      MonitorDock.SendSkinCommand(h,"!ZPos 2 \"PrismGlass\\"+name+"\"");Thread.Sleep(120);
+      using(var bitmap=new Bitmap(expected.Width,expected.Height,System.Drawing.Imaging.PixelFormat.Format24bppRgb))using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(Bounds(h).Location,Point.Empty,bitmap.Size);bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,(photoMode?"photo-native-":"ambient-")+name+".png"),System.Drawing.Imaging.ImageFormat.Png);}
+      MonitorDock.SendSkinCommand(h,"!ZPos -2 \"PrismGlass\\"+name+"\"");
+     }
+    }
+    if(photoMode){
+     widgets.Sync(names,true);Check(Array.TrueForAll(names,n=>IsWindowVisible(cards[n])),"three independent photo windows remain visible together");
+     var before=Bounds(cards["Photo2"]);widgets.Sync(new[]{"Photo","Photo3"},true);Check(!IsWindowVisible(cards["Photo2"])&&Bounds(cards["Photo2"])==before&&IsWindowVisible(cards["Photo"]),"hiding one photo preserves its position and the other cards");
+     widgets.Sync(names,true);var union=Bounds(cards[names[0]]);foreach(var name in names){union=Rectangle.Union(union,Bounds(cards[name]));MonitorDock.SendSkinCommand(cards[name],"!ZPos 2 \"PrismGlass\\"+name+"\"");}Thread.Sleep(120);
+     if(Array.IndexOf(args,"--capture-ambient")>=0)using(var bitmap=new Bitmap(union.Width,union.Height,System.Drawing.Imaging.PixelFormat.Format24bppRgb))using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(union.Location,Point.Empty,bitmap.Size);bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"photo-native-comparison.png"),System.Drawing.Imaging.ImageFormat.Png);}
+    }
+   }
+   Console.WriteLine("Completed "+checks+" new native widget checks.");return 0;
+  }
   var area=new Rectangle(0,0,1920,1080);var left=new Rectangle(24,64,88,668);var right=new Rectangle(1808,64,88,502);var rails=new List<Rectangle>{left,right};
   var card=new Rectangle(24,120,244,196);var placed=DesktopWidgets.Place(card,area,rails);
   Check(placed.X==120&&placed.Y==card.Y,"left rail reserves its actual width and an eight-pixel gap");
@@ -24,13 +78,35 @@ internal static class TestDesktopWidgets {
   foreach(var name in DesktopWidgets.Names){var file=Path.Combine(skins,name,"Main.ini");IntPtr h=IntPtr.Zero;for(int i=0;i<100;i++){h=FindWindow("RainmeterMeterWindow",file);if(h!=IntPtr.Zero)break;Thread.Sleep(50);}uint pid;GetWindowThreadProcessId(h,out pid);Check(h!=IntPtr.Zero&&pid==UInt32.Parse(args[1]),name+" uses the independent real Rainmeter profile");windows[name]=h;}
   using(var widgets=new DesktopWidgets(root)){
    widgets.Sync(new string[0],true);Check(Array.TrueForAll(DesktopWidgets.Names,n=>!IsWindowVisible(windows[n])),"default preference leaves all native cards hidden");
-   widgets.Sync(DesktopWidgets.Names,true);Check(Array.TrueForAll(DesktopWidgets.Names,n=>IsWindowVisible(windows[n])),"all nine retained cards can be shown");
+   widgets.Sync(DesktopWidgets.Names,true);Check(Array.TrueForAll(DesktopWidgets.Names,n=>IsWindowVisible(windows[n])),"all functional and decorative cards can be shown");
+   foreach(var name in new[]{"BreathingOrb"}){
+    Check(Bounds(windows[name]).Size==new Size(244,196),name+" keeps the shared glass card bounds");
+    if(Array.IndexOf(args,"--capture-ambient")>=0){
+     MonitorDock.SendSkinCommand(windows[name],"!ZPos 2 \"PrismGlass\\"+name+"\"");Thread.Sleep(100);
+     using(var bitmap=new Bitmap(244,196,System.Drawing.Imaging.PixelFormat.Format24bppRgb))using(var graphics=Graphics.FromImage(bitmap)){
+      graphics.CopyFromScreen(Bounds(windows[name]).Location,Point.Empty,bitmap.Size);
+      bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ambient-"+name+".png"),System.Drawing.Imaging.ImageFormat.Png);
+     }
+     MonitorDock.SendSkinCommand(windows[name],"!ZPos -2 \"PrismGlass\\"+name+"\"");
+    }
+    MonitorDock.SendSkinCommand(windows[name],"!CommandMeasure Ambient \"Cycle()\" \"PrismGlass\\"+name+"\"");
+    string state=Path.Combine(root,"LiquidDesktop","ambient-"+name+".txt");
+    for(int i=0;i<20&&!File.Exists(state);i++)Thread.Sleep(20);
+    Check(File.Exists(state)&&File.ReadAllText(state)=="2",name+" click cycles and saves only its local decoration state");
+   }
    var clock=windows["Clock"];MonitorDock.SendSkinCommand(clock,"!Move 24 120 \"PrismGlass\\Clock\"");widgets.Arrange(rails);Check(!Bounds(clock).IntersectsWith(left),"native card is moved outside the rail through the production bridge");
    MonitorDock.SendSkinCommand(clock,"!Move 24 120 \"PrismGlass\\Clock\"");widgets.Arrange(new List<Rectangle>{right});Check(Bounds(clock).X==24,"native position is allowed after the rail is hidden");
    MonitorDock.SendSkinCommand(clock,"!Move 340 220 \"PrismGlass\\Clock\"");var before=Bounds(clock);MonitorDock.SendSkinCommand(clock,"!Refresh \"PrismGlass\\Clock\"");Thread.Sleep(200);widgets.Sync(DesktopWidgets.Names,true);Check(Bounds(clock)==before&&IsWindowVisible(clock),"refresh preserves the saved position and restores the selected card");
    widgets.Sync(new[]{"Calendar"},true);Check(!IsWindowVisible(clock)&&IsWindowVisible(windows["Calendar"])&&Bounds(clock)==before,"removing a card preserves its native window and position");
    Check(!widgets.Owns(Path.Combine(skins,"Dock","Main.ini"))&&widgets.Owns(Path.Combine(skins,"Calendar","Main.ini")),"renderer ownership includes only selected widget paths");
    widgets.Sync(new[]{"Clock"},true);Check(Bounds(clock)==before,"re-adding a card restores its existing placement");
+   using(var cover=new Form{StartPosition=FormStartPosition.Manual,Bounds=before,ShowInTaskbar=false}){
+    cover.Show();Application.DoEvents();Check(widgets.Sync(new[]{"Clock"},true,new[]{"Clock"},b=>b.IntersectsWith(cover.Bounds))&&!IsWindowVisible(clock),"actual overlap hides the selected Rainmeter card and invalidates glass geometry");
+    Check(!widgets.Sync(new[]{"Clock"},true,new[]{"Clock"},b=>b.IntersectsWith(cover.Bounds)),"unchanged hidden card does not rebuild glass geometry");
+    cover.Location=new Point(before.Right+20,before.Top);Check(widgets.Sync(new[]{"Clock"},true,new[]{"Clock"},b=>b.IntersectsWith(cover.Bounds))&&IsWindowVisible(clock),"moving the real covering window restores card and geometry");
+    cover.Bounds=before;widgets.Sync(new[]{"Clock"},true,new string[0],b=>b.IntersectsWith(cover.Bounds));Check(IsWindowVisible(clock),"disabling occlusion keeps the covered native card visible");
+    widgets.Sync(new[]{"Clock"},true,new string[0],b=>false,b=>false);Check(!IsWindowVisible(clock),"a disabled card monitor wins even when occlusion is off");
+   }
    widgets.Sync(new[]{"Clock"},false);Check(!IsWindowVisible(clock),"disabling the desktop hides independent cards");widgets.Sync(new[]{"Clock"},true);
   }
   Check(Array.TrueForAll(DesktopWidgets.Names,n=>!IsWindowVisible(windows[n])),"disposing the desktop leaves no visible widget behind");

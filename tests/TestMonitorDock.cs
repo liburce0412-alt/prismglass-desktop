@@ -60,7 +60,20 @@ internal static class TestMonitorDock {
  static int passed;static string log;
  static void Check(bool value,string label){if(!value)throw new Exception(label);passed++;Console.WriteLine("PASS "+label);}
  static string[] Commands(){return File.Exists(log)?File.ReadAllLines(log):new string[0];}
- static void Expire(MonitorDock dock){typeof(MonitorDock).GetField("nextAttempt",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(dock,DateTime.MinValue);}
+ static void Expire(MonitorDock dock){typeof(MonitorDock).GetField("nextAttempt",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(dock,DateTime.MinValue);typeof(MonitorDock).GetField("catalogReady",BindingFlags.Static|BindingFlags.NonPublic).SetValue(null,DateTime.MinValue);}
+ static void CheckSharedRefresh(string fixture,MonitorRecord monitor){
+  using(var primary=new MonitorDock(fixture,"primary"))using(var secondary=new MonitorDock(fixture,"monitor-2")){
+   var preferences=new MonitorPreferences{dockOffset=31};primary.Configure(monitor,preferences,40);
+   typeof(MonitorDock).GetField("nextAttempt",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(primary,DateTime.UtcNow.AddMinutes(1));
+   int before=Commands().Length;secondary.Configure(monitor,preferences,40);primary.Configure(monitor,preferences,40);
+   Check(Commands().Length==before+1&&Commands()[before]=="!RefreshApp","all monitor updates wait until the delayed global skin refresh finishes");
+   Expire(secondary);primary.Configure(monitor,preferences,40);
+   string restored=Commands()[Commands().Length-1].Replace("\"","");
+   Check(Commands().Length==before+2&&restored.Contains("[!SetVariable DockIconSize 40 PrismGlass\\Dock]")&&restored.Contains("[!SetVariable DockOffset 31 PrismGlass\\Dock]"),"a secondary catalog refresh reapplies primary layout despite its unchanged geometry and retry deadline");
+   Check(restored.Contains("[!SetVariable DockPixelScale "+MonitorDock.PixelScale(monitor.Screen.WorkingArea).ToString(System.Globalization.CultureInfo.InvariantCulture)+" PrismGlass\\Dock]"),"primary DPI is explicit instead of inferred from stale layout files");
+   primary.Configure(monitor,preferences,40);Check(Commands().Length==before+2,"the shared refresh is consumed once per monitor");
+  }
+ }
  [STAThread] static int Main(string[] args){
   if(args.Length==2&&args[0]=="--native"){try{return CheckRainmeterDelivery(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex.GetType().FullName+": "+ex.Message);return 1;}}
   if(args.Length>0){File.AppendAllText(Environment.GetEnvironmentVariable("PRISMGLASS_DOCK_TEST_LOG"),String.Join(" ",args)+Environment.NewLine);return 0;}
@@ -92,7 +105,7 @@ internal static class TestMonitorDock {
    preferences.enabled=true;dock.Configure(monitor,preferences,48);Check(Commands().Length==5&&Commands()[4].StartsWith("[!ActivateConfig"),"reenabling activates without rescanning all skins");
    dock.Dispose();dock=null;Check(!Directory.Exists(Path.Combine(fixture,"Dock-monitor-1")),"owned generated skin is removed on dispose");
    dock=new MonitorDock(fixture,"primary");int beforeClose=Commands().Length;dock.Dispose();dock.Dispose();dock=null;Check(Commands().Length==beforeClose+1&&Commands()[beforeClose]=="!DeactivateConfig PrismGlass\\Dock","primary Dock exits once with its renderer instead of leaving a legacy bar");Check(File.Exists(Path.Combine(fixture,"Dock","Main.ini")),"disposing primary Dock retains its reusable current skin");
-   CheckCommandDelivery();Console.WriteLine("Completed "+passed+" MonitorDock activation and command checks; installed Rainmeter was never called.");return 0;
+   CheckSharedRefresh(fixture,monitor);CheckCommandDelivery();Console.WriteLine("Completed "+passed+" MonitorDock activation and command checks; installed Rainmeter was never called.");return 0;
   }catch(Exception ex){Console.Error.WriteLine(ex);return 1;}finally{if(dock!=null)dock.Dispose();Environment.SetEnvironmentVariable("PRISMGLASS_DOCK_TEST_LOG",null);if(Directory.Exists(fixture)){Directory.Delete(fixture,true);if(Directory.Exists(fixture))throw new IOException("Fixture cleanup failed");}}
  }
 }

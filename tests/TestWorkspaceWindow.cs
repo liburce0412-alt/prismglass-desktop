@@ -11,7 +11,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 internal static class TestWorkspaceWindow {
  const BindingFlags Instance=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
- static Assembly assembly;static Form runner,window;static WebView2 view;static object library;static string root,log;static int checks;static bool recovery;
+ static Assembly assembly;static Form runner,window;static WebView2 view;static object library;static string root,log;static int checks,wallpaperWrites;static bool recovery,wallpaper;
  [DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(IntPtr context);
  [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")]static extern IntPtr GetWindowLongPtr(IntPtr window,int index);
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
@@ -52,6 +52,30 @@ internal static class TestWorkspaceWindow {
   File.AppendAllText(log,"Completed "+checks+" native desktop alignment checks."+Environment.NewLine);
  }
  static async Task UntilScript(string expression,string name){for(int i=0;i<250;i++){if(window.IsDisposed)break;if(await view.CoreWebView2.ExecuteScriptAsync(expression)=="true"){Check(true,name);return;}await Task.Delay(40);}Check(false,name);}
+ static long WriteWallpaper(Color color){
+  string target=Path.Combine(root,"wallpaper.png"),pending=Path.Combine(root,"wallpaper.pending.png");
+  using(var bitmap=new Bitmap(96,64))using(var graphics=Graphics.FromImage(bitmap)){graphics.Clear(color);bitmap.Save(pending,System.Drawing.Imaging.ImageFormat.Png);}
+  // Distinct version stamps avoid filesystem timestamp granularity during the rapid pair.
+  File.SetLastWriteTimeUtc(pending,DateTime.UtcNow.AddSeconds(++wallpaperWrites));if(File.Exists(target))File.Replace(pending,target,null);else File.Move(pending,target);
+  return File.GetLastWriteTimeUtc(target).Ticks;
+ }
+ static async Task WallpaperChecks(){
+  Check(Path.GetFullPath(view.CoreWebView2.Environment.UserDataFolder).StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase),"wallpaper probe uses a disposable isolated browser profile");
+  string settingsFile=Path.Combine(root,"desktop-settings.json"),settingsBefore=File.Exists(settingsFile)?File.ReadAllText(settingsFile):null;Rectangle before=window.Bounds;
+  await view.CoreWebView2.ExecuteScriptAsync("window.wallpaperDocument=document;window.wallpaperLayouts=[];chrome.webview.addEventListener('message',e=>{if(e.data.type==='layout')wallpaperLayouts.push(String(e.data.wallpaper));});window.wallpaperPixel=()=>{const g=document.querySelector('#glass').getContext('webgl'),p=new Uint8Array(4);if(!g||g.isContextLost())return [0,0,0,0];g.readPixels(Math.floor(g.drawingBufferWidth/2),Math.floor(g.drawingBufferHeight/2),1,1,g.RGBA,g.UNSIGNED_BYTE,p);return Array.from(p);};window.wallpaperColor=(channel)=>{const p=wallpaperPixel();return p[3]>128&&p[channel]>p[(channel+1)%3]+35&&p[channel]>p[(channel+2)%3]+35;};");
+  await UntilScript("wallpaperColor(2)","production glass initially samples the fixture blue wallpaper");
+  long red=WriteWallpaper(Color.FromArgb(208,36,48));
+  await UntilScript("wallpaperLayouts.indexOf('"+red+"')>=0","an unchanged open settings window receives the replacement wallpaper layout version");
+  await UntilScript("wallpaperColor(0)","production WebGL texture changes to the red wallpaper without movement or settings changes");
+  WriteWallpaper(Color.FromArgb(216,176,24));await Task.Delay(40);long green=WriteWallpaper(Color.FromArgb(28,190,62));
+  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='"+green+"'&&wallpaperColor(1)","two rapid replacements settle on the final green wallpaper version and texture");
+  await Task.Delay(1100);
+  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='"+green+"'&&wallpaperColor(1)&&document===wallpaperDocument","the final texture persists without reloading the document");
+  Check(window.Bounds==before&&(File.Exists(settingsFile)?File.ReadAllText(settingsFile):null)==settingsBefore,"wallpaper refresh leaves native bounds and settings bytes unchanged");
+  File.AppendAllText(log,"Wallpaper evidence: "+await view.CoreWebView2.ExecuteScriptAsync("JSON.stringify({versions:wallpaperLayouts,pixel:wallpaperPixel()})")+Environment.NewLine);
+  using(var image=File.Create(Path.Combine(Path.GetDirectoryName(log),"wallpaper-refreshed.png")))await view.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
+  File.AppendAllText(log,"Completed "+checks+" focused native wallpaper checks; only disposable fixture images were replaced."+Environment.NewLine);
+ }
  static async Task RecoveryChecks(){
   Check(Path.GetFullPath(view.CoreWebView2.Environment.UserDataFolder).StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase),"GPU fault probe owns a new isolated browser profile");
   await view.CoreWebView2.ExecuteScriptAsync("window.originalDocument=document;document.querySelector('.apps-search').value='仅测试草稿';window.lost=0;window.restored=0;window.gl=document.querySelector('#glass').getContext('webgl');window.extension=gl.getExtension('WEBGL_lose_context');document.querySelector('#glass').addEventListener('webglcontextlost',()=>lost++);document.querySelector('#glass').addEventListener('webglcontextrestored',()=>restored++);window.hasPixels=()=>{if(gl.isContextLost())return false;const p=new Uint8Array(4);gl.readPixels(Math.floor(gl.drawingBufferWidth/2),Math.floor(gl.drawingBufferHeight/2),1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return p[0]+p[1]+p[2]>0;}");
@@ -73,16 +97,18 @@ internal static class TestWorkspaceWindow {
   Directory.CreateDirectory(root);
   string source=Path.GetDirectoryName(assembly.Location);
   foreach(var file in Directory.GetFiles(source)){string extension=Path.GetExtension(file).ToLowerInvariant();if(extension==".html"||extension==".js"||extension==".css"||extension==".svg"||Path.GetFileName(file)=="wallpaper.png"||Path.GetFileName(file)=="app-center-pinyin.txt")File.Copy(file,Path.Combine(root,Path.GetFileName(file)));}
+  if(wallpaper)WriteWallpaper(Color.FromArgb(24,54,196));
   string libraryFixture="{\"version\":1,\"revision\":1,\"entries\":[],\"categories\":[{\"id\":\"uncategorized\",\"name\":\"验收应用\",\"order\":0}],\"folders\":[],\"excluded\":[]}";File.WriteAllText(Path.Combine(root,"app-library.json"),libraryFixture);
   File.WriteAllText(Path.Combine(root,"skin-path.txt"),Path.Combine(root,"skins","PrismGlass"));
   library=Create("AppLibrary",root);
   // Keep the real snapshot code but detach discovery watchers from the user's application library.
   foreach(IDisposable watcher in (IEnumerable)Field(library,"watchers"))watcher.Dispose();((IList)Field(library,"watchers")).Clear();SetField(library,"dirty",false);SetField(library,"scanned",DateTime.UtcNow);
-  window=(Form)Create("WorkspaceWindow",root,library,Create("DesktopPreferences",root));window.Opacity=recovery?0:1;window.ShowInTaskbar=false;
+  window=(Form)Create("WorkspaceWindow",root,library,Create("DesktopPreferences",root));window.Opacity=recovery||wallpaper?0:1;window.ShowInTaskbar=false;
   view=(WebView2)Field(window,"view");
   Open("settings");
   await Until(()=>!window.IsDisposed&&(bool)Field(window,"ready"),"real WorkspaceWindow completes WebView2 initialization",30000);
   if(recovery){await RecoveryChecks();return;}
+  if(wallpaper){await WallpaperChecks();return;}
   Open("components");await UntilScript("document.querySelector('[data-page=components]').getAttribute('aria-current')==='page'&&document.querySelectorAll('[data-widget]').length===9","management deep link opens desktop components in the real settings window");
   Check(window.TopMost&&(GetWindowLongPtr(window.Handle,-20).ToInt64()&8)!=0,"settings window has the actual topmost HWND style");
   Check(view.CoreWebView2.Settings.IsNonClientRegionSupportEnabled&&await view.CoreWebView2.ExecuteScriptAsync("getComputedStyle(document.querySelector('.workspace-header')).getPropertyValue('app-region')==='drag'&&getComputedStyle(document.querySelector('#close-workspace')).getPropertyValue('app-region')==='no-drag'&&getComputedStyle(document.querySelector('.workspace-header nav')).getPropertyValue('app-region')==='no-drag'")=="true","native title dragging is enabled while navigation and close remain clickable");
@@ -130,7 +156,7 @@ internal static class TestWorkspaceWindow {
   File.AppendAllText(log,"Completed "+checks+" native workspace checks."+Environment.NewLine);
  }
  [STAThread]static void Main(string[] args){
-  bool geometry=args.Length==4&&args[3]=="--geometry";recovery=args.Length==4&&args[3]=="--recovery";if(args.Length!=3&&!geometry&&!recovery)throw new ArgumentException("Pass the candidate assembly, a new fixture directory, and the result log.");
+  bool geometry=args.Length==4&&args[3]=="--geometry";recovery=args.Length==4&&args[3]=="--recovery";wallpaper=args.Length==4&&args[3]=="--wallpaper";if(args.Length!=3&&!geometry&&!recovery&&!wallpaper)throw new ArgumentException("Pass the candidate assembly, a new fixture directory, and the result log.");
   root=Path.GetFullPath(args[1]);log=Path.GetFullPath(args[2]);if(Directory.Exists(root))throw new ArgumentException("Use a new disposable fixture directory.");File.WriteAllText(log,"");
   SetProcessDpiAwarenessContext(new IntPtr(-4));Application.EnableVisualStyles();assembly=Assembly.LoadFrom(Path.GetFullPath(args[0]));var foreground=GetForegroundWindow();
   if(geometry){try{GeometryChecks();}catch(Exception error){File.AppendAllText(log,error.GetType().Name+": "+error.Message+Environment.NewLine+error.StackTrace);Environment.ExitCode=1;}return;}

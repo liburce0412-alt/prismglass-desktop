@@ -15,6 +15,8 @@ internal sealed class TopIsland : Form {
  public event Action Ready;public event Action<string> Failed;
  public event Action CompanionStopRequested;
  public bool IsPainted {get{return painted;}}
+ readonly ComponentPosition position;Rectangle defaultBounds;
+ public bool IsRepositioning {get{return position!=null&&position.Dragging;}}
  public Rectangle OcclusionBounds {get{int width=mode=="bar"?Width-8:(int)Math.Min(Width-8,272*scale);return new Rectangle(Left+(Width-width)/2,Top+12,width,(int)((mode=="bar"?42:48)*scale));}}
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr h,uint command);
@@ -27,7 +29,8 @@ internal sealed class TopIsland : Form {
  public TopIsland(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
  public TopIsland(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();outlineKey="";Publish();});
-  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;Place();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);SetInitialShape();
+  root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;
+  position=new ComponentPosition(root,preview?"top-preview":"top",()=>Bounds,next=>{Bounds=next;layout="";Publish();},message=>Send(new{type="feedback",message=message}));Place();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);SetInitialShape();
   Shown+=async(sender,args)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"island-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(environment);SyncPixelScale();
    var settings=view.CoreWebView2.Settings;settings.IsZoomControlEnabled=false;settings.AreDefaultContextMenusEnabled=false;settings.AreDevToolsEnabled=false;settings.IsStatusBarEnabled=false;
@@ -38,10 +41,10 @@ internal sealed class TopIsland : Form {
    view.CoreWebView2.ProcessFailed+=(s,e)=>{if(!WebViewRecovery.KeepAlive(root,e.ProcessFailedKind))Fail("WebView2: "+e.ProcessFailedKind);};view.Source=new Uri("https://prism-island.local/island.html");timer.Interval=1000;timer.Tick+=(s,e)=>Tick();timer.Start();
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready)Tick(true);};
-  Deactivate+=(s,e)=>{if(!dragging)Send(new{type="dismiss"});};
-  FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();view.Dispose();};
+  Deactivate+=(s,e)=>{if(!dragging&&!IsRepositioning)Send(new{type="dismiss"});};
+  FormClosed+=(s,e)=>{closed=true;position.Dispose();timer.Stop();timer.Dispose();view.Dispose();};
  }
- void Place(){scale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));Bounds=new Rectangle(screen.Left+24,screen.Top+2,Math.Max(320,screen.Width-48),Math.Min(screen.Height-90,(int)Math.Ceiling(328*scale)));layout="";}
+ void Place(){scale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));defaultBounds=new Rectangle(screen.Left+24,screen.Top+2,Math.Max(320,screen.Width-48),Math.Min(screen.Height-90,(int)Math.Ceiling(328*scale)));int width=mode=="bar"?defaultBounds.Width-8:(int)Math.Min(defaultBounds.Width-8,(mode=="open"?540:272)*scale);position.Arrange(defaultBounds,screen,new Point(defaultBounds.Width/2,12),new Rectangle((defaultBounds.Width-width)/2,12,width,(int)((mode=="open"?312:mode=="bar"?42:48)*scale)));layout="";}
  void SyncPixelScale(){pixels.Sync();}
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
   if(closed)return;float nextScale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));if(bounds!=screen||Math.Abs(nextScale-scale)>.01){screen=bounds;Place();outlineKey="";}SyncPixelScale();
@@ -52,17 +55,18 @@ internal sealed class TopIsland : Form {
  void Send(object value){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  public void ApplyPreferences(object snapshot){pendingPreferences=snapshot;Send(new{type="preferences",snapshot=snapshot});}
  public void ApplyCompanionState(object snapshot){pendingCompanion=snapshot;string next=json.Serialize(snapshot);if(!ready||next==companionState)return;companionState=next;Send(new{type="companion",state=snapshot});}
- public void DismissTransient(){if(!dragging)Send(new{type="dismiss"});}
+ public void DismissTransient(){if(!dragging&&!IsRepositioning)Send(new{type="dismiss"});}
  string Diagnostic(string name){return Path.Combine(root,instance=="primary"?name:Path.GetFileNameWithoutExtension(name)+"-"+instance+Path.GetExtension(name));}
  void Fail(string error){if(closed)return;try{File.WriteAllText(Path.Combine(root,preview?"island-preview-error.txt":"island-error.txt"),error);}catch{}var handler=Failed;if(handler!=null)handler(error);Close();}
  void Receive(string text){try{
+  if(position.Receive(text))return;
   if(text=="ready"){ready=true;Place();Publish();if(pendingPreferences!=null)ApplyPreferences(pendingPreferences);if(pendingCompanion!=null)ApplyCompanionState(pendingCompanion);Tick(true);}
   else if(text=="painted"&&!painted){painted=true;NotifyReady();}
   else if(text.StartsWith("outline:",StringComparison.Ordinal)){
    var outlines=json.Deserialize<float[][][]>(text.Substring(8));if(outlines.Length<1||outlines.Length>2)return;
    using(var path=new GraphicsPath(FillMode.Winding)){
     foreach(var outline in outlines){if(outline.Length<4)return;var points=new PointF[outline.Length];for(int i=0;i<points.Length;i++){if(outline[i].Length!=2)return;float x=outline[i][0],y=outline[i][1];if(float.IsNaN(x)||float.IsNaN(y)||float.IsInfinity(x)||float.IsInfinity(y)||Math.Abs(x)>Width+100||Math.Abs(y)>Height+100)return;points[i]=new PointF((float)(Math.Round(x*4)/4),(float)(Math.Round(y*4)/4));}path.StartFigure();path.AddPolygon(points);}
-    string key=json.Serialize(outlines);if(key!=outlineKey){ReplaceRegion(GlassWindow.Clip(path,ClientRectangle));outlineKey=key;regionUpdates++;}outlineReady=true;NotifyReady();
+    string key=json.Serialize(outlines);if(key!=outlineKey){ReplaceRegion(GlassWindow.Clip(path,ClientRectangle));outlineKey=key;regionUpdates++;}position.Arrange(defaultBounds,screen,new Point(defaultBounds.Width/2,12),Rectangle.Ceiling(path.GetBounds()));outlineReady=true;NotifyReady();
    }
   }
   else if(text=="drag:true")dragging=true;
@@ -86,8 +90,8 @@ internal sealed class TopIsland : Form {
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
  async void RefreshWallpaper(){
   if(refreshingWallpaper)return;refreshingWallpaper=true;Send(new{type="wallpaper-refresh",busy=true,failed=false,message="正在更新玻璃…"});
-  try{await WallpaperRefresh.Run(root);Publish();Send(new{type="wallpaper-refresh",busy=false,failed=false,message="壁纸玻璃已更新"});}
-  catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"wallpaper-refresh-error.txt"),ex.ToString());}catch{}Send(new{type="wallpaper-refresh",busy=false,failed=true,message="更新失败，请重试或检查壁纸文件"});}
+  try{await System.Threading.Tasks.Task.Yield();if(closed)return;string result=await WallpaperRefresh.Run(root,WallpaperCapture.CaptureDynamic);Publish();Send(new{type="wallpaper-refresh",busy=false,failed=false,message=result});}
+  catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"wallpaper-refresh-error.txt"),ex.ToString());}catch{}string reason=ex.Message.Replace('\r',' ').Replace('\n',' ');if(reason.Length>160)reason=reason.Substring(0,160)+"…";Send(new{type="wallpaper-refresh",busy=false,failed=true,message="更新失败："+reason});}
   finally{refreshingWallpaper=false;}
  }
  public async void OpenTray(){if(preview||closed)return;bool opened=await SystemTray.OpenAsync();Send(new{type="feedback",message=opened?"系统托盘已打开":"系统任务栏已显示，可点击隐藏图标箭头"});}

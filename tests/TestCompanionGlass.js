@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../src/LiquidDesktop/companion-web/companion-glass.js'), 'utf8');
+const materialSource = fs.readFileSync(path.join(__dirname, '../src/LiquidDesktop/glass-materials.js'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '../src/LiquidDesktop/companion-web/companion.css'), 'utf8');
 let groups = 0;
 
@@ -38,6 +39,7 @@ function fakeGL(options) {
     uniform1f(location, a) { uniforms.get(location.program)[location.name] = a; },
     uniform1i(location, a) { uniforms.get(location.program)[location.name] = a; },
     uniform2f(location, a, b) { uniforms.get(location.program)[location.name] = [a, b]; },
+    uniform4f(location, a, b, c, d) { uniforms.get(location.program)[location.name] = [a, b, c, d]; },
     bindBuffer() {}, bufferData() {}, enableVertexAttribArray() {}, vertexAttribPointer() {}, activeTexture() {},
     bindTexture(type, value) { currentTexture = value; }, texParameteri() {},
     texImage2D(...args) { allocations.push({ texture: currentTexture, args }); },
@@ -55,7 +57,7 @@ function fixture(options = {}) {
   const measurements = { boundsReads: 0, styleReads: 0, hiddenWrites: 0, opticsWrites: 0 };
   let nextFrame = 1, time = 0, contextCalls = 0, contextOptions, performanceCalls = 0;
   const viewport = { width: 1024, height: 768 };
-  const body = Object.assign(target(), { dataset: { theme: 'Sky', reduced: options.reduced ? 'true' : 'false' }, firstChild: null, children: [], insertBefore(node) { this.children.unshift(node); node.parentNode = this; }, });
+  const body = Object.assign(target(), { style: {values:{},setProperty(key,value){this.values[key]=value;}}, dataset: { theme: 'Sky', reduced: options.reduced ? 'true' : 'false' }, firstChild: null, children: [], insertBefore(node) { this.children.unshift(node); node.parentNode = this; }, });
   let optics; Object.defineProperty(body.dataset, 'optics', { get() { return optics; }, set(value) { measurements.opticsWrites++; optics = value; } });
   const main = Object.assign(target(), { id: 'main-content', bounds: rect(20, 80, 984, 490), getBoundingClientRect() { return this.bounds; }, contains(node) { return node.inMain; } });
   function region(id, bounds, inMain = true) {
@@ -83,6 +85,7 @@ function fixture(options = {}) {
   }
   class MutationObserver { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } }
   class ResizeObserver { constructor(fn) { this.fn = fn; this.nodes = []; resizeObservers.push(this); } observe(node) { this.nodes.push(node); } disconnect() { this.disconnected = true; } }
+  if(!options.missingMaterials)vm.runInNewContext(materialSource,{window},{filename:'glass-materials.js'});
   vm.runInNewContext(source, { window, document, URLSearchParams, URL, Image, MutationObserver, ResizeObserver, Float32Array, Uint8Array, performance: { now: () => time + (performanceCalls++ % 2) * (options.frameCost || 0) }, requestAnimationFrame(fn) { const id = nextFrame++; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); } }, { filename: 'companion-glass.js' });
   return { gl, images, body, document, window, media, canvas, nodes, main, viewport, observers, resizeObservers, measurements, api: window.PrismGlassOptics, pending: () => frames.size, contextCalls: () => contextCalls, contextOptions: () => contextOptions, step(ms) { time = ms; const batch = [...frames.values()]; frames.clear(); batch.forEach(fn => fn(ms)); }, mutation() { observers[0].fn(); } };
 }
@@ -116,9 +119,9 @@ test('one shared scene, three priority regions, real clipped bounds and bounded 
   assert.equal(f.gl.creates.filter(x => x.kind === 'Framebuffer').length, 1);
 });
 
-test('30 fps cap survives repeated active updates and theme uses same scene path', () => {
+test('60 fps cap survives repeated active updates and theme uses same scene path', () => {
   const f = fixture(); f.api.setActive(true); f.step(0);
-  f.api.setActive(true); f.step(10); f.step(20); assert.equal(f.api.inspect().frames, 1);
+  f.api.setActive(true); f.step(5); f.step(10); assert.equal(f.api.inspect().frames, 1);
   f.step(34); assert.equal(f.api.inspect().frames, 2);
   f.body.dataset.theme = 'Astro'; f.mutation(); f.step(68);
   const draws = f.gl.draws.slice(-5); assert.equal(draws[0].uniforms.night, 1); assert.equal(draws[1].texture, draws[2].texture);
@@ -139,8 +142,8 @@ test('stable animation keeps every optical pass without repeated DOM writes or l
   const f = fixture(); f.api.setActive(true); f.step(0); const initial = { ...f.measurements }, allocations = f.gl.allocations.length;
   for (let i = 1; i <= 60; i++) f.step(i * 34);
   assert.deepEqual(f.measurements, initial, 'unchanged frames must reuse layout and ready/visible state');
-  assert.equal(f.api.inspect().frames, 61); assert.equal(f.api.inspect().scenePasses, 61); assert.equal(f.gl.draws.length, 305); assert.equal(f.gl.allocations.length, allocations);
-  assert.ok(f.gl.draws.at(-5).uniforms.time > f.gl.draws[0].uniforms.time, 'scene drift keeps advancing');
+  assert.equal(f.api.inspect().frames, 61); assert.equal(f.api.inspect().scenePasses, 1); assert.equal(f.gl.draws.length, 245); assert.equal(f.gl.allocations.length, allocations);
+  assert.ok(f.gl.draws.at(-2).uniforms.time > f.gl.draws[1].uniforms.time, 'glass lighting advances while the background stays cached');
   f.document.emit('pointerdown', { clientX: 730, clientY: 215 }); f.step(2074); assert.equal(f.gl.draws.at(-2).uniforms.press, 1, 'pointer response still updates without remeasuring layout'); assert.deepEqual(f.measurements, initial);
 });
 
@@ -152,14 +155,14 @@ test('resize, scrolling, region resize and foreground restoration refresh cached
   music.bounds = rect(200, 170, 500, 290); f.resizeObservers[0].fn(); f.step(102); assert.deepEqual(f.gl.draws.at(-2).uniforms.halfSize, [250, 145]);
   f.document.hidden = true; f.document.emit('visibilitychange'); f.viewport.width = 1200; f.viewport.height = 700;
   const beforeResume = f.measurements.boundsReads; f.document.hidden = false; f.document.emit('visibilitychange'); f.step(1000);
-  assert.ok(f.measurements.boundsReads > beforeResume); assert.deepEqual(f.gl.draws.at(-5).uniforms.resolution, [1200, 700]); assert.equal(f.canvas.hidden, false); assert.equal(f.body.dataset.optics, 'ready'); assert.equal(f.contextCalls(), 1);
+  assert.ok(f.measurements.boundsReads > beforeResume); assert.deepEqual(f.gl.draws.at(-4).uniforms.resolution, [1200, 700]); assert.equal(f.canvas.hidden, false); assert.equal(f.body.dataset.optics, 'ready'); assert.equal(f.contextCalls(), 1);
 });
 
 test('slow-frame quality reduction reallocates and remeasures once, then keeps cached geometry', () => {
   const f = fixture({ frameCost: 31 }); f.api.setActive(true); f.step(0); const originalWidth = f.canvas.width, originalSceneWidth = f.api.inspect().sceneWidth, allocations = f.gl.allocations.length;
   for (let i = 1; i <= 13; i++) f.step(i * 34);
   assert.equal(f.canvas.width, Math.round(originalWidth * .75)); assert.ok(f.api.inspect().sceneWidth < originalSceneWidth); assert.equal(f.gl.allocations.length, allocations + 1); assert.equal(f.api.inspect().regions, 3);
-  const stable = { ...f.measurements }; f.step(476); f.step(510); assert.deepEqual(f.measurements, stable); assert.equal(f.gl.draws.length, 80); assert.equal(f.contextCalls(), 1);
+  const stable = { ...f.measurements }; f.step(476); f.step(510); assert.deepEqual(f.measurements, stable); assert.equal(f.gl.draws.length, 66); assert.equal(f.contextCalls(), 1);
 });
 
 test('hidden, reduced, pagehide and authentication stops preserve DOM and resume without extra context', () => {
@@ -197,5 +200,69 @@ test('destroy releases owned resources, observers and listeners without touching
   assert.equal(f.document.listenerCount(), 0); assert.equal(f.window.listenerCount(), 0); assert.equal(f.media.listenerCount(), 0); assert.equal(f.main.listenerCount(), 0); assert.equal(f.canvas.listenerCount(), 0);
   assert.equal(f.observers[0].disconnected, true); assert.equal(f.resizeObservers[0].disconnected, true);
   assert.equal(f.gl.creates.length, f.gl.deletes.length);
+});
+test('touch and visible ambience keep 60 Hz',()=>{
+  const f=fixture();f.api.setActive(true);f.step(0);f.document.emit('pointerdown',{clientX:730,clientY:215});f.step(17);f.step(34);
+  assert.equal(f.api.inspect().frames,3);assert.equal(f.api.inspect().targetFps,60);assert.equal(f.api.inspect().scenePasses,1);
+  f.document.emit('pointerup',{clientX:730,clientY:215});f.step(340);assert.equal(f.api.inspect().targetFps,60);
+});
+test('all ten materials use shared resolution without new contexts or scene passes',()=>{
+  const f=fixture();f.api.setActive(true);f.step(0);let time=34;
+  assert.equal(Object.keys(f.window.PrismGlassMaterials).length,10);
+  for(const key of Object.keys(f.window.PrismGlassMaterials)){
+    f.api.setStyle(key);f.step(time);time+=34;const values=f.gl.draws.at(-1).uniforms,p=f.window.PrismGlassMaterials.resolve(key);
+    assert.equal(values.materialOn,p.legacy?0:1);assert.equal(f.body.dataset.glassStyle,key);
+    if(p.legacy){assert.equal(f.body.dataset.materialCustom,'false');continue;}
+    assert.equal(values.materialBevel,p.bevel);assert.equal(values.materialIor,p.ior);assert.equal(values.materialBlur,p.blur);assert.equal(values.materialDiffusion,p.diffusion);assert.equal(values.materialGrain,p.grain);assert.deepEqual(values.materialTint,Array.from(p.tint));assert.equal(values.materialGlasswork,p.model==='glasswork'?1:0);
+    for(const field of ['brightness','contrast','edge','power','opacity','adaptive','density','tintMin','tintMax'])assert.equal(values['material'+field[0].toUpperCase()+field.slice(1)],p[field],field);
+  }
+  assert.equal(f.contextCalls(),1);assert.equal(f.api.inspect().scenePasses,1);
+});
+test('empty unknown and inherited IDs restore the original material path',()=>{
+  const f=fixture();f.api.setActive(true);f.step(0);f.api.setStyle('G');f.step(34);let time=68;
+  for(const key of ['', 'constructor', 'K', null, {toString(){return 'H';}}]){f.api.setStyle(key);f.step(time);time+=34;const values=f.gl.draws.at(-1).uniforms;assert.equal(values.materialOn,0);assert.equal(values.materialGrain,0);assert.equal(values.materialGlasswork,0);assert.equal(f.body.dataset.materialCustom,'false');assert.deepEqual(values.materialTint,[0,0,0,0]);}
+});
+test('changing overrides of the selected style updates immediately and switching keeps independent values',()=>{
+  const f=fixture();f.api.setActive(true);let time=0;
+  function apply(key,map){f.api.setStyle(key,map);f.step(time);time+=34;return f.gl.draws.at(-1).uniforms;}
+  const overrides={G:{blur:9,opacity:.8},H:{blur:3,tintR:.5},J:{brightness:1.7,saturation:2.28,edge:1.9,power:3.5,density:.4,tintMin:.1,tintMax:.4,adaptive:.6}};
+  assert.equal(apply('G',overrides).materialBlur,9);overrides.G.blur=4;assert.equal(apply('G',overrides).materialBlur,4);
+  assert.equal(apply('H',overrides).materialBlur,3);assert.equal(apply('G',overrides).materialBlur,4);
+  const j=apply('J',overrides);assert.equal(j.materialGlasswork,1);assert.equal(j.materialBrightness,1.7);assert.equal(j.materialSaturation,2.28);assert.equal(j.materialEdge,1.9);assert.equal(j.materialPower,3.5);assert.equal(j.materialDensity,.4);assert.equal(j.materialAdaptive,.6);assert.equal(j.materialTintMin,.1);assert.equal(j.materialTintMax,.4);
+  assert.equal(apply('G',{}).materialBlur,f.window.PrismGlassMaterials.G.blur);assert.equal(f.contextCalls(),1);assert.equal(f.api.inspect().scenePasses,1);
+});
+test('classic empty and explicit I stay original until I is edited and reset restores it',()=>{
+  const f=fixture();f.api.setActive(true);f.api.setStyle('I');f.step(0);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);
+  f.api.setStyle('I',{I:{blur:12}});f.step(34);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,1);assert.equal(f.gl.draws.at(-1).uniforms.materialBlur,12);
+  f.api.setStyle('',{I:{blur:6}});f.step(68);assert.equal(f.gl.draws.at(-1).uniforms.materialBlur,6);assert.equal(f.body.dataset.materialCustom,'true');
+  f.api.setStyle('I',{});f.step(102);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);assert.equal(f.body.dataset.materialCustom,'false');
+});
+test('saved custom material is independent of its base overrides and remains live editable',()=>{
+  const f=fixture(),id='user-'+'a'.repeat(32),presets=[{id,name:'My glass',baseStyle:'J',parameters:{blur:7,brightness:1.3}}];f.api.setActive(true);
+  f.api.setStyle(id,{J:{blur:25}},presets);f.step(0);assert.equal(f.body.dataset.glassStyle,id);assert.equal(f.gl.draws.at(-1).uniforms.materialBlur,7);assert.equal(f.gl.draws.at(-1).uniforms.materialGlasswork,1);
+  presets[0].parameters.blur=2;f.api.setStyle(id,{J:{blur:25}},presets);f.step(34);assert.equal(f.gl.draws.at(-1).uniforms.materialBlur,2);
+  f.api.setStyle(id,{},[]);f.step(68);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);assert.equal(f.body.dataset.materialCustom,'false');
+});
+test('material changes preserve Astro and pointer feedback',()=>{
+  const f=fixture();f.body.dataset.theme='Astro';f.api.setActive(true);f.api.setStyle('H');f.step(0);f.document.emit('pointerdown',{clientX:730,clientY:215});f.step(17);const values=f.gl.draws.at(-2).uniforms;
+  assert.equal(values.night,1);assert.equal(values.press,1);assert.equal(values.materialOn,1);assert.equal(f.api.inspect().targetFps,60);
+});
+test('reduced mode applies static material without waking the GPU',()=>{
+  const f=fixture({reduced:true});f.api.setStyle('G');f.api.setActive(true);assert.equal(f.contextCalls(),0);assert.equal(f.pending(),0);assert.equal(f.body.style.values['--material-blur'],'18px');assert.equal(f.body.dataset.glassStyle,'G');
+  f.api.setStyle('J',{J:{brightness:1.3,contrast:.8,opacity:0}});assert.equal(f.body.style.values['--material-blur'],'0px');assert.equal(f.body.style.values['--material-brightness'],'1');assert.equal(f.body.style.values['--material-edge'],'0');assert.equal(f.body.style.values['--material-inset'],'0');assert.equal(f.contextCalls(),0);
+});
+test('a missing material table safely retains the original renderer',()=>{
+  const f=fixture({missingMaterials:true});f.api.setStyle('A');f.api.setActive(true);f.step(0);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);assert.equal(f.body.dataset.optics,'ready');
+});
+test('frosted grain stays fixed in screen pixels and sampling keeps a single registered scene',()=>{
+  assert.match(source,/floor\(p\),vec2\(127\.1,311\.7\)/);assert.doesNotMatch(source,/floor\(p\s*\+\s*time/);
+  const f=fixture();f.api.setActive(true);f.api.setStyle('G');f.step(0);const allocations=f.gl.allocations.length;f.step(34);assert.equal(f.gl.allocations.length,allocations);assert.equal(f.api.inspect().scenePasses,1);
+});
+test('Glasswork uses its powered inward displacement and bounded adaptive tint in the registered scene',()=>{
+  assert.match(source,/pow\(1\.-t,materialPower\)\*materialRefraction\*\(materialIor-1\.\)\/\.46/);
+  assert.match(source,/bendR=inward\*\(1\.\+materialDispersion\);bendG=inward;bendB=inward\*\(1\.-materialDispersion\)/);
+  assert.match(source,/sampleSplit\(red\+x,green\+x,blue\+x\)/,'blur retains each dispersed channel instead of collapsing to green');
+  assert.match(source,/materialDensity>\.001/);assert.match(source,/abs\(a-b\)\*2\.4\+abs\(l-\(a\+b\)\*\.5\)\*1\.3/);
+  assert.doesNotMatch(source,/fetch\(|XMLHttpRequest|html2canvas|drawImage\(document/);
 });
 console.log(`Companion glass: ${groups} test groups passed.`);

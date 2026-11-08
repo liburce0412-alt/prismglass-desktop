@@ -32,3 +32,13 @@ body[data-glass-ready=true] #dock .rail-item,body[data-glass-ready=true] #shelf 
 body #shelf #triggers button[aria-expanded=true]:before{left:2px;top:24px;width:3px;height:18px;border-radius:2px}
 body #shelf #triggers [data-mode=quota]{display:block;padding:0}body #shelf #triggers [data-mode=quota] .quota-face{left:9px}body #shelf #triggers [data-mode=quota] .utility-icon{width:54px;height:54px;stroke-width:3}
 body.prism-reduced-motion *,body.prism-reduced-motion *::before,body.prism-reduced-motion *::after{transition-duration:0s!important;animation-duration:0s!important;scroll-behavior:auto!important}
+/* Press feedback stays on the controls; surface geometry belongs to the shared renderer. */
+:is(#details,#detail,#panel,.workspace-header) button:not(:disabled){transition:transform 120ms cubic-bezier(.2,.8,.2,1),background-color 150ms ease,box-shadow 150ms ease}
+:is(#details,#detail,#panel,.workspace-header) button:not(:disabled):active{transform:scale(.95);box-shadow:inset 0 1px 5px #06132425}
+:is(.motion-paused,.reduced-motion,.prism-reduced-motion) :is(#details,#detail,#panel,.workspace-header) button{transition:none!important;transform:none!important}
+@media(prefers-reduced-motion:reduce){:is(#details,#detail,#panel,.workspace-header) button{transition:none!important;transform:none!important}}
+/* The shared shader owns the outer contour. A second CSS plate leaves an offset
+   white stroke and exposes un-refracted wallpaper between the native and GPU edges. */
+body[data-glass-ready=true]{background:transparent!important}
+body[data-glass-ready=true] :is(#dock #rail,#dock #detail,#shelf #panel){background:transparent!important;border-color:transparent!important;box-shadow:none!important;backdrop-filter:none!important}
+body[data-glass-ready=true] #dock #bridge{background:transparent!important}

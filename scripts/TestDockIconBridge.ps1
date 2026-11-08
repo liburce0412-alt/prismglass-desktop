@@ -25,13 +25,27 @@ AlwaysOnTop=-2
  $main=$main.Replace('{{INSTALL_ROOT}}\LiquidDesktop\',$fixture+'\').Replace('ScriptFile=#@#Dock.lua','ScriptFile='+$repo+'\tests\TestDockIconBridge.lua')
  $main=$main.Replace('DockMonitorLeft=0','DockMonitorLeft=-16000').Replace('DockMonitorTop=0','DockMonitorTop=-16000').Replace('DockMonitorWidth=0','DockMonitorWidth=2560').Replace('DockMonitorHeight=0','DockMonitorHeight=1440').Replace('DockPixelScale=0','DockPixelScale=1').Replace('[!ZPos 1]','[!ZPos -2]')
  $main=$main.Replace('[Variables]',"[Variables]`r`nProductionScript=$repo\rainmeter\PrismGlass\@Resources\Dock.lua")
+ $main+="`r`n[HintObserver]`r`nMeasure=Script`r`nScriptFile=$fixture\HintObserver.lua`r`n"
+ @'
+function Update()
+ local meter=SKIN:GetMeter('DragHint')
+ if meter then
+  local file=io.open(SKIN:GetVariable('LiquidRoot')..'hint.txt','w')
+  if file then file:write(meter:GetOption('Text'));file:close() end
+  local hit=SKIN:GetMeter('Hit1')
+  local tooltip=io.open(SKIN:GetVariable('LiquidRoot')..'tooltip.txt','w')
+  if tooltip then tooltip:write(hit:GetOption('ToolTipText'));tooltip:close() end
+ end
+end
+'@ | Set-Content -LiteralPath (Join-Path $fixture 'HintObserver.lua') -Encoding unicode
  $main | Set-Content -LiteralPath (Join-Path $skin 'Main.ini') -Encoding unicode
  Add-Type -AssemblyName System.Drawing
  $png=Join-Path $fixture 'icon.png'
  $bitmap=[Drawing.Bitmap]::new(16,16)
  try{for($x=0;$x -lt 16;$x++){for($y=0;$y -lt 16;$y++){$bitmap.SetPixel($x,$y,[Drawing.Color]::CornflowerBlue)}};$bitmap.Save($png,[Drawing.Imaging.ImageFormat]::Png)}finally{$bitmap.Dispose()}
  $icon=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($png))
- 1..$IconCount | ForEach-Object {"pfixture$_`tRml4dHVyZQ==`t$icon`t1`t0`t1`t0"} | Set-Content -LiteralPath (Join-Path $fixture 'dock-state.txt') -Encoding ascii
+ $name=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('中文应用 · 测试'))
+ 1..$IconCount | ForEach-Object {"pfixture$_`t$name`t$icon`t1`t0`t1`t0"} | Set-Content -LiteralPath (Join-Path $fixture 'dock-state.txt') -Encoding ascii
  $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
  $exe=Join-Path $out 'TestDockIconBridge.exe'
  & $csc /nologo /target:exe /platform:x64 ('/out:'+$exe) /r:System.Drawing.dll /r:System.Windows.Forms.dll (Join-Path $repo 'tests/TestDockIconBridge.cs') (Join-Path $repo 'src/LiquidDesktop/MonitorDock.cs') (Join-Path $repo 'src/LiquidDesktop/MonitorCatalog.cs')

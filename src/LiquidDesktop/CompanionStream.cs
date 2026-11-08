@@ -100,6 +100,7 @@ internal sealed class CompanionStream : IDisposable {
    var bounds=runtime.CaptureBounds;if(bounds.Width<1||bounds.Height<1)return CompanionReply.Error(409,"screen_changed","屏幕位置已变化，请重新投屏。");return action(bounds);
   }catch{return CompanionReply.Error(503,"screen_unavailable","无法确认当前画面，未执行点选。");}
  }}
+ internal bool RecoverIdleDisplay(Action recover){lock(gate){if(disposed||owner!=null||cleanupPending)return false;recover();return true;}}
  internal void Sweep(){lock(gate){var audio=runtime as ICompanionAudioRuntime;if(owner!=null&&audio!=null&&(!owner.audio||clock()>=audioExpires||!audio.AudioAlive))audio.StopAudio();if(cleanupPending||owner!=null&&(!Allowed(owner)||clock()>=expires||!runtime.Alive))Stop();}}
  public void Stop(){lock(gate){var previous=owner;owner=null;lease="";cleanupPending=true;try{runtime.Stop();cleanupPending=false;}finally{if(previous!=null&&Stopped!=null)Stopped(previous);}}}
  public void Dispose(){lock(gate){disposed=true;if(timer!=null)timer.Dispose();try{Stop();}catch{}try{runtime.Dispose();}catch{}}}

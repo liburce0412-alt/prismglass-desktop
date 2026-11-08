@@ -9,10 +9,19 @@ using System.Web.Script.Serialization;
 internal sealed class MonitorPreferences {
  public string id="";public bool enabled=true,top=true,left=true,right=true,dock=true;public int dockOffset=18;
 }
+internal sealed class GlassStylePreset {
+ public string id="",name="",baseStyle="I";
+ public Dictionary<string,double> parameters=new Dictionary<string,double>();
+}
 internal sealed class DesktopPreferenceState {
  public int version=1;public long revision=1;public string theme="Sky",hotkey="Ctrl+Alt+Space";
+ public string glassStyle="";
+ public Dictionary<string,Dictionary<string,double>> glassOverrides=new Dictionary<string,Dictionary<string,double>>();
+ public List<GlassStylePreset> glassPresets=new List<GlassStylePreset>();
  public int glassOpacity=100,textScale=100,gridColumns=6,dockIconSize=48;
- public bool manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true,welcomeShown;
+ public bool liveGlassBackground,manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true,welcomeShown;
+ public bool topAutoHide=true,leftAutoHide=true,rightAutoHide=true,windowAnimations=true,stageManager,layoutLocked;
+ public List<string> autoHideWidgets=new List<string>();
  public List<MonitorPreferences> monitors=new List<MonitorPreferences>();
  public List<string> desktopWidgets=new List<string>();
 }
@@ -34,7 +43,32 @@ internal sealed class DesktopPreferences {
  readonly string root,file;readonly JavaScriptSerializer json=new JavaScriptSerializer();string observed="",loadError="";
  static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
- static readonly string[] DesktopCards={"Weather","System","Clock","Calendar","Battery","Folders","Music","Focus","Tools"};
+ static readonly string[] DesktopCards={"Weather","System","Clock","Calendar","Battery","Folders","Music","Focus","Tools","BreathingOrb","DigitalClock","Moon","Photo","Photo2","Photo3","Photo4","Photo5","Photo6"};
+ static readonly Dictionary<string,double[]> GlassRanges=new Dictionary<string,double[]>{
+  {"refraction",new[]{0.0,2.5}},{"bevel",new[]{2.0,50.0}},{"ior",new[]{1.05,2.0}},{"dispersion",new[]{0.0,.3}},
+  {"blur",new[]{0.0,30.0}},{"diffusion",new[]{0.0,1.0}},{"saturation",new[]{0.0,4.0}},{"brightness",new[]{.25,2.5}},{"contrast",new[]{.25,2.5}},
+  {"tintOpacity",new[]{0.0,.5}},{"tintR",new[]{0.0,1.0}},{"tintG",new[]{0.0,1.0}},{"tintB",new[]{0.0,1.0}},
+  {"reflection",new[]{0.0,.6}},{"highlight",new[]{0.0,.4}},{"shadow",new[]{0.0,.3}},{"grain",new[]{0.0,.06}},{"edge",new[]{0.0,2.5}},{"power",new[]{1.0,6.0}},
+  {"opacity",new[]{0.0,1.0}},{"adaptive",new[]{0.0,1.0}},{"density",new[]{0.0,1.0}},{"tintMin",new[]{0.0,.5}},{"tintMax",new[]{0.0,1.0}}
+ };
+ static bool GlassKey(string key){return key!=null&&key.Length==1&&key[0]>='A'&&key[0]<='J';}
+ static bool CustomGlassKey(string key){return key!=null&&System.Text.RegularExpressions.Regex.IsMatch(key,"^user-[a-f0-9]{32}$");}
+ static Dictionary<string,double> GlassParameters(object value){
+  var fields=value as IDictionary;if(fields==null||fields.Count>GlassRanges.Count)throw new ArgumentException("未知玻璃参数。");var next=new Dictionary<string,double>();
+  foreach(DictionaryEntry field in fields){double[] range;string name=field.Key as string;var raw=field.Value;if(name==null||!GlassRanges.TryGetValue(name,out range)||!(raw is int||raw is long||raw is double||raw is decimal||raw is float))throw new ArgumentException("玻璃参数必须是有效数值。");double number=Convert.ToDouble(raw);if(Double.IsNaN(number)||Double.IsInfinity(number)||number<range[0]||number>range[1])throw new ArgumentException("玻璃参数超出支持范围："+name);next.Add(name,number);}return next;
+ }
+ static Dictionary<string,Dictionary<string,double>> GlassOverrides(object value){
+  var map=value as IDictionary;if(map==null||map.Count>10)throw new ArgumentException("玻璃参数必须是按材质保存的列表。");
+  var result=new Dictionary<string,Dictionary<string,double>>();
+  foreach(DictionaryEntry entry in map){string key=entry.Key as string;if(!GlassKey(key))throw new ArgumentException("未知玻璃材质。");var next=GlassParameters(entry.Value);
+   if(next.Count>0)result.Add(key,next);
+  }return result;
+ }
+ static List<GlassStylePreset> GlassPresets(object value){
+  var items=value as IEnumerable;if(items==null||value is string||value is IDictionary)throw new ArgumentException("自定义风格列表无效。");var result=new List<GlassStylePreset>();var ids=new HashSet<string>();
+  foreach(var raw in items){if(result.Count>=64)throw new ArgumentException("最多保存 64 个自定义风格。");var fields=raw as IDictionary;if(fields==null||fields.Count!=4||!fields.Contains("id")||!fields.Contains("name")||!fields.Contains("baseStyle")||!fields.Contains("parameters"))throw new ArgumentException("自定义风格内容不完整。");string id=fields["id"] as string,name=fields["name"] as string,basis=fields["baseStyle"] as string;if(!CustomGlassKey(id)||!ids.Add(id)||!GlassKey(basis)||String.IsNullOrWhiteSpace(name)||name.Length>48||Array.Exists(name.ToCharArray(),Char.IsControl))throw new ArgumentException("自定义风格名称或标识无效。");result.Add(new GlassStylePreset{id=id,name=name.Trim(),baseStyle=basis,parameters=GlassParameters(fields["parameters"])});
+  }return result;
+ }
  public DesktopPreferenceState Current {get;private set;}
  public long Revision {get;private set;}
  public bool IsFirstRun {get;private set;}
@@ -49,13 +83,20 @@ internal sealed class DesktopPreferences {
  static object Value(Dictionary<string,object> map,string key,object fallback){object value;return map.TryGetValue(key,out value)?value:fallback;}
  string Source(){return (DesktopSettingsFiles.Read(file)??"")+"\n"+(DesktopSettingsFiles.Read(Path.Combine(root,"theme.txt"))??"")+"\n"+(DesktopSettingsFiles.Read(Path.Combine(root,"paused.txt"))??"")+"\n"+(DesktopSettingsFiles.Read(Path.Combine(root,"shelf-state.json"))??"")+"\n"+(DesktopSettingsFiles.Read(Path.Combine(root,"sidebar-visibility.json"))??"");}
  public void Reload(){
-  try{string signature=Source();if(signature==observed&&Revision!=0&&loadError.Length==0)return;var text=DesktopSettingsFiles.Read(file);var next=text==null?new DesktopPreferenceState():json.Deserialize<DesktopPreferenceState>(text);if(next==null||next.version!=1)throw new IOException("桌面设置版本或格式不受支持，原文件已保留。");Validate(next);ReadSidecar("shelf-state.json");ReadSidecar("sidebar-visibility.json");
+  try{string signature=Source();if(signature==observed&&Revision!=0&&loadError.Length==0)return;var text=DesktopSettingsFiles.Read(file);var next=text==null?new DesktopPreferenceState():json.Deserialize<DesktopPreferenceState>(text);if(next==null||next.version!=1)throw new IOException("桌面设置版本或格式不受支持，原文件已保留。");if(text!=null){object overrides;var savedMap=DesktopSettingsFiles.Map(text);if(savedMap.TryGetValue("glassOverrides",out overrides))next.glassOverrides=GlassOverrides(overrides);if(savedMap.TryGetValue("glassPresets",out overrides))next.glassPresets=GlassPresets(overrides);}Validate(next);ReadSidecar("shelf-state.json");ReadSidecar("sidebar-visibility.json");
    string theme=DesktopSettingsFiles.Read(Path.Combine(root,"theme.txt")),motion=DesktopSettingsFiles.Read(Path.Combine(root,"paused.txt"));if(theme!=null)next.theme=theme.Trim()=="Astro"?"Astro":"Sky";if(motion!=null)next.manualPaused=motion.Trim()=="true";
    Current=next;Revision=Math.Max(Revision+1,next.revision);observed=signature;loadError="";
   }catch(Exception ex){loadError=ex.Message;if(Revision==0)Revision=1;}
  }
  static void Validate(DesktopPreferenceState value){
+  // Retired decorative cards are ignored on read without rewriting saved user files.
+  foreach(var cards in new[]{value.desktopWidgets,value.autoHideWidgets})if(cards!=null)cards.RemoveAll(name=>name=="Starlight"||name=="MoodNote");
   value.desktopWidgets=Cards(value.desktopWidgets??new List<string>(),DesktopCards);
+  value.autoHideWidgets=Cards(value.autoHideWidgets??new List<string>(),DesktopCards);
+  if(value.glassPresets==null||value.glassPresets.Count>64)throw new ArgumentException("自定义风格列表无效。");var presetIds=new HashSet<string>();
+  foreach(var preset in value.glassPresets){if(preset==null||!CustomGlassKey(preset.id)||!presetIds.Add(preset.id)||!GlassKey(preset.baseStyle)||String.IsNullOrWhiteSpace(preset.name)||preset.name.Length>48||Array.Exists(preset.name.ToCharArray(),Char.IsControl))throw new ArgumentException("自定义风格无效。");preset.name=preset.name.Trim();preset.parameters=GlassParameters(preset.parameters);}
+  if(value.glassStyle==null||value.glassStyle!=""&&!GlassKey(value.glassStyle)&&!presetIds.Contains(value.glassStyle))throw new ArgumentException("未知玻璃材质。");
+  value.glassOverrides=GlassOverrides(value.glassOverrides);
   if(value.theme!="Sky"&&value.theme!="Astro")throw new ArgumentException("未知主题。");Number(value.glassOpacity,60,100);Number(value.textScale,90,130);Number(value.gridColumns,4,10);Number(value.dockIconSize,32,72);HotkeyBinding.Parse(value.hotkey);
   if(value.monitors==null)value.monitors=new List<MonitorPreferences>();if(value.monitors.Count>32)throw new ArgumentException("显示器配置过多。");var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);foreach(var monitor in value.monitors){if(monitor==null||String.IsNullOrWhiteSpace(monitor.id)||monitor.id.Length>512||!seen.Add(monitor.id))throw new ArgumentException("显示器标识无效或重复。");Number(monitor.dockOffset,0,200);}
  }
@@ -77,6 +118,14 @@ internal sealed class DesktopPreferences {
    var next=json.Deserialize<DesktopPreferenceState>(json.Serialize(Current));var writes=new Dictionary<string,string>();var previous=new Dictionary<string,string>();
    foreach(var pair in changes){switch(pair.Key){
     case "theme":next.theme=pair.Value as string;break;case "hotkey":next.hotkey=pair.Value as string;break;
+    case "glassStyle":next.glassStyle=pair.Value as string;break;
+    case "glassOverrides":next.glassOverrides=GlassOverrides(pair.Value);break;
+    case "glassPresets":next.glassPresets=GlassPresets(pair.Value);break;
+    case "layoutLocked":next.layoutLocked=Flag(pair.Value);break;
+    case "liveGlassBackground":next.liveGlassBackground=Flag(pair.Value);break;
+    case "topAutoHide":next.topAutoHide=Flag(pair.Value);break;case "leftAutoHide":next.leftAutoHide=Flag(pair.Value);break;case "rightAutoHide":next.rightAutoHide=Flag(pair.Value);break;
+    case "windowAnimations":next.windowAnimations=Flag(pair.Value);break;case "stageManager":next.stageManager=Flag(pair.Value);break;
+    case "autoHideWidgets":next.autoHideWidgets=Cards(pair.Value,DesktopCards);break;
     case "glassOpacity":next.glassOpacity=Number(pair.Value,60,100);break;case "textScale":next.textScale=Number(pair.Value,90,130);break;case "gridColumns":next.gridColumns=Number(pair.Value,4,10);break;case "dockIconSize":next.dockIconSize=Number(pair.Value,32,72);break;
     case "manualPaused":next.manualPaused=Flag(pair.Value);break;case "reducedMotion":next.reducedMotion=Flag(pair.Value);break;case "pauseOnBattery":next.pauseOnBattery=Flag(pair.Value);break;case "pauseOnPowerSaver":next.pauseOnPowerSaver=Flag(pair.Value);break;case "pauseOnRemote":next.pauseOnRemote=Flag(pair.Value);break;case "showLabels":next.showLabels=Flag(pair.Value);break;case "dockAutoHide":next.dockAutoHide=Flag(pair.Value);break;
     case "monitors":next.monitors=json.Deserialize<List<MonitorPreferences>>(json.Serialize(pair.Value));break;

@@ -15,9 +15,9 @@ if(!(Test-Path -LiteralPath "$package/lib/net462/Microsoft.Web.WebView2.Core.dll
 }
 $out=if($OutputRoot){[IO.Path]::GetFullPath($OutputRoot)}else{Join-Path $repo 'dist/PrismGlass'}
 $app=Join-Path $out 'LiquidDesktop'
-if((Test-Path -LiteralPath (Join-Path $out 'prismglass-install.json')) -or (Test-Path -LiteralPath (Join-Path $app 'runtime-data')) -or (Test-Path -LiteralPath (Join-Path $app 'desktop-settings.json'))){throw 'Build output is a user installation or runtime directory. Choose a clean build directory.'}
+if((Test-Path -LiteralPath (Join-Path $out 'prismglass-install.json')) -or (Test-Path -LiteralPath (Join-Path $app 'runtime-data')) -or (Test-Path -LiteralPath (Join-Path $app 'photo-cards')) -or (Test-Path -LiteralPath (Join-Path $app 'desktop-settings.json'))){throw 'Build output is a user installation or runtime directory. Choose a clean build directory.'}
 New-Item -ItemType Directory -Path $app -Force | Out-Null
-Get-ChildItem "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.cs','.ps1','.js','.html','.css','.svg' -or $_.Name -in 'app-center-pinyin.txt','app-center-pinyin-LICENSE.txt'} | Copy-Item -Destination $app
+Get-ChildItem "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.cs','.ps1','.js','.html','.css','.svg','.png' -or $_.Name -in 'app-center-pinyin.txt','app-center-pinyin-LICENSE.txt'} | Copy-Item -Destination $app
 Copy-Item "$repo/assets/Brand/prismglass-icon-refined.ico" "$app/PrismGlass.ico"
 [IO.File]::WriteAllText((Join-Path $app 'AssemblyInfo.cs'),("using System.Reflection;`n[assembly: AssemblyTitle(""PrismGlass Desktop"")]`n[assembly: AssemblyProduct(""PrismGlass Desktop"")]`n[assembly: AssemblyVersion(""$fileVersion"")]`n[assembly: AssemblyFileVersion(""$fileVersion"")]`n[assembly: AssemblyInformationalVersion(""$version"")]`n"))
 Copy-Item "$repo/src/LiquidDesktop/companion-web" $app -Recurse -Force
@@ -35,7 +35,7 @@ if($LASTEXITCODE -ne 0){throw 'Audio capture helper compilation failed'}
 Push-Location $app
 try{
  $sources=@(Get-ChildItem "$repo/src/LiquidDesktop" -Filter '*.cs' | ForEach-Object {$_.FullName})+@(Join-Path $app 'AssemblyInfo.cs')
- & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:PrismGlass.ico /out:LiquidDesktop.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.Management.dll /r:System.Net.Http.dll /r:QRCoder.dll /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll "/r:$uia/UIAutomationClient.dll" "/r:$uia/UIAutomationTypes.dll" "/r:$uia/WindowsBase.dll" @sources
+ & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:PrismGlass.ico /out:LiquidDesktop.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Numerics.dll /r:System.Numerics.Vectors.dll /r:System.Runtime.dll /r:System.Runtime.WindowsRuntime.dll /r:System.Runtime.InteropServices.WindowsRuntime.dll "/r:$env:WINDIR/System32/WinMetadata/Windows.Foundation.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Graphics.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Storage.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Security.winmd" /r:System.Xaml.dll "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/WindowsFormsIntegration.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationCore.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationFramework.dll" /r:System.Web.Extensions.dll /r:System.Management.dll /r:System.Net.Http.dll /r:QRCoder.dll /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll "/r:$uia/UIAutomationClient.dll" "/r:$uia/UIAutomationTypes.dll" "/r:$uia/WindowsBase.dll" @sources
  if($LASTEXITCODE -ne 0){throw 'Compilation failed'}
 }finally{Pop-Location}
 Copy-Item "$repo/scripts/runtime/*" $out
@@ -50,7 +50,7 @@ Copy-Item "$repo/docs/COMPANION.md","$repo/docs/COMPANION-SCREEN.md" $out
 Copy-Item "$repo/docs/NPU-TOOLS.md" $out
 Copy-Item "$repo/docs/REMOTE-DESKTOP-COMPARISON.md" $out
 Copy-Item "$repo/docs/PRIVACY.md" $out
-Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1","$repo/scripts/RepairCompanionVideo.ps1" $out
+Copy-Item "$repo/scripts/ConfigureCompanion.ps1","$repo/scripts/RepairCompanion.ps1","$repo/scripts/RepairCompanionVideo.ps1","$repo/scripts/ConfigureCompanionVirtualDevice.ps1" $out
 # Windows PowerShell 5.1 needs a BOM to read Chinese scripts independently of the system locale.
 foreach($script in Get-ChildItem -LiteralPath $out -Filter '*.ps1' -File -Recurse){[IO.File]::WriteAllText($script.FullName,[IO.File]::ReadAllText($script.FullName),[Text.UTF8Encoding]::new($true))}
 Get-ChildItem $package -File | Where-Object {$_.Name -match 'license|notice'} | Copy-Item -Destination "$out/licenses"

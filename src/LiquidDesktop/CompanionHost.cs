@@ -12,6 +12,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using OpenFileDialog = System.Windows.Forms.OpenFileDialog;
+using SaveFileDialog = System.Windows.Forms.SaveFileDialog;
 using Microsoft.Win32;
 using QRCoder;
 
@@ -27,6 +29,7 @@ internal sealed class CompanionHost : IDisposable {
  internal Func<string,string,string,Task<Dictionary<string,object>>> ReadVideoPlan=CompanionConnection.CheckVideo;
  internal Func<string,string,string,Task> ApplyVideoPlan=CompanionConnection.ApplyVideo;
  internal Func<string,bool> ConfirmVideo;
+ internal Func<bool> RecoverDisplay;bool recoveringDisplay;
  [DllImport("user32.dll",SetLastError=true)]static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
  [DllImport("user32.dll")]static extern bool CloseDesktop(IntPtr desktop);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder value,int bytes,out int needed);
@@ -35,10 +38,20 @@ internal sealed class CompanionHost : IDisposable {
   ConfirmVideo=text=>{Show();return MessageBox.Show(DialogOwner??owner as Form,text,"修复投屏连接",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;};
   if(File.Exists(file))try{if(new FileInfo(file).Length<1048576){var saved=json.Deserialize<CompanionConfiguration>(File.ReadAllText(file));if(saved!=null&&saved.apps!=null&&saved.apps.Count<=500)config=saved;}}catch{}
   bridge=new CompanionBridge(root,apps,settings,data,lyrics,Dispatch,IsLocked,streamAddress:()=>server.LocalAddress);bridge.Allow(config.apps);server=new CompanionServer(root,bridge.Handle,IsLocked);server.BeforeScreen=PrepareVideo;
+  RecoverDisplay=bridge.RecoverIdleDisplay;
   server.VideoApprovalPending=()=>videoApplying&&!sessionLocked&&!closed;
   SystemEvents.SessionSwitch+=SessionChanged;NetworkChange.NetworkAddressChanged+=NetworkChanged;
  }
  void NetworkChanged(object sender,EventArgs e){if(closed||activeNetwork==null||!owner.IsHandleCreated)return;try{owner.BeginInvoke(new Action(()=>{if(!closed&&management!=null)management.RefreshNetwork();}));}catch(InvalidOperationException){}}
+ internal async Task RecoverIdleDisplay(){
+  if(closed||recoveringDisplay||IsLocked())return;
+  string directory=Path.Combine(root,"runtime-data","companion"),failure=Path.Combine(directory,"display-recovery-error.txt");
+  if(!File.Exists(Path.Combine(directory,"screen-stream.json")))return;
+  recoveringDisplay=true;
+  try{bool recovered=await Task.Run(()=>!closed&&RecoverDisplay());if(recovered&&File.Exists(failure))File.Delete(failure);}
+  catch(Exception error){try{File.WriteAllText(failure,error.Message);}catch{}}
+  finally{recoveringDisplay=false;}
+ }
  void SessionChanged(object sender,SessionSwitchEventArgs e){if(e.Reason==SessionSwitchReason.SessionLock||e.Reason==SessionSwitchReason.SessionLogoff){sessionLocked=true;Interlocked.Increment(ref islandRevision);bridge.StopControls();}else if(e.Reason==SessionSwitchReason.SessionUnlock){sessionLocked=false;Interlocked.Increment(ref islandRevision);}}
  internal bool IsLocked(){if(closed||sessionLocked)return true;IntPtr input=OpenInputDesktop(0,false,1);if(input==IntPtr.Zero)return true;try{int needed;var name=new StringBuilder(256);return !GetUserObjectInformation(input,2,name,512,out needed)||!String.Equals(name.ToString(),"Default",StringComparison.OrdinalIgnoreCase);}finally{CloseDesktop(input);}}
  object Dispatch(Func<object> operation){

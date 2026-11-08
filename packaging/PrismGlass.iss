@@ -2,7 +2,7 @@
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"
@@ -52,6 +52,12 @@ Name: desktopicon; Description: "创建桌面快捷方式"
 [InstallDelete]
 Type: files; Name: "{app}\rainmeter\PrismGlass\Topbar\Main.ini"
 Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\Topbar"
+Type: files; Name: "{app}\rainmeter\PrismGlass\Starlight\Main.ini"
+Type: files; Name: "{app}\rainmeter\PrismGlass\MoodNote\Main.ini"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\AmbientArt\starlight-nebula.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\AmbientArt\sunlit-garden.png"
+Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\Starlight"
+Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\MoodNote"
 
 [Icons]
 Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"

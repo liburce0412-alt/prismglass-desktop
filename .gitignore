@@ -26,6 +26,7 @@
 **/runtime-data/
 **/*preview-runtime/
 **/music-data/
+**/photo-cards/
 **/dock-icons/
 **/quota-cache.json
 **/pins.json

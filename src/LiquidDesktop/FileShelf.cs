@@ -55,6 +55,8 @@ internal sealed class ShelfReader : IDisposable {
 }
 
 internal sealed class FileShelf : Form {
+ readonly ComponentPosition position;Rectangle defaultBounds;
+ public bool IsRepositioning {get{return position!=null&&position.Dragging;}}
  public event Action Ready;
  public event Action<CursorPreferences,int> CursorSettingsChanged;
  public Rectangle OcclusionBounds {get{int count=VisibleCards().Count;return new Rectangle(Left+(int)(420*scale),Top+(int)(4*scale),(int)(88*scale),(int)((count*74+58)*scale));}}
@@ -75,7 +77,8 @@ internal sealed class FileShelf : Form {
  public FileShelf(string directory,bool isPreview):this(directory,isPreview,null,"primary"){}
  public FileShelf(string directory,bool isPreview,SharedDesktopData data,string screenInstance){
   pixels=new WebViewPixelScale(view,()=>{Place();layout="";Publish();});
-  root=directory;preview=isPreview;shared=data;instance=screenInstance;quotaReader=shared==null?new QuotaReader(root):shared.Quota;quotaSnapshot=quotaReader.Cached();screen=Screen.PrimaryScreen.Bounds;Text="PrismGlass 桌面空间 · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(27,39,55);view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);ReadState();Place();
+  root=directory;preview=isPreview;shared=data;instance=screenInstance;quotaReader=shared==null?new QuotaReader(root):shared.Quota;quotaSnapshot=quotaReader.Cached();screen=Screen.PrimaryScreen.Bounds;Text="PrismGlass 桌面空间 · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(27,39,55);view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);
+  position=new ComponentPosition(root,preview?"right-preview":"right",()=>Bounds,next=>{Bounds=next;layout="";Publish();},message=>Send(new{type="error",message=message}));ReadState();Place();
   ReadCursorSettings();ReadLeftVisibility();Shown+=async(s,e)=>{try{
    var env=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"shelf-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(env);SyncZoom();
    var core=view.CoreWebView2;core.Settings.IsZoomControlEnabled=false;core.Settings.AreDefaultContextMenusEnabled=false;core.Settings.AreDevToolsEnabled=false;core.Settings.IsStatusBarEnabled=false;
@@ -87,20 +90,21 @@ internal sealed class FileShelf : Form {
    view.Source=new Uri("https://prism-shelf.local/shelf.html");
   }catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),ex.Message);}catch{}Close();}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready){nextContent=DateTime.MinValue;RefreshContent();}};
-  Deactivate+=(s,e)=>{if(expanded&&!pinned&&!preview)SetExpanded(false);};
-  FormClosed+=(s,e)=>{closed=true;generation++;if(shared==null)quotaReader.Dispose();reader.Dispose();view.Dispose();};
+  Deactivate+=(s,e)=>{if(expanded&&!pinned&&!preview&&!IsRepositioning)SetExpanded(false);};
+  FormClosed+=(s,e)=>{closed=true;generation++;position.Dispose();if(shared==null)quotaReader.Dispose();reader.Dispose();view.Dispose();};
  }
  void SyncZoom(){pixels.Sync();}
  void Place(){
   // Share SideDock's scale and top anchor; visible entries shorten downward from that baseline.
   scale=Math.Max(.5f,Math.Min(1.25f,Math.Min((screen.Height-240)/680f,(screen.Width-48)/852f)));
-  int width=(int)Math.Ceiling(512*scale),height=(int)Math.Ceiling(620*scale);Bounds=new Rectangle(screen.Right-width-16,screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),width,height);Shape(expanded?1:0);
+  int width=(int)Math.Ceiling(512*scale),height=(int)Math.Ceiling(620*scale);defaultBounds=new Rectangle(screen.Right-width-16,screen.Top+Math.Max(72,(screen.Height-(int)(680*scale))/2),width,height);position.Arrange(defaultBounds,screen,new Point((int)(420*scale),(int)(4*scale)),new Rectangle((int)(420*scale),(int)(4*scale),(int)(88*scale),(int)((VisibleCards().Count*74+58)*scale)));Shape(expanded?1:0);
  }
  void Shape(float amount){using(var shape=new GraphicsPath()){
   int count=VisibleCards().Count;Round(shape,420*scale,4*scale,88*scale,(count*74+58)*scale,28*scale);if(amount>.001f)Round(shape,(404-400*amount)*scale,4*scale,400*amount*scale,612*scale,26*scale);
   var old=Region;Region=GlassWindow.Clip(shape,ClientRectangle);if(old!=null)old.Dispose();
+  position.Arrange(defaultBounds,screen,new Point((int)(420*scale),(int)(4*scale)),Rectangle.Ceiling(shape.GetBounds()));
  }}
- static void Round(GraphicsPath p,float x,float y,float w,float h,float r){float d=Math.Min(r*2,Math.Min(w,h));if(w<=0||h<=0)return;p.StartFigure();p.AddArc(x,y,d,d,180,90);p.AddArc(x+w-d,y,d,d,270,90);p.AddArc(x+w-d,y+h-d,d,d,0,90);p.AddArc(x,y+h-d,d,d,90,90);p.CloseFigure();}
+ static void Round(GraphicsPath p,float x,float y,float w,float h,float r){GlassWindow.Round(p,x,y,w,h,r);}
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
   if(closed)return;if(screen!=bounds){screen=bounds;Place();layout="";}SyncZoom();theme=nextTheme=="Astro"?"Astro":"Sky";paused=motionPaused;Publish();if(ready&&Visible&&!paused)RefreshQuota(false);
   RefreshContent();
@@ -176,6 +180,8 @@ internal sealed class FileShelf : Form {
   }finally{reading=false;if(pendingFilter&&!closed&&expanded&&path!=""){pendingFilter=false;Read(path,false,false);}}
  }
  void Receive(string text){try{
+  if(position.Receive(text))return;
+  if(text!=null&&text.StartsWith("optical-",StringComparison.Ordinal))return;
   if(text=="ready"){ready=true;Publish();Send(new{type="local-state",state=state});Send(new{type="quota",snapshot=quotaSnapshot,busy=false});RefreshQuota(false);return;}if(text=="painted"){if(!painted){painted=true;if(Ready!=null)Ready();}return;}if(text!=null&&text.StartsWith("error:",StringComparison.Ordinal)){try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),text.Substring(6));}catch{}Close();return;}if(text==null||text.Length>70000)return;
   var msg=json.Deserialize<Dictionary<string,object>>(text);object raw;string action=msg.TryGetValue("action",out raw)?raw as string:null;string value=msg.TryGetValue("value",out raw)?raw as string:"";
   if(action=="note-dirty"&&!preview){noteDirty=true;return;}

@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 
 internal sealed class MonitorDock : IDisposable {
  const string Marker="; PrismGlass generated monitor instance";
+ static int catalogRevision;static DateTime catalogReady=DateTime.MinValue;int appliedCatalogRevision;
  readonly string root,instance,skinRoot;string signature="",generatedFile;bool enabled,disposed,catalogRefreshed;DateTime nextAttempt=DateTime.MinValue,nextVisibilityAttempt=DateTime.MinValue,nextIconAttempt=DateTime.MinValue;
  public string SkinName {get{return instance=="primary"?"Dock":"Dock-"+instance;}}
  public string ConfigName {get{return "PrismGlass\\"+SkinName;}}
@@ -21,13 +22,16 @@ internal sealed class MonitorDock : IDisposable {
  public MonitorDock(string directory,string screenInstance){if(!Regex.IsMatch(screenInstance,"^(primary|monitor-[0-9]+)$"))throw new ArgumentException("Invalid Dock instance");root=directory;instance=screenInstance;var configured=Path.Combine(root,"skin-path.txt");skinRoot=Path.GetFullPath(File.Exists(configured)?File.ReadAllText(configured).Trim():Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"Rainmeter","Skins","PrismGlass"));}
  static string Set(string text,string key,string value){string expression="(?m)^"+Regex.Escape(key)+"=.*$";if(Regex.IsMatch(text,expression))return Regex.Replace(text,expression,key+"="+value);return text.Replace("[Variables]","[Variables]\r\n"+key+"="+value);}
  public static double PixelScale(Rectangle bounds){try{uint x,y;var point=new POINT{x=bounds.Left+bounds.Width/2,y=bounds.Top+bounds.Height/2};if(GetDpiForMonitor(MonitorFromPoint(point,2),0,out x,out y)==0&&x>0)return x/96.0;}catch(EntryPointNotFoundException){}catch(DllNotFoundException){}return 1;}
- void Bang(string command){using(var process=Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,command){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden})){if(process!=null)process.WaitForExit(1000);}}
+ static void Bang(string command){using(var process=Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,command){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden})){if(process!=null)process.WaitForExit(1000);}}
+ internal static bool SkinCatalogReady {get{return DateTime.UtcNow>=catalogReady;}}
+ internal static void RefreshSkinCatalog(){Bang("!RefreshApp");catalogRevision++;catalogReady=DateTime.UtcNow.AddSeconds(1);}
  public void Configure(MonitorRecord monitor,MonitorPreferences preferences,int iconSize){
   if(disposed)return;var bounds=monitor.Screen.WorkingArea;bounds.Height=monitor.Screen.Bounds.Bottom-bounds.Top;string next=preferences.enabled+"|"+preferences.dock+"|"+bounds+"|"+preferences.dockOffset+"|"+iconSize+"|"+PixelScale(bounds);
   bool show=preferences.enabled&&preferences.dock;
-  if(next==signature&&(!show||FindWindow("RainmeterMeterWindow",Path.Combine(skinRoot,SkinName,"Main.ini"))!=IntPtr.Zero||DateTime.UtcNow<nextAttempt))return;
-  if(!show){if(enabled||instance=="primary")Bang("!DeactivateConfig \""+ConfigName+"\"");enabled=false;signature=next;return;}
-  var variables=new[]{new[]{"DockInstance",instance},new[]{"DockMonitorLeft",bounds.Left.ToString()},new[]{"DockMonitorTop",bounds.Top.ToString()},new[]{"DockMonitorWidth",bounds.Width.ToString()},new[]{"DockMonitorHeight",bounds.Height.ToString()},new[]{"DockOffset",preferences.dockOffset.ToString()},new[]{"DockIconSize",iconSize.ToString()},new[]{"DockPixelScale",instance=="primary"?"0":PixelScale(bounds).ToString(CultureInfo.InvariantCulture)},new[]{"DockLyricsFile","dock-lyrics.txt"}};
+  if(show&&DateTime.UtcNow<catalogReady)return;
+  if(appliedCatalogRevision==catalogRevision&&next==signature&&(!show||FindWindow("RainmeterMeterWindow",Path.Combine(skinRoot,SkinName,"Main.ini"))!=IntPtr.Zero||DateTime.UtcNow<nextAttempt))return;
+  if(!show){if(enabled||instance=="primary")Bang("!DeactivateConfig \""+ConfigName+"\"");enabled=false;signature=next;appliedCatalogRevision=catalogRevision;return;}
+  var variables=new[]{new[]{"DockInstance",instance},new[]{"DockMonitorLeft",bounds.Left.ToString()},new[]{"DockMonitorTop",bounds.Top.ToString()},new[]{"DockMonitorWidth",bounds.Width.ToString()},new[]{"DockMonitorHeight",bounds.Height.ToString()},new[]{"DockOffset",preferences.dockOffset.ToString()},new[]{"DockIconSize",iconSize.ToString()},new[]{"DockPixelScale",PixelScale(bounds).ToString(CultureInfo.InvariantCulture)},new[]{"DockLyricsFile","dock-lyrics.txt"}};
   if(instance!="primary"&&next!=signature){
    var source=Path.Combine(skinRoot,"Dock","Main.ini");if(!File.Exists(source))throw new IOException("未找到已安装的 PrismGlass Dock 皮肤，多屏 Dock 未启动。");
    var folder=Path.GetFullPath(Path.Combine(skinRoot,SkinName));if(!folder.StartsWith(skinRoot+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("Invalid Dock directory");
@@ -37,8 +41,9 @@ internal sealed class MonitorDock : IDisposable {
   }
   // RefreshApp posts a delayed refresh. Activating in the same multi-bang runs
   // before the new directory is registered, so activation must be a later call.
-  if(instance!="primary"&&!catalogRefreshed){Bang("!RefreshApp");catalogRefreshed=true;signature=next;nextAttempt=DateTime.UtcNow.AddSeconds(1);return;}
-  var command=new StringBuilder();command.Append("[!ActivateConfig \"").Append(ConfigName).Append("\" \"Main.ini\"]");foreach(var pair in variables)command.Append("[!SetVariable ").Append(pair[0]).Append(" \"").Append(pair[1]).Append("\" \"").Append(ConfigName).Append("\"]");command.Append("[!CommandMeasure Dock \"ReloadLayout()\" \"").Append(ConfigName).Append("\"]");Bang(command.ToString());enabled=true;signature=next;nextAttempt=DateTime.UtcNow.AddSeconds(2);
+  // RefreshApp also resets existing skins, including their runtime monitor and DPI variables.
+  if(instance!="primary"&&!catalogRefreshed){RefreshSkinCatalog();catalogRefreshed=true;signature=next;nextAttempt=catalogReady;return;}
+  var command=new StringBuilder();command.Append("[!ActivateConfig \"").Append(ConfigName).Append("\" \"Main.ini\"]");foreach(var pair in variables)command.Append("[!SetVariable ").Append(pair[0]).Append(" \"").Append(pair[1]).Append("\" \"").Append(ConfigName).Append("\"]");command.Append("[!CommandMeasure Dock \"ReloadLayout()\" \"").Append(ConfigName).Append("\"]");Bang(command.ToString());enabled=true;signature=next;appliedCatalogRevision=catalogRevision;lastPointer=-2;nextAttempt=DateTime.UtcNow.AddSeconds(2);
  }
  internal static bool SendSkinCommand(IntPtr window,string command){
   if(window==IntPtr.Zero)return false;

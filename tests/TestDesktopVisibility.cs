@@ -44,4 +44,18 @@ Check(!DesktopVisibilityPolicy.OverlapsComponent(new[]{wechat},leftRail),"eight-
 wechat.Bounds=new Rectangle(2560,0,1200,1500);
 Check(!DesktopVisibilityPolicy.OverlapsComponent(new[]{wechat},rightRail),"ordinary window on another monitor excluded");
 Check(!DesktopVisibilityPolicy.OverlapsComponent(new[]{center},Rectangle.Empty),"uninitialized component excluded");
+Check(DesktopVisibilityPolicy.ComponentHidden(true,false,false,true,true),"enabled occlusion hides a covered component");
+Check(!DesktopVisibilityPolicy.ComponentHidden(true,false,false,false,true),"disabled occlusion leaves a covered component visible");
+Check(!DesktopVisibilityPolicy.ComponentHidden(true,false,false,true,false),"uncovered component is visible");
+Check(DesktopVisibilityPolicy.ComponentHidden(false,false,false,false,true),"disabled monitor or component still hides with occlusion off");
+Check(!DesktopVisibilityPolicy.IsApplicationSurface(0x8,"tooltips_class32"),"topmost tooltip cannot hide its own hovered widget");
+Check(DesktopVisibilityPolicy.IsApplicationSurface(0x8,"Chrome_WidgetWin_1"),"ordinary topmost application can still cover a widget");
+Check(DesktopVisibilityPolicy.ComponentHidden(true,true,false,false,true),"lock remains authoritative with occlusion off");
+Check(DesktopVisibilityPolicy.ComponentHidden(true,false,true,false,true),"display off remains authoritative with occlusion off");
+using(var component=new System.Windows.Forms.Form{ShowInTaskbar=false}){
+ DesktopVisibilityPolicy.SetComponentVisible(component,false,true);Check(component.Visible&&component.TopMost,"native component stays above ordinary windows without an occlusion override");
+ DesktopVisibilityPolicy.SetComponentVisible(component,DesktopVisibilityPolicy.ComponentHidden(true,false,false,true,true),true);Check(!component.Visible,"native component hides on actual visibility branch");
+ DesktopVisibilityPolicy.SetComponentVisible(component,DesktopVisibilityPolicy.ComponentHidden(true,false,false,false,true),true);Check(component.Visible&&component.TopMost,"native component reappears in front when occlusion is disabled");
+ DesktopVisibilityPolicy.SetComponentVisible(component,DesktopVisibilityPolicy.ComponentHidden(true,true,false,false,true),true);Check(!component.Visible,"native component remains hidden during lock");
+}
 }}
