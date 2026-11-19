@@ -16,9 +16,9 @@ internal sealed class CompanionProcessState {
  public string startTicks,state;
  public bool companionRunning,active,running,screen,pointer,audio;
 
- internal static CompanionProcessState Read(string root){
+ internal static CompanionProcessState Read(string root,string fileName=FileName){
   try{
-   string source=DesktopSettingsFiles.Read(Path.Combine(root,FileName));
+   string source=DesktopSettingsFiles.Read(Path.Combine(root,fileName));
    if(String.IsNullOrEmpty(source)||source.Length>4096)return new CompanionProcessState();
    var status=new JavaScriptSerializer().Deserialize<CompanionProcessState>(source);
    if(status==null||status.version!=1||status.pid<=0)return new CompanionProcessState();
@@ -44,10 +44,11 @@ internal sealed class CompanionSession : ApplicationContext {
  readonly DockLyrics lyrics;
  readonly CompanionHost companion;
  readonly AutoUpdates updates;
+ readonly bool recoverOnly;
  CompanionManagementWindow management;
  NotifyIcon tray;
  string published="";
- bool starting=true,retainedSources,updating,readingStatus,closing;
+ bool starting=true,retainedSources,updating,readingStatus,closing,recoveryPending;
  DateTime recoveryAt,updateProbe;
 
  internal static void Open(string root){
@@ -55,6 +56,7 @@ internal sealed class CompanionSession : ApplicationContext {
  }
  internal CompanionSession(string directory,string mode){
   root=directory;hostFile=Path.Combine(root,CompanionProcessState.FileName);
+  recoverOnly=mode=="--recover-companion";
   using(var process=Process.GetCurrentProcess()){status.pid=process.Id;status.startTicks=process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture);}
   Publish();
   owner.CreateControl();
@@ -65,7 +67,7 @@ internal sealed class CompanionSession : ApplicationContext {
   Task.Run(()=>library.Refresh());
   timer.Tick+=(s,e)=>Tick();
   owner.BeginInvoke(new Action(async()=>{
-   await companion.RecoverIdleDisplay();
+   await RecoverDisplay();
    recoveryAt=DateTime.UtcNow.AddSeconds(5);
    if(mode=="--ensure-companion"&&!await companion.RestoreService())companion.Show();
    if(mode=="--companion")companion.Show();
@@ -85,7 +87,7 @@ internal sealed class CompanionSession : ApplicationContext {
   if(DesktopSession.Take(root,ControlsRequest)){var pending=companion.StopRemoteControls();}
   DateTime now=DateTime.UtcNow;
   if(now>=updateProbe){updateProbe=now.AddSeconds(1);updates.Tick();}
-  if(now>=recoveryAt){recoveryAt=now.AddSeconds(5);var recovery=companion.RecoverIdleDisplay();}
+  if(now>=recoveryAt){recoveryAt=now.AddSeconds(5);var recovery=RecoverDisplay();}
   status.companionRunning=companion.IsRunning;
   if(status.companionRunning)PublishActivity();
   else{status.running=status.screen=status.pointer=status.audio=false;status.connected=0;}
@@ -93,8 +95,9 @@ internal sealed class CompanionSession : ApplicationContext {
   Publish();
   if(status.companionRunning){retainedSources=true;ShowTray();lyrics.Tick(now,false,false,false);return;}
   CloseTray();CleanupSources();
-  if(!status.active&&(management==null||management.IsDisposed))ExitThread();
+  if(!status.active&&(management==null||management.IsDisposed)&&!(recoverOnly&&recoveryPending&&CompanionProcessState.Read(root,"desktop-host.json").pid!=0))ExitThread();
  }
+ async Task RecoverDisplay(){recoveryPending=!await companion.RecoverIdleDisplay();}
  async void PublishActivity(){
   if(readingStatus)return;
   readingStatus=true;int revision=companion.IslandRevision;

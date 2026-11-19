@@ -58,13 +58,13 @@ internal sealed class CompanionHost : IDisposable {
   SystemEvents.SessionSwitch+=SessionChanged;NetworkChange.NetworkAddressChanged+=NetworkChanged;
  }
  void NetworkChanged(object sender,EventArgs e){if(closed||activeNetwork==null||!owner.IsHandleCreated)return;try{owner.BeginInvoke(new Action(()=>{if(!closed&&management!=null)management.RefreshNetwork();}));}catch(InvalidOperationException){}}
- internal async Task RecoverIdleDisplay(bool startup=false){
-  if(closed||recoveringDisplay||IsLocked())return;
+ internal async Task<bool> RecoverIdleDisplay(bool startup=false){
   string directory=Path.Combine(root,"runtime-data","companion"),failure=Path.Combine(directory,"display-recovery-error.txt");
-  if(!File.Exists(Path.Combine(directory,"screen-stream.json")))return;
+  if(!File.Exists(Path.Combine(directory,"screen-stream.json")))return true;
+  if(closed||recoveringDisplay||IsLocked())return false;
   recoveringDisplay=true;
-  try{bool recovered=startup?RecoverDisplay():await Task.Run(()=>!closed&&RecoverDisplay());if(recovered&&File.Exists(failure))File.Delete(failure);}
-  catch(Exception error){try{File.WriteAllText(failure,error.Message);}catch{}}
+  try{bool recovered=startup?RecoverDisplay():await Task.Run(()=>!closed&&RecoverDisplay());if(recovered&&File.Exists(failure))File.Delete(failure);return recovered;}
+  catch(Exception error){try{File.WriteAllText(failure,error.Message);}catch{}return false;}
   finally{recoveringDisplay=false;}
  }
  void SessionChanged(object sender,SessionSwitchEventArgs e){if(e.Reason==SessionSwitchReason.SessionLock||e.Reason==SessionSwitchReason.SessionLogoff){sessionLocked=true;Interlocked.Increment(ref islandRevision);bridge.StopControls();}else if(e.Reason==SessionSwitchReason.SessionUnlock){sessionLocked=false;Interlocked.Increment(ref islandRevision);}}
