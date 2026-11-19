@@ -81,8 +81,9 @@ internal sealed class CompanionSession : ApplicationContext {
  }
  void Tick(){
   if(starting)return;
+  bool retrying=recoverOnly&&recoveryPending&&CompanionProcessState.Read(root,"desktop-host.json").pid!=0;
   if(DesktopSession.Take(root,StopRequest)){ExitThread();return;}
-  if(DesktopSession.Take(root,UpdateStopRequest)&&companion.TryDrainIdle()){updating=true;ExitThread();return;}
+  if(DesktopSession.Take(root,UpdateStopRequest)&&!retrying&&companion.TryDrainIdle()){updating=true;ExitThread();return;}
   if(DesktopSession.Take(root,OpenRequest))companion.Show();
   if(DesktopSession.Take(root,ControlsRequest)){var pending=companion.StopRemoteControls();}
   DateTime now=DateTime.UtcNow;
@@ -91,11 +92,11 @@ internal sealed class CompanionSession : ApplicationContext {
   status.companionRunning=companion.IsRunning;
   if(status.companionRunning)PublishActivity();
   else{status.running=status.screen=status.pointer=status.audio=false;status.connected=0;}
-  status.active=companion.IsBusy;
+  status.active=companion.IsBusy||retrying;
   Publish();
   if(status.companionRunning){retainedSources=true;ShowTray();lyrics.Tick(now,false,false,false);return;}
   CloseTray();CleanupSources();
-  if(!status.active&&(management==null||management.IsDisposed)&&!(recoverOnly&&recoveryPending&&CompanionProcessState.Read(root,"desktop-host.json").pid!=0))ExitThread();
+  if(!status.active&&(management==null||management.IsDisposed))ExitThread();
  }
  async Task RecoverDisplay(){recoveryPending=!await companion.RecoverIdleDisplay();}
  async void PublishActivity(){

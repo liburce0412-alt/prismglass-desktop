@@ -20,6 +20,8 @@ $launcher=Join-Path $app 'PrismGlass.exe';$userData=Join-Path $app 'runtime-data
 $asset='PrismGlass-Setup-2.1.0-x64.exe';$download=Join-Path $cache $asset
 $result=Join-Path $cache 'apply-result.json';$staged=Join-Path $cache 'staged.json'
 $installRecord=Join-Path $script:fixtureRoot 'prismglass-install.json'
+$ownerRecord=Join-Path $skin '.prismglass-owner.json'
+$newSkin=Join-Path $skin 'Bonsai/Main.ini';$unowned=Join-Path $skin 'Bonsai/user.txt'
 $script:fixtureSource=$source.Replace('$PSScriptRoot','$script:fixtureRoot').Replace('Local\PrismGlassApplyUpdate','Local\PrismUpdateFixture-'+$id).Replace('Local\PrismGlassDesktopMode','Local\PrismUpdateFixtureMode-'+$id)
 Replace-WorkerFunction 'Read-OfficialUpdateRelease' 'function Read-OfficialUpdateRelease {$script:events.Add("official");if($script:networkFailed){throw "fixture offline"};if($script:becameBusy){$script:companion.active=$true};if($script:desktopClosed){$script:desktop=$null};return $script:official}'
 Replace-WorkerFunction 'Read-ActiveUpdateOwner' @'
@@ -49,7 +51,12 @@ function Start-Process($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru){
   $script:events.Add('install')
   [IO.File]::WriteAllText($exe,'new executable');[IO.File]::WriteAllText($skinFile,'new skin')
   if(!$script:failInstall){$script:productVersion='2.1.0+verified';$script:installation.buildId=$script:productVersion;Save-Json $installRecord $script:installation}
-  else{[IO.File]::Delete($skinFile);[IO.Directory]::Delete((Split-Path -Parent $skinFile))}
+  else{
+   [IO.File]::Delete($skinFile);[IO.Directory]::Delete((Split-Path -Parent $skinFile))
+   [void][IO.Directory]::CreateDirectory((Split-Path -Parent $newSkin))
+   Save-Json $ownerRecord @{product='PrismGlass.Desktop';root=$script:fixtureRoot;files=@('Bonsai/Main.ini')}
+   [IO.File]::WriteAllText($newSkin,'new owned skin');[IO.File]::WriteAllText($unowned,'unrelated user file')
+  }
   return New-ProcessStub ([int]$script:failInstall)
  }
  if($FilePath -eq $exe -and $ArgumentList -contains '--ensure-companion'){$script:events.Add('reopen-companion');return}
@@ -63,7 +70,7 @@ function Setup-FakeInstall($busy,$badAsset,$badBytes,$fail,[bool]$becomesBusy=$f
  $script:installation=@{product='PrismGlass.Desktop';version=1;root=$script:fixtureRoot;skin=$skin;rainmeter=(Join-Path $fixture 'Rainmeter.exe');powershell=(Join-Path $fixture 'powershell.exe');buildId=$script:productVersion}
  Save-Json $installRecord $script:installation
  Save-Json (Join-Path $script:fixtureRoot 'update-inventory.json') @{format=1;files=@('LiquidDesktop/LiquidDesktop.exe','LiquidDesktop/PrismGlass.exe','DesktopMode.ps1')}
- Save-Json (Join-Path $skin '.prismglass-owner.json') @{product='PrismGlass.Desktop';root=$script:fixtureRoot;files=@('Dock/Main.ini')}
+ Save-Json $ownerRecord @{product='PrismGlass.Desktop';root=$script:fixtureRoot;files=@('Dock/Main.ini')}
  [IO.File]::WriteAllText($exe,'old executable');[IO.File]::WriteAllText($launcher,'fixture launcher')
  [IO.File]::WriteAllText($skinFile,'old skin');[IO.File]::WriteAllText($userData,'private state')
  [IO.File]::WriteAllText((Join-Path $script:fixtureRoot 'DesktopMode.ps1'),'inert fixture')
@@ -105,6 +112,7 @@ try{
  Setup-FakeInstall $false $false $false $true
  & $worker
  Check ((($script:events -join '|') -eq 'official|stop-companion|stop-desktop|install|reopen-companion|reopen-desktop') -and ([IO.File]::ReadAllText($exe) -eq 'old executable') -and ([IO.File]::ReadAllText($skinFile) -eq 'old skin')) 'Failure restores managed files and retired skin directories and reopens both previous components'
+ Check (!(Test-Path -LiteralPath $newSkin) -and ([IO.File]::ReadAllText($unowned) -eq 'unrelated user file') -and (([IO.File]::ReadAllText($ownerRecord)|ConvertFrom-Json).files -contains 'Dock/Main.ini')) 'Rollback clears only newly owned skins so future upgrade preflight can retry'
  Setup-FakeInstall $false $false $false $false
  & $worker
  Check ((($script:events -join '|') -eq 'official|stop-companion|stop-desktop|install|reopen-companion|reopen-desktop') -and (([IO.File]::ReadAllText($result)|ConvertFrom-Json).status -eq 'succeeded') -and !(Test-Path $download) -and !(Test-Path $staged) -and ([IO.File]::ReadAllText($userData) -eq 'private state')) 'Successful in-place update reopens both roles, clears staging and preserves personal data'

@@ -86,6 +86,18 @@ function Get-UpdateBackupFiles([string]$Root,[string]$Skin,$SkinOwner){
  foreach($name in @($SkinOwner.files)){if($name){Resolve-OwnedUpdatePath $Skin $name}}
  Resolve-OwnedUpdatePath $Skin '.prismglass-owner.json'
 }
+function Remove-FailedUpdateSkins([string]$Root,[string]$Skin,$Before){
+ $after=Read-UpdateJson (Resolve-OwnedUpdatePath $Skin '.prismglass-owner.json') 262144
+ if(!$after){return}
+ if($after.product -cne 'PrismGlass.Desktop' -or $after.root -ine $Root -or @($after.files).Count -gt 2048){throw 'Cannot verify ownership of skins added by the failed installer.'}
+ $original=@(foreach($name in @($Before.files)){if($name){Resolve-OwnedUpdatePath $Skin $name}})
+ $added=@(foreach($name in @($after.files)){
+  if(!$name){continue}
+  $path=Resolve-OwnedUpdatePath $Skin $name
+  if($path -notin $original -and (Test-Path -LiteralPath $path -PathType Leaf)){if($path -eq (Join-Path $Skin '.prismglass-owner.json')){throw 'Unexpected owner record in skin list.'};$path}
+ })
+ foreach($path in $added){Remove-Item -LiteralPath $path -Force}
+}
 
 $Root=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\','/')
 $record=Read-UpdateJson (Resolve-OwnedUpdatePath $Root 'prismglass-install.json')
@@ -175,6 +187,7 @@ try{
 }catch{
  $message=$_.Exception.Message
  if($installStarted){
+  try{Remove-FailedUpdateSkins $Root $skin $skinOwner}catch{$restoreFailed=$true}
   foreach($saved in $restore){
    try{
     $dir=Split-Path -Parent $saved.file
