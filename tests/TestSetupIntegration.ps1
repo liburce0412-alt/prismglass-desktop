@@ -98,6 +98,24 @@ try{
  Install-SetupSkin $install $skin $record.powershell $record.latitude $record.longitude
  Check ([IO.File]::ReadAllText($main).StartsWith('updated ')) 'Upgrade replaces owned skin code'
  Check ([IO.File]::ReadAllText((Join-Path $skin 'user-note.txt')) -eq 'keep skin note') 'Upgrade preserves unrelated skin data'
+ $newTemplate=Join-Path $install 'rainmeter/PrismGlass/Bonsai/Main.ini'
+ $customSkin=Join-Path $skin 'Bonsai/Main.ini'
+ foreach($file in $newTemplate,$customSkin){New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null}
+ [IO.File]::WriteAllText($newTemplate,'bundled bonsai')
+ [IO.File]::WriteAllText($customSkin,'user bonsai')
+ $skinList=Join-Path $fixture 'installer-skins.txt'
+ [IO.File]::WriteAllLines($skinList,[string[]]@('Dock\Main.ini','Bonsai\Main.ini'))
+ $configure=@{Root=$install;RainmeterPath=$rainmeter;PowerShellPath=$pwsh;RainmeterIni=$settings}
+ Reject {& $source -Mode Preflight @configure -SkinManifest $skinList} 'Packaged upgrade is blocked before copying a same-name unowned skin'
+ Check ([IO.File]::ReadAllText($skinList+'.error').Contains($customSkin)) 'Installer preflight reports the precise conflicting skin path'
+ $manifestBefore=[IO.File]::ReadAllText((Join-Path $skin '.prismglass-owner.json'))
+ [IO.File]::WriteAllText((Join-Path $templates 'Main.ini'),'should not be copied')
+ Reject {Install-SetupSkin $install $skin $record.powershell $record.latitude $record.longitude} 'Direct skin integration also rejects the unowned collision'
+ Check ([IO.File]::ReadAllText($customSkin) -ceq 'user bonsai' -and [IO.File]::ReadAllText($main).StartsWith('updated ') -and [IO.File]::ReadAllText((Join-Path $skin '.prismglass-owner.json')) -ceq $manifestBefore) 'Rejected upgrade preserves custom data, other skin files and ownership'
+ Remove-Item -LiteralPath $customSkin
+ & $source -Mode Preflight @configure -SkinManifest $skinList | Out-Null
+ Install-SetupSkin $install $skin $record.powershell $record.latitude $record.longitude
+ Check ([IO.File]::ReadAllText($customSkin) -ceq 'bundled bonsai' -and 'Bonsai\Main.ini' -in (Read-SetupRecord (Join-Path $skin '.prismglass-owner.json')).files) 'With the conflict removed, clean upgrade installs and tracks the new skin'
  $foreign=Join-Path $fixture 'foreign'
  Reject {Assert-SetupOwnership $foreign $skin $true} 'Another installation cannot take over owned skin'
  $ownerPath=Join-Path $skin '.prismglass-owner.json';$owner=Read-SetupRecord $ownerPath
@@ -126,7 +144,7 @@ try{
  $owner=Read-SetupRecord $ownerPath;$owner.files+=@('..\outside.txt');Write-SetupRecord $ownerPath $owner
  Reject {Remove-SetupSkin $install $skin} 'Escaping uninstall manifest is rejected before deletion'
  Check (Test-Path -LiteralPath $main) 'Failed uninstall validation preserves program skin'
- $owner.files=@('Dock\Main.ini');Write-SetupRecord $ownerPath $owner
+ $owner.files=@('Dock\Main.ini','Bonsai\Main.ini');Write-SetupRecord $ownerPath $owner
  Remove-SetupSkin $install $skin
  Check (!(Test-Path -LiteralPath $main)) 'Uninstall removes the owned skin file'
  Check (Test-Path -LiteralPath (Join-Path $skin 'user-note.txt')) 'Uninstall preserves unowned user skin files'

@@ -42,9 +42,10 @@ assert.doesNotMatch(help[3], /<script|https?:\/\//);
 
 // No service worker or private offline cache is introduced by the install affordance.
 const scripts = Array.from(html.matchAll(/<script\b[^>]*src="([^"]+)"/g), m => m[1]);
+const shared = new Set(['/lyrics-style.js', '/glass-materials.js', '/continuous-level.js', '/prism-hint.js', '/functional-icons.js']);
 for (const script of scripts) {
   assert.match(script, /^\/[a-z0-9-]+\.js$/);
-  const directory = ['/lyrics-style.js', '/glass-materials.js'].includes(script) ? path.dirname(web) : web;
+  const directory = shared.has(script) ? path.dirname(web) : web;
   const source = fs.readFileSync(path.join(directory, script.slice(1)), 'utf8');
   assert.doesNotMatch(source, /serviceWorker\s*\.\s*register\s*\(|\bcaches\s*\.\s*open\s*\(/);
 }

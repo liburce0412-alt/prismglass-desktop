@@ -32,6 +32,7 @@ internal sealed partial class StageManager:IDisposable {
  [DllImport("user32.dll")]static extern IntPtr SendMessageTimeout(IntPtr window,uint message,IntPtr wParam,ref MinMax limits,uint flags,uint timeout,out IntPtr result);
  [DllImport("user32.dll")]static extern int GetSystemMetrics(int index);
  readonly string journal;readonly Action cancelMotion;readonly Func<List<DockWindow>> readWindows;
+ volatile bool journalClosed;
  readonly List<Member> unresolved=new List<Member>();readonly HashSet<Member> restoring=new HashSet<Member>();bool wasSelected;
  readonly List<Group> groups=new List<Group>();readonly Dictionary<string,Group> active=new Dictionary<string,Group>();readonly Dictionary<string,StageStrip> strips=new Dictionary<string,StageStrip>();
  Dictionary<string,Rectangle> areas=new Dictionary<string,Rectangle>();HashSet<string> fullscreen=new HashSet<string>();bool enabled,switching,disposed,suspended;DateTime scan;string saved="";
@@ -109,6 +110,7 @@ internal sealed partial class StageManager:IDisposable {
   pendingStates++;try{return await placement;}catch(Exception ex){Error=ex.Message;return false;}finally{pendingStates--;ClearStoppedRecovery();}
  }
  async Task<bool> Place(Member member,bool original,bool visibilityOnly=false,Placement? overridePlacement=null){
+  if(journalClosed)return false;
   if(!original&&DockBackend.Valid(member.window)){
    var before=Read(member.window);var target=member.layout;int show=target.show==2?((target.flags&2)!=0?3:1):target.show;
    if(!before.normal.Equals(target.normal))member.geometryIntent=target;
@@ -116,11 +118,12 @@ internal sealed partial class StageManager:IDisposable {
    Save();
   }
   var snapshot=new Member{window=member.window,layout=member.layout,original=overridePlacement??member.original};
-  var applied=WatchPlacement(member.placements.Submit(()=>Restore(snapshot,original,visibilityOnly)));
+  var applied=WatchPlacement(member.placements.Submit(()=>!journalClosed&&Restore(snapshot,original,visibilityOnly)));
   if(!original&&await Task.WhenAny(applied,Task.Delay(450))!=applied)return false;
   return await applied;
  }
  void Save(){
+  if(journalClosed)return;
   var all=groups.SelectMany(g=>g.members).Concat(unresolved).ToList();
   if(all.Count==0){if(File.Exists(journal))File.Delete(journal);saved="";return;}
   string value=new JavaScriptSerializer().Serialize(all);if(value==saved)return;DesktopSettingsFiles.Write(journal,value);saved=value;
@@ -135,8 +138,9 @@ internal sealed partial class StageManager:IDisposable {
   return original;
  }
  async Task RecoverMember(Member member){
-  if(!restoring.Add(member))return;try{
+  if(journalClosed||!restoring.Add(member))return;try{
    bool ok=await member.placements.Submit(()=>{
+    if(journalClosed)return false;
     if(!DockBackend.Valid(member.window)||!DockBackend.CanManage(member.window))return true;
     var target=RecoveryTarget(member,Read(member.window));return Restore(new Member{window=member.window,original=target},true);
    });
@@ -277,7 +281,7 @@ internal sealed partial class StageManager:IDisposable {
    }
   }
  }
- void ClearStoppedRecovery(){if(enabled||pendingStates>0||unresolved.Count>0||!stoppedRestored)return;try{if(File.Exists(journal))File.Delete(journal);stoppedRestored=false;}catch(IOException){}}
+ void ClearStoppedRecovery(){if(enabled||pendingStates>0||unresolved.Count>0||!stoppedRestored)return;try{Save();stoppedRestored=false;}catch(IOException){}}
  async Task<bool> Minimize(Member member,Func<bool> wanted){
   if(!wanted())return false;if(DockBackend.Valid(member.window)&&!NativeWindowMotion.IsIconic(new IntPtr(member.window.handle))){member.visibilityIntent=2;Save();}int membership=membershipEpoch,display=displayEpoch;pendingStates++;
   try{
@@ -510,7 +514,10 @@ internal sealed partial class StageManager:IDisposable {
   try{await Task.WhenAll(members.Select(RecoverMember));stoppedRestored=unresolved.Count==0;ClearStoppedRecovery();}
   catch(Exception ex){stoppedRestored=false;Error=ex.Message;}finally{stopping=false;}
  }
- internal async Task DrainClose(){Dispose();var start=Stopwatch.StartNew();while((pendingStates>0||stopping||recovering||unresolved.Any(m=>m.placements.Busy))&&start.ElapsedMilliseconds<1200)await Task.Delay(10);}
+ internal async Task DrainClose(){
+  try{Dispose();var start=Stopwatch.StartNew();while((pendingStates>0||stopping||recovering||unresolved.Any(m=>m.placements.Busy))&&start.ElapsedMilliseconds<1200)await Task.Delay(10);}
+  finally{journalClosed=true;} // The next renderer owns the journal even if old native work completes later.
+ }
  public void Dispose(){if(disposed)return;disposed=true;Stop();thumbnails.Dispose();}
 
 }

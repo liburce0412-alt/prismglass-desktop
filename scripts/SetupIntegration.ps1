@@ -4,6 +4,7 @@
  [string]$RainmeterPath,
  [string]$PowerShellPath,
  [string]$RainmeterIni,
+ [string]$SkinManifest,
  [double]$Latitude=51.5,
  [double]$Longitude=-0.12
 )
@@ -84,11 +85,21 @@ function Remove-SetupLoginStartup([string]$InstallRoot,[string]$StartupRoot,[swi
   if($legacy){$link.Path=$launcher;$link.Arguments='--login';$link.ShowCommand=1;$link.Save()}
  }elseif($legacy -or ($link.Path -eq $launcher -and $link.Arguments -eq '--login')){Remove-Item -LiteralPath $path}
 }
+function Assert-SetupSkinTargets([string]$SkinRoot,[string[]]$RelativePaths,$Previous) {
+ foreach($relative in $RelativePaths){
+  if([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative)){throw 'Invalid package skin path.'}
+  $target=Resolve-SetupPath (Join-Path $SkinRoot $relative)
+  if(!$target.StartsWith($SkinRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Skin file escaped its installation directory.'}
+  if((Test-Path -LiteralPath $target) -and ($relative -notin $Previous.files -or !(Test-Path -LiteralPath $target -PathType Leaf))){throw ('已有同名自定义皮肤文件，已保留：'+$target)}
+ }
+}
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {
  $source=Join-Path $InstallRoot 'rainmeter/PrismGlass'
  if(!(Test-Path -LiteralPath (Join-Path $source 'Dock/Main.ini'))){throw 'The installation package is missing its Dock skin.'}
  $files=@(Get-ChildItem -LiteralPath $source -File -Recurse)
  $previous=Read-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json')
+ $relativePaths=@($files | ForEach-Object {$_.FullName.Substring($source.TrimEnd('\','/').Length+1)})
+ Assert-SetupSkinTargets $SkinRoot $relativePaths $previous
  $copied=[Collections.Generic.List[string]]::new()
  if($previous){foreach($relative in $previous.files){$copied.Add([string]$relative)}}
  $retiredFiles=@('Topbar\Main.ini','Starlight\Main.ini','MoodNote\Main.ini','@Resources\AmbientArt\starlight-nebula.png','@Resources\AmbientArt\sunlit-garden.png','@Resources\DockIcons\README.md','@Resources\WidgetArt\hourglass-shell.png','@Resources\WidgetArt\bonsai.png')
@@ -109,13 +120,15 @@ function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,
  foreach($file in $files){
   $relative=$file.FullName.Substring($source.TrimEnd('\','/').Length+1)
   $target=Resolve-SetupPath (Join-Path $SkinRoot $relative)
-  if(!$target.StartsWith($SkinRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Skin file escaped its installation directory.'}
+  if($relative -notin $copied){
+   Assert-SetupSkinTargets $SkinRoot @($relative) $previous
+   $copied.Add($relative);$owner.files=$copied.ToArray();Write-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json') $owner
+  }
   New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
   if($file.Extension -in '.ini','.inc','.lua'){
    $content=[IO.File]::ReadAllText($file.FullName).Replace('{{INSTALL_ROOT}}',$InstallRoot).Replace('{{POWERSHELL}}',$Pwsh).Replace('{{LATITUDE}}',$Lat.ToString([Globalization.CultureInfo]::InvariantCulture)).Replace('{{LONGITUDE}}',$Lon.ToString([Globalization.CultureInfo]::InvariantCulture))
    [IO.File]::WriteAllText($target,$content,[Text.Encoding]::Unicode)
   }else{Copy-Item -LiteralPath $file.FullName -Destination $target -Force}
-  if(!$copied.Contains($relative)){$copied.Add($relative)};$owner.files=$copied.ToArray();Write-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json') $owner
  }
 }
 function Remove-SetupSkin([string]$InstallRoot,[string]$SkinRoot) {
@@ -201,7 +214,14 @@ $skin=Resolve-SetupSkin $RainmeterPath $RainmeterIni
 [void](Assert-SetupOwnership $Root $skin ($Mode -eq 'Preflight'))
 Assert-SetupStopped $Root
 if($Latitude -lt -90 -or $Latitude -gt 90 -or $Longitude -lt -180 -or $Longitude -gt 180 -or [double]::IsNaN($Latitude) -or [double]::IsNaN($Longitude)){throw 'Weather coordinates are invalid.'}
-if($Mode -eq 'Preflight'){'Installation preflight passed; no files or desktop settings changed.';return}
+if($Mode -eq 'Preflight'){
+ if($SkinManifest){
+  $relativePaths=[IO.File]::ReadAllLines($SkinManifest)
+  try{Assert-SetupSkinTargets $skin $relativePaths (Read-SetupRecord (Join-Path $skin '.prismglass-owner.json'))}
+  catch{[IO.File]::WriteAllText($SkinManifest+'.error',$_.Exception.Message,[Text.UTF8Encoding]::new($false));throw}
+ }
+ 'Installation preflight passed; no files or desktop settings changed.';return
+}
 $app=Join-Path $Root 'LiquidDesktop'
 if(!(Test-Path -LiteralPath (Join-Path $app 'LiquidDesktop.exe'))){throw 'The application executable is missing.'}
 if($record){$Latitude=$record.latitude;$Longitude=$record.longitude}

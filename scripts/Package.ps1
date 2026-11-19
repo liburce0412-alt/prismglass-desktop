@@ -40,11 +40,15 @@ foreach($file in Get-ChildItem -LiteralPath $BundleRoot -File -Recurse){
  $entries.Add(('Source: "{0}"; DestDir: "{{app}}\{1}"; Flags: {2}' -f $file.FullName,$destination,$flags))
 }
 $manifest=Join-Path $OutputRoot 'installer-files.iss'
+$skinList=Join-Path $OutputRoot 'installer-skins.txt'
 try{
  [IO.File]::WriteAllLines($manifest,$entries,[Text.UTF8Encoding]::new($false))
- & $Compiler "/DBundleRoot=$BundleRoot" "/DOutputRoot=$OutputRoot" "/DAppVersion=$Version" "/DBuildId=$($build.buildId)" "/DFileList=$manifest" (Join-Path $repo 'packaging/PrismGlass.iss')
+ $skinSource=Join-Path $BundleRoot 'rainmeter/PrismGlass'
+ [string[]]$skinFiles=Get-ChildItem -LiteralPath $skinSource -File -Recurse | ForEach-Object {[IO.Path]::GetRelativePath($skinSource,$_.FullName)}
+ [IO.File]::WriteAllLines($skinList,$skinFiles,[Text.UTF8Encoding]::new($false))
+ & $Compiler "/DBundleRoot=$BundleRoot" "/DOutputRoot=$OutputRoot" "/DAppVersion=$Version" "/DBuildId=$($build.buildId)" "/DFileList=$manifest" "/DSkinList=$skinList" (Join-Path $repo 'packaging/PrismGlass.iss')
  if($LASTEXITCODE -ne 0){throw 'Installer compilation failed.'}
  $installer=Join-Path $OutputRoot "PrismGlass-Setup-$Version-x64.exe"
  if(!(Test-Path -LiteralPath $installer)){throw 'Installer compiler did not produce its expected output.'}
  Write-Output $installer
-}finally{if(Test-Path -LiteralPath $manifest){Remove-Item -LiteralPath $manifest}}
+}finally{foreach($generated in $manifest,$skinList){if(Test-Path -LiteralPath $generated){Remove-Item -LiteralPath $generated}}}
