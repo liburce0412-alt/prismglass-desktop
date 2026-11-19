@@ -73,6 +73,7 @@ internal static class TestCompanionHost {
     Check(server.BeforeScreen("8.8.8.8",grant,offer).Status==403&&reads==0,"public peer cannot trigger video configuration");
     Check(server.BeforeScreen("192.168.1.90",grant,null).Status==400&&server.BeforeScreen("192.168.1.90",grant,"bad").Status==400&&reads==0,"invalid signaling cannot prompt for network changes");
     Check(server.BeforeScreen("192.168.1.90",grant,offer).Status==409,"video preflight returns pending without blocking transport");
+    Check(!host.TryDrainIdle(),"maintenance defers while video preflight waits for the UI");
     await Task.Delay(25);var rejected=server.BeforeScreen("192.168.1.90",grant,offer);Check(rejected!=null&&System.Text.Encoding.UTF8.GetString(rejected.Body).Contains("cancelled")&&prompts==1&&applies==0,"declined repair creates no rule and repeated signaling does not reprompt");
     Check((bool)Snapshot(host)["error"]&&!(bool)Snapshot(host)["busy"]&&((string)Snapshot(host)["notice"]).Contains("取消"),"desktop settings reports cancellation and leaves retry available");
     var approval=new TaskCompletionSource<int>();host.ConfirmVideo=text=>{prompts++;return true;};host.ApplyVideoPlan=(r,a,p,scope)=>{Check(scope==approved,"approved video scope reaches elevation unchanged");applies++;return approval.Task;};
@@ -115,6 +116,7 @@ internal static class TestCompanionHost {
     try{
      var state=snapshot();Check((bool)state["running"]&&(int)state["connected"]==1&&!(bool)state["screen"]&&!(bool)state["pointer"]&&state.Count==5&&!(bool)state["audio"],"island exposes only running state, recent device count and active control flags");
      controls.Pointer("/api/pointer/begin",new Dictionary<string,object>(),grant);stream.Handle("/api/screen/begin",offer,grant);state=snapshot();Check((bool)state["screen"]&&(bool)state["pointer"],"island screen and pointer flags follow actual owned runtime leases");
+     Check(!host.TryDrainIdle()&&runtime.stops==0,"maintenance leaves live capture and pointer leases running");
      string identity=json.Serialize(device);int revision=host.IslandRevision,uiThread=Thread.CurrentThread.ManagedThreadId;runtime.onStop=()=>{entered.Set();release.Wait(3000);};var stopping=host.StopRemoteControls();
      for(int i=0;i<100&&!entered.IsSet;i++)await Task.Delay(10);
      Check(entered.IsSet&&!stopping.IsCompleted&&host.IslandRevision!=revision&&runtime.stopThread!=uiThread,"stop runs away from the UI and immediately invalidates an older pending snapshot");
@@ -131,6 +133,7 @@ internal static class TestCompanionHost {
      Check(!(bool)state["running"]&&(int)state["connected"]==0&&!(bool)state["screen"]&&!(bool)state["pointer"]&&revision!=host.IslandRevision,"session lock clears all island activity and invalidates queued snapshots");
      typeof(CompanionHost).GetMethod("SessionChanged",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(host,new object[]{null,new Microsoft.Win32.SessionSwitchEventArgs(Microsoft.Win32.SessionSwitchReason.SessionUnlock)});
      revision=host.IslandRevision;listener.SetValue(server,null);await Manage(host,"stop");state=snapshot();Check(!(bool)state["running"]&&(int)state["connected"]==0&&revision!=host.IslandRevision,"stopping the service invalidates its pending island snapshot");
+     Check(host.TryDrainIdle()&&server.BeforeScreen("192.168.1.90",grant,"v=0\r\n").Status==503,"idle maintenance closes admission for later video starts");
     }finally{release.Set();runtime.failStop=false;runtime.onStop=null;listener.SetValue(server,null);streamField.SetValue(bridge,null);}
    }
   }

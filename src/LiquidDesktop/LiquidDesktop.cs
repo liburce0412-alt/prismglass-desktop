@@ -38,7 +38,7 @@ internal sealed class LiquidDesktop : Form {
  readonly DesktopPreferences preferences;readonly SharedDesktopData sharedData;readonly MonitorDock monitorDock;readonly DesktopWidgets desktopWidgets;bool widgetsWereDragging;
  readonly Dictionary<string,LiquidDesktop> displays=new Dictionary<string,LiquidDesktop>(StringComparer.OrdinalIgnoreCase);
  readonly HashSet<string> failedDisplays=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
- CompanionHost companion;AppLibrary library;WorkspaceWindow workspace;RuntimePolicy runtime;HotkeyBinding hotkeys;NotifyIcon tray;long preferenceRevision;string hotkeyError="",monitorError="",runtimeKey="",motionKey="";string pendingShelfContent="";bool reconciling,tearingDown,draggingDock,legacyManagerOpen;DateTime settingsRead=DateTime.MinValue,displaysRead=DateTime.MinValue,requestsRead=DateTime.MinValue;string[] pauseReasons=new string[0];
+ AppLibrary library;WorkspaceWindow workspace;RuntimePolicy runtime;HotkeyBinding hotkeys;NotifyIcon tray;long preferenceRevision;string hotkeyError="",monitorError="",runtimeKey="",motionKey="";string pendingShelfContent="";bool reconciling,tearingDown,draggingDock,legacyManagerOpen;DateTime settingsRead=DateTime.MinValue,displaysRead=DateTime.MinValue,requestsRead=DateTime.MinValue;string[] pauseReasons=new string[0];
  bool systemAnimations=true,welcomePending;
  NativeWindowMotion windowMotion;StageManager stages;
  [DllImport("user32.dll")]static extern bool SystemParametersInfo(uint action,uint parameter,[MarshalAs(UnmanagedType.Bool)]out bool value,uint flags);
@@ -152,7 +152,7 @@ internal sealed class LiquidDesktop : Form {
   preferences=session.Preferences;sharedData=session.SharedData;cursorTrail=primaryHost?new CursorTrail():null;monitorDock=new MonitorDock(root,instance){Dispatch=new RainmeterDispatch()};desktopWidgets=primaryHost?new DesktopWidgets(root){Dispatch=new RainmeterDispatch()}:owner.desktopWidgets;
   welcomePending=primaryHost&&preferences.IsFirstRun&&!preferences.Current.welcomeShown;
   lyrics=session.Lyrics;
-  if(primaryHost){GlassWindow.Hint=NativeHintHost.Receive;lyrics.VisualChanged+=Broadcast;backend=new DockBackend(root);backend.Refresh();library=session.Library;companion=session.Companion;preferences.Changed+=PreferencesChanged;
+  if(primaryHost){GlassWindow.Hint=NativeHintHost.Receive;lyrics.VisualChanged+=Broadcast;backend=new DockBackend(root);backend.Refresh();library=session.Library;preferences.Changed+=PreferencesChanged;
    windowMotion=new NativeWindowMotion(()=>preferences.Current.windowAnimations&&MotionAllowed(),WindowIcon);DockBackend.Animate=(entry,action,window)=>{if(action==DockClickAction.ChooseWindow&&DockPreview.TryPromote(entry))return true;ClosePreviews(entry.id);return windowMotion.Interact(entry,action,window);};DockBackend.AnimateRestore=windowMotion.Restore;
    stages=new StageManager(root,()=>windowMotion.Cancel());DockBackend.Activating=window=>{ClosePreviews(null);return stages.Activating(window,preferences.Current.windowAnimations);};DockPreview.MotionAllowed=MotionAllowed;
    bool stageClosing=false,stageClosed=false;
@@ -168,7 +168,7 @@ internal sealed class LiquidDesktop : Form {
   screen=monitor.Screen.Bounds;Bounds=screen;Region=new Region(Rectangle.Empty);Enabled=false;
   view.Dock=DockStyle.Fill;Controls.Add(view);opticalBackdrop=GlassWindow.Configure(this,view);
   Shown+=async(s,e)=>{try{
-   if(primaryHost){shellMessage=RegisterWindowMessage("SHELLHOOK");RegisterShellHookWindow(Handle);runtime=new RuntimePolicy(Handle);runtime.Changed+=RuntimeChanged;rawPointer=new DesktopRawMouseInput(Handle,RawPointerChanged);rawPointer.Enable(!runtime.Signals.locked&&!runtime.Signals.displayOff);SystemEvents.DisplaySettingsChanged+=DisplayChanged;hotkeys=new HotkeyBinding(Handle);preferences.PrepareHotkey=hotkeys.Prepare;try{hotkeys.Prepare(preferences.Current.hotkey);hotkeys.Commit();}catch(Exception ex){hotkeyError=ex.Message;}workspace=new WorkspaceWindow(root,library,preferences);workspace.SharedData=sharedData;workspace.SettingsChanged+=PreferencesChanged;workspace.Companion=companion;SetupTray();}
+   if(primaryHost){shellMessage=RegisterWindowMessage("SHELLHOOK");RegisterShellHookWindow(Handle);runtime=new RuntimePolicy(Handle);runtime.Changed+=RuntimeChanged;rawPointer=new DesktopRawMouseInput(Handle,RawPointerChanged);rawPointer.Enable(!runtime.Signals.locked&&!runtime.Signals.displayOff);SystemEvents.DisplaySettingsChanged+=DisplayChanged;hotkeys=new HotkeyBinding(Handle);preferences.PrepareHotkey=hotkeys.Prepare;try{hotkeys.Prepare(preferences.Current.hotkey);hotkeys.Commit();}catch(Exception ex){hotkeyError=ex.Message;}workspace=new WorkspaceWindow(root,library,preferences);workspace.SharedData=sharedData;workspace.Updates=session.Updates;workspace.SettingsChanged+=PreferencesChanged;SetupTray();}
    if(primaryHost&&preferences.Current.desktopWidgets.Count>0&&StartupWindowOrder.MaskVisible()&&!runtime.Signals.locked&&!runtime.Signals.displayOff&&MonitorCatalog.Read().Any(item=>preferences.ForMonitor(item.Id,item.Primary).enabled))desktopWidgets.Preload(preferences.Current.desktopWidgets);
    var env=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,"runtime-data"));
    if(closing)return;await view.EnsureCoreWebView2Async(env);if(closing)return;SyncPixelScale();
@@ -192,12 +192,11 @@ internal sealed class LiquidDesktop : Form {
    view.Source=new Uri("https://desktop.local/index.html");
    timer.Interval=8;timer.Tick+=(ss,a)=>Tick();timer.Start();
   }catch(Exception ex){if(!closing){File.WriteAllText(Diagnostic("error.txt"),ex.ToString());Close();}}};
-  FormClosed+=(s,e)=>{if(primaryHost)DockPreview.CloseActive();if(dockLabel!=null)dockLabel.Dispose();closing=true;if(rawPointer!=null)rawPointer.Dispose();pointerDelivery.Reset();timer.Stop();timer.Dispose();if(primaryHost){SystemEvents.DisplaySettingsChanged-=DisplayChanged;preferences.Changed-=PreferencesChanged;preferences.PrepareHotkey=null;SystemTray.Cancel();DeregisterShellHookWindow(Handle);backend.CancelDrag();if(tray!=null){tray.Visible=false;tray.ContextMenuStrip.Dispose();tray.Dispose();}if(runtime!=null)runtime.Dispose();if(hotkeys!=null)hotkeys.Dispose();if(workspace!=null){if(companion.DialogOwner==workspace)companion.DialogOwner=null;workspace.Dispose();}foreach(var host in new List<LiquidDesktop>(displays.Values))host.Close();displays.Clear();lyrics.VisualChanged-=Broadcast;lyrics.DesktopMediaActive=false;cursorTrail.Dispose();desktopWidgets.Dispose();HideLegacyTopbar();}tearingDown=true;if(sideDock!=null)sideDock.Dispose();if(topIsland!=null)topIsland.Dispose();if(fileShelf!=null)fileShelf.Dispose();if(preview!=null)preview.Dispose();monitorDock.Dispose();dockPlate.Dispose();view.Dispose();if(primaryHost){RestoreIcons();Taskbar(true);}try{File.Delete(Diagnostic("heartbeat.txt"));File.Delete(Path.Combine(root,"dock-motion-"+instance+".txt"));}catch{}};
+  FormClosed+=(s,e)=>{if(primaryHost)DockPreview.CloseActive();if(dockLabel!=null)dockLabel.Dispose();closing=true;if(rawPointer!=null)rawPointer.Dispose();pointerDelivery.Reset();timer.Stop();timer.Dispose();if(primaryHost){SystemEvents.DisplaySettingsChanged-=DisplayChanged;preferences.Changed-=PreferencesChanged;preferences.PrepareHotkey=null;SystemTray.Cancel();DeregisterShellHookWindow(Handle);backend.CancelDrag();if(tray!=null){tray.Visible=false;tray.ContextMenuStrip.Dispose();tray.Dispose();}if(runtime!=null)runtime.Dispose();if(hotkeys!=null)hotkeys.Dispose();if(workspace!=null)workspace.Dispose();foreach(var host in new List<LiquidDesktop>(displays.Values))host.Close();displays.Clear();lyrics.VisualChanged-=Broadcast;lyrics.DesktopMediaActive=false;cursorTrail.Dispose();desktopWidgets.Dispose();HideLegacyTopbar();}tearingDown=true;if(sideDock!=null)sideDock.Dispose();if(topIsland!=null)topIsland.Dispose();if(fileShelf!=null)fileShelf.Dispose();if(preview!=null)preview.Dispose();monitorDock.Dispose();dockPlate.Dispose();view.Dispose();if(primaryHost){RestoreIcons();Taskbar(true);}try{File.Delete(Diagnostic("heartbeat.txt"));File.Delete(Path.Combine(root,"dock-motion-"+instance+".txt"));}catch{}};
  }
  string Read(string file,string fallback){try{return File.ReadAllText(Path.Combine(root,file)).Trim();}catch{return fallback;}}
  string Diagnostic(string name){return Path.Combine(root,instance=="primary"?name:Path.GetFileNameWithoutExtension(name)+"-"+instance+Path.GetExtension(name));}
  bool WorkspaceOpen {get{return workspace!=null&&!workspace.IsDisposed&&workspace.IsOpen;}}
- internal bool SamplesMedia {get{return painted&&!closing;}}
  IEnumerable<LiquidDesktop> Hosts(){yield return this;foreach(var host in displays.Values)yield return host;}
  void Broadcast(object value){foreach(var host in Hosts())host.Send(value);}
  bool MotionAllowed(){return !closing&&RuntimePolicy.Reasons(preferences.Current,runtime==null?new RuntimeSignals():runtime.Signals,false,false,systemAnimations).Length==0;}
@@ -220,12 +219,12 @@ internal sealed class LiquidDesktop : Form {
  void DisplayChanged(object sender,EventArgs args){if(closing||!IsHandleCreated)return;try{var connected=MonitorCatalog.Read();BeginInvoke(new Action(()=>{if(closing)return;RefreshDisplayBindings(connected);ClosePreviews(null);backend.CancelDrag();if(stages!=null)stages.DisplaysChanged();ComponentPosition.DisplaysChanged();desktopWidgets.DisplaysChanged();foreach(var host in Hosts()){host.monitorDock.DisplaysChanged();host.dockPlate.ResetComposition();host.pointerDelivery.Reset();host.layoutKey="";host.probe=DateTime.MinValue;}displaysRead=DateTime.MinValue;}));}catch(InvalidOperationException){}}
  void PreferencesChanged(){if(!primaryHost){coordinator.PreferencesChanged();return;}if(hotkeys!=null){try{hotkeys.Configure(preferences.Current.hotkey);hotkeyError="";}catch(Exception ex){hotkeyError=ex.Message;}}failedDisplays.Clear();foreach(var host in Hosts()){host.probe=DateTime.MinValue;host.ApplyPreferences();}displaysRead=DateTime.MinValue;}
  void ApplyPreferences(){if(closing)return;var snapshot=preferences.Snapshot();ComponentPosition.LayoutLocked=preferences.Current.layoutLocked;if(primaryHost&&desktopWidgets!=null)desktopWidgets.LockLayout(preferences.Current.layoutLocked);Send(new{type="preferences",snapshot=snapshot});if(sideDock!=null&&!sideDock.IsDisposed)sideDock.ApplyPreferences(snapshot);if(topIsland!=null&&!topIsland.IsDisposed)topIsland.ApplyPreferences(snapshot);if(fileShelf!=null&&!fileShelf.IsDisposed)fileShelf.ApplyPreferences(snapshot);preferenceRevision=preferences.Revision;}
- internal void OpenWorkspace(string page){if(closing)return;if(!primaryHost){coordinator.OpenWorkspace(page);return;}ClosePreviews(null);if(workspace==null||workspace.IsDisposed){workspace=new WorkspaceWindow(root,library,preferences);workspace.SharedData=sharedData;workspace.SettingsChanged+=PreferencesChanged;workspace.Companion=companion;runtimeKey="";}var targetScreen=Screen.FromPoint(Cursor.Position);Rectangle targetDock=Rectangle.Empty;foreach(var host in Hosts()){if(host.monitor.Screen.DeviceName==targetScreen.DeviceName)targetDock=host.dockRectangle;if(host.sideDock!=null&&!host.sideDock.IsDisposed)host.sideDock.DismissTransient();if(host.topIsland!=null&&!host.topIsland.IsDisposed)host.topIsland.DismissTransient();if(host.fileShelf!=null&&!host.fileShelf.IsDisposed)host.fileShelf.DismissTransient();if(host.preview!=null){host.preview.Dispose();host.preview=null;}}companion.DialogOwner=workspace;workspace.OpenPage(page,targetScreen,targetDock);}
+ internal void OpenWorkspace(string page){if(closing)return;if(!primaryHost){coordinator.OpenWorkspace(page);return;}if(page=="companion"){CompanionSession.Open(root);return;}ClosePreviews(null);if(workspace==null||workspace.IsDisposed){workspace=new WorkspaceWindow(root,library,preferences);workspace.SharedData=sharedData;workspace.Updates=session.Updates;workspace.SettingsChanged+=PreferencesChanged;runtimeKey="";}var targetScreen=Screen.FromPoint(Cursor.Position);Rectangle targetDock=Rectangle.Empty;foreach(var host in Hosts()){if(host.monitor.Screen.DeviceName==targetScreen.DeviceName)targetDock=host.dockRectangle;if(host.sideDock!=null&&!host.sideDock.IsDisposed)host.sideDock.DismissTransient();if(host.topIsland!=null&&!host.topIsland.IsDisposed)host.topIsland.DismissTransient();if(host.fileShelf!=null&&!host.fileShelf.IsDisposed)host.fileShelf.DismissTransient();if(host.preview!=null){host.preview.Dispose();host.preview=null;}}workspace.OpenPage(page,targetScreen,targetDock);}
  void ExitDesktop(){
   try{var script=Path.GetFullPath(Path.Combine(root,"..","DesktopMode.ps1"));Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe"),"-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \""+script+"\" -Mode Game -ShowErrors"){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});}
   catch(Exception ex){tray.ShowBalloonTip(3000,"PrismGlass 未能退出",ex.Message,ToolTipIcon.Warning);}
  }
- void SetupTray(){if(!primaryHost||tray!=null)return;var menu=NativeGlassMaterial.CreateMenu();menu.Items.Add("应用中心",null,(s,e)=>OpenWorkspace("apps"));menu.Items.Add("PrismGlass 设置",null,(s,e)=>OpenWorkspace("settings"));menu.Items.Add("iPad 伴随屏",null,(s,e)=>companion.Show());menu.Items.Add("暂停 / 恢复动效",null,(s,e)=>{try{preferences.Apply(new Dictionary<string,object>{{"manualPaused",!preferences.Current.manualPaused}},preferences.Revision);}catch(Exception ex){tray.ShowBalloonTip(3000,"PrismGlass",ex.Message,ToolTipIcon.Warning);}});menu.Items.Add("退出 PrismGlass",null,(s,e)=>ExitDesktop());menu.Items.Add("检查更新",null,(s,e)=>OpenWorkspace("updates"));menu.Items.Add("关于 PrismGlass",null,(s,e)=>MessageBox.Show(this,"PrismGlass Desktop "+Application.ProductVersion+"\n免费开源 · MIT\nhttps://github.com/liburce0412-alt/prismglass-desktop","PrismGlass",MessageBoxButtons.OK,MessageBoxIcon.Information));tray=new NotifyIcon{Icon=Icon,Text="PrismGlass",Visible=true,ContextMenuStrip=menu};tray.DoubleClick+=(s,e)=>OpenWorkspace("apps");}
+ void SetupTray(){if(!primaryHost||tray!=null)return;var menu=NativeGlassMaterial.CreateMenu();menu.Items.Add("应用中心",null,(s,e)=>OpenWorkspace("apps"));menu.Items.Add("PrismGlass 设置",null,(s,e)=>OpenWorkspace("settings"));menu.Items.Add("iPad 伴随屏",null,(s,e)=>OpenWorkspace("companion"));menu.Items.Add("暂停 / 恢复动效",null,(s,e)=>{try{preferences.Apply(new Dictionary<string,object>{{"manualPaused",!preferences.Current.manualPaused}},preferences.Revision);}catch(Exception ex){tray.ShowBalloonTip(3000,"PrismGlass",ex.Message,ToolTipIcon.Warning);}});menu.Items.Add("退出 PrismGlass",null,(s,e)=>ExitDesktop());menu.Items.Add("检查更新",null,(s,e)=>OpenWorkspace("updates"));menu.Items.Add("关于 PrismGlass",null,(s,e)=>MessageBox.Show(this,"PrismGlass Desktop "+Application.ProductVersion+"\n免费开源 · MIT\nhttps://github.com/liburce0412-alt/prismglass-desktop","PrismGlass",MessageBoxButtons.OK,MessageBoxIcon.Information));tray=new NotifyIcon{Icon=Icon,Text="PrismGlass",Visible=true,ContextMenuStrip=menu};tray.DoubleClick+=(s,e)=>OpenWorkspace("apps");}
  void ReconcileDisplays(){
   if(!primaryHost||reconciling||closing)return;reconciling=true;
   try{var catalog=MonitorCatalog.Read();RefreshDisplayBindings(catalog);var primary=catalog.Find(item=>item.Primary);if(primary!=null)monitor=primary;var wanted=new Dictionary<string,MonitorRecord>(StringComparer.OrdinalIgnoreCase);foreach(var item in catalog)if(!item.Primary&&preferences.ForMonitor(item.Id,false).enabled&&!failedDisplays.Contains(item.Id))wanted[item.Id]=item;
@@ -334,7 +333,7 @@ internal sealed class LiquidDesktop : Form {
    sideDock=new SideDock(root,false,sharedData,instance);sideDock.FormClosed+=(s,e)=>ComponentFailed(0);sideDock.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);sideDock.ApplyPreferences(preferences.Snapshot());sideDock.Show();
   }
   if(top&&(topIsland==null||topIsland.IsDisposed)&&componentRecovery.CanStart(1,now)){
-   islandReady=false;topIsland=new TopIsland(root,false,sharedData,instance);topIsland.Ready+=()=>{islandReady=true;HideLegacyTopbar();topIsland.ApplyPreferences(preferences.Snapshot());};topIsland.CompanionStopRequested+=async()=>{if(coordinator.companion!=null){await coordinator.companion.StopRemoteControls();coordinator.PublishCompanionState();}};topIsland.FormClosed+=(s,e)=>ComponentFailed(1);topIsland.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);topIsland.Show();
+   islandReady=false;topIsland=new TopIsland(root,false,sharedData,instance);topIsland.Ready+=()=>{islandReady=true;HideLegacyTopbar();topIsland.ApplyPreferences(preferences.Snapshot());};topIsland.CompanionStopRequested+=()=>DesktopSession.Request(root,CompanionSession.ControlsRequest);topIsland.FormClosed+=(s,e)=>ComponentFailed(1);topIsland.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);topIsland.Show();
   }
   if(right&&(fileShelf==null||fileShelf.IsDisposed)&&componentRecovery.CanStart(2,now)){
    shelfReady=false;fileShelf=new FileShelf(root,false,sharedData,instance);fileShelf.Ready+=()=>{shelfReady=true;fileShelf.ApplyPreferences(preferences.Snapshot());if(legacyManagerOpen)fileShelf.OpenLegacyManager();else if(pendingShelfContent.Length>0)fileShelf.OpenContent(pendingShelfContent);};fileShelf.CursorSettingsChanged+=(settings,size)=>coordinator.cursorTrail.Configure(settings,size);fileShelf.FormClosed+=(s,e)=>ComponentFailed(2);fileShelf.Sync(theme,monitor.Screen.WorkingArea,IntPtr.Zero,paused);fileShelf.Show();
@@ -386,9 +385,8 @@ internal sealed class LiquidDesktop : Form {
  void SyncPixelScale(){pixels.Sync();}
  bool readingCompanion;
  async void PublishCompanionState(){
-  if(closing||readingCompanion||companion==null)return;readingCompanion=true;var source=companion;int revision=source.IslandRevision;
-  try{var state=await Task.Run(()=>source.IslandSnapshot());if(!closing&&source==companion&&revision==source.IslandRevision)foreach(var host in Hosts())if(host.topIsland!=null&&!host.topIsland.IsDisposed)host.topIsland.ApplyCompanionState(state);}catch{}finally{readingCompanion=false;}
-  if(!closing&&source==companion&&revision!=source.IslandRevision)PublishCompanionState();
+  if(closing||readingCompanion)return;readingCompanion=true;
+  try{var state=await Task.Run(()=>CompanionProcessState.Read(root));if(!closing)foreach(var host in Hosts())if(host.topIsland!=null&&!host.topIsland.IsDisposed)host.topIsland.ApplyCompanionState(new{running=state.running,connected=state.connected,screen=state.screen,pointer=state.pointer,audio=state.audio});}finally{readingCompanion=false;}
  }
  void Probe(bool positionOnly=false){
   if(!positionOnly){SyncPixelScale();SystemParametersInfo(0x1042,0,out systemAnimations,0);}
@@ -446,23 +444,47 @@ internal sealed class LiquidDesktop : Form {
  [STAThread] static void Main(string[] args){
   AppDomain.CurrentDomain.UnhandledException+=(sender,eventArgs)=>{try{File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"startup-exception.txt"),DateTime.UtcNow.ToString("o")+Environment.NewLine+eventArgs.ExceptionObject);}catch{}};
   try{if(!SetProcessDpiAwarenessContext(new IntPtr(-4)))SetProcessDPIAware();}catch(EntryPointNotFoundException){SetProcessDPIAware();}string root=AppDomain.CurrentDomain.BaseDirectory;NativeGlassMaterial.Register(root);
-  if(args.Length==0){try{Process.Start(new ProcessStartInfo(Path.Combine(root,"PrismGlass.exe")){UseShellExecute=false});}catch(Exception ex){MessageBox.Show("PrismGlass 未能启动："+ex.Message,"PrismGlass");}return;}
+  if(args.Length==0){using(var maintenance=new Mutex(false,AutoUpdateRuntime.UpdateMutex)){if(!Acquire(maintenance))return;try{Process.Start(new ProcessStartInfo(Path.Combine(root,"PrismGlass.exe")){UseShellExecute=false});}catch(Exception ex){MessageBox.Show("PrismGlass 未能启动："+ex.Message,"PrismGlass");}finally{maintenance.ReleaseMutex();}}return;}
   if(args.Length==1&&(args[0]=="--apps"||args[0]=="--settings")){File.WriteAllText(Path.Combine(root,"workspace.request"),args[0]=="--apps"?"apps":"settings");return;}
   if(args.Length==1&&args[0]=="--tray"){File.WriteAllText(Path.Combine(root,"tray.request"),"open");return;}
-  bool companionOnly=args.Length==1&&args[0]=="--companion";
   if(args.Length==2&&args[0]=="--widget"&&Array.IndexOf(new[]{"Weather","Music","Focus","Folders","System","Tools","Life"},args[1])>=0){File.WriteAllText(Path.Combine(root,"widget.request"),args[1]);return;}
   if(args.Length==2&&args[0]=="--panel"&&(args[1]=="battery"||args[1]=="network"||args[1]=="both"||args[1]=="calendar")){File.WriteAllText(Path.Combine(root,"panel.request"),args[1]);return;}
   if(args.Length>0){string flag=args[0];if(flag=="--side-preview"){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SideDock(root,true));return;}if(flag=="--dock-release"&&args.Length==2){DockBackend.ReleasePointer(root,args[1]);return;}if(flag=="--dock-menu"&&args.Length==2){Application.EnableVisualStyles();DockBackend.Menu(root,args[1]);return;}if((flag=="--dock"||flag=="--dock-new")&&args.Length==2){Application.EnableVisualStyles();DockBackend.Click(root,args[1],flag=="--dock-new");return;}if(flag=="--toggle-theme"){var p=Path.Combine(root,"theme.txt");File.WriteAllText(p,File.Exists(p)&&File.ReadAllText(p).Trim()=="Astro"?"Sky":"Astro");return;}
    if(flag=="--toggle-motion"){var p=Path.Combine(root,"paused.txt");File.WriteAllText(p,File.Exists(p)&&File.ReadAllText(p).Trim()=="true"?"false":"true");return;}
    if(flag=="--quit"||flag=="--maintenance-stop"){DesktopSession.Request(root,flag=="--quit"?"stop.request":"maintenance-stop.request");return;}}
-  using(var gate=new Mutex(false,"Local\\PrismLiquidDesktop")){
-   bool acquired;try{acquired=gate.WaitOne(0);}catch(AbandonedMutexException){acquired=true;}
-   if(!acquired){DesktopSession.Request(root,companionOnly?"companion.request":"desktop-start.request");return;}
+  string mode=args.Length==1?args[0]:"";
+  if(mode=="--stop-companion"||mode=="--update-stop-companion"){
+   DesktopSession.Request(root,mode=="--stop-companion"?CompanionSession.StopRequest:CompanionSession.UpdateStopRequest);return;
+  }
+  bool companionOnly=mode=="--companion"||mode=="--ensure-companion"||mode=="--recover-companion";
+  if(!companionOnly&&mode!="--renderer")return;
+  using(var gate=new Mutex(false,companionOnly?CompanionSession.MutexName:"Local\\PrismLiquidDesktop")){
+   ApplicationContext session;
+   using(var maintenance=new Mutex(false,AutoUpdateRuntime.UpdateMutex)){
+    if(!Acquire(maintenance))return;
+    try{
+     if(!Acquire(gate)){if(mode=="--companion")DesktopSession.Request(root,CompanionSession.OpenRequest);return;}
+     Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
+     if(companionOnly){
+      File.Delete(Path.Combine(root,CompanionSession.StopRequest));
+      File.Delete(Path.Combine(root,CompanionSession.UpdateStopRequest));
+      File.Delete(Path.Combine(root,CompanionSession.ControlsRequest));
+      session=new CompanionSession(root,mode);
+     }else{
+      File.Delete(Path.Combine(root,"stop.request"));File.Delete(Path.Combine(root,"maintenance-stop.request"));
+      session=new DesktopSession(root);
+     }
+    }finally{maintenance.ReleaseMutex();}
+   }
    try{
-    File.Delete(Path.Combine(root,"stop.request"));File.Delete(Path.Combine(root,"maintenance-stop.request"));File.Delete(Path.Combine(root,"desktop-start.request"));
-    Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
-    using(var session=new DesktopSession(root,!companionOnly))Application.Run(session);
+    using(session){
+     if(!companionOnly&&File.Exists(Path.Combine(root,"runtime-data","companion","screen-stream.json"))){
+      using(var recovery=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--recover-companion"){UseShellExecute=false,CreateNoWindow=true})){}
+     }
+     Application.Run(session);
+    }
    }finally{gate.ReleaseMutex();}
   }
  }
+ static bool Acquire(Mutex mutex){try{return mutex.WaitOne(0);}catch(AbandonedMutexException){return true;}}
 }

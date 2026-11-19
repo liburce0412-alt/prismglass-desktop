@@ -10,12 +10,12 @@ function Test-PrivateBundlePath([string]$Path) {
  return $Path -match '(^|\\)(runtime-data|music-data|photo-cards|dock-icons|artifacts|outputs|companion-setup)(\\|$)' -or
   $Path -match '\.(pfx|p12|pem|key|cer|crt|log|request)$' -or
   $Path -match '(^|\\)wallpaper-monitor-[^\\]*\.png$' -or
-  $Path -match '(^|\\)(devices\.bin|(?:prismglass-install|install-record|desktop-settings|desktop-host|component-positions|widget-positions|stage-recovery|app-library|companion-settings|lyrics-settings|quota-cache|weather-cache|readiness|dock-click)\.json|installer-runtime\.ini|skin-catalog-pending\.flag|(?:skin-path|rainmeter-path|weather-location|widget-work-context)\.txt)$' -or
+  $Path -match '(^|\\)(devices\.bin|(?:prismglass-install|install-record|desktop-settings|desktop-host|companion-host|component-positions|widget-positions|stage-recovery|app-library|companion-settings|lyrics-settings|quota-cache|weather-cache|readiness|dock-click)\.json|installer-runtime\.ini|skin-catalog-pending\.flag|(?:skin-path|rainmeter-path|weather-location|widget-work-context)\.txt)$' -or
   $Path -match '(^|\\)[^\\]*-state(?:\.[^\\]+)?$' -or $Path -match '(^|\\)widget-[^\\]+\.state$'
 }
 $repo=Split-Path $PSScriptRoot
 $BundleRoot=[IO.Path]::GetFullPath($BundleRoot);$OutputRoot=[IO.Path]::GetFullPath($OutputRoot)
-foreach($required in @('LiquidDesktop/LiquidDesktop.exe','LiquidDesktop/PrismGlass.exe','LiquidDesktop/PrismGlass.ico','SetupIntegration.ps1','LICENSE','DesktopMode.ps1','VERSION')){if(!(Test-Path -LiteralPath (Join-Path $BundleRoot $required))){throw "Build output is missing $required"}}
+foreach($required in @('LiquidDesktop/LiquidDesktop.exe','LiquidDesktop/PrismGlass.exe','LiquidDesktop/PrismGlass.ico','SetupIntegration.ps1','LICENSE','DesktopMode.ps1','ApplyUpdate.ps1','update-inventory.json','VERSION')){if(!(Test-Path -LiteralPath (Join-Path $BundleRoot $required))){throw "Build output is missing $required"}}
 if((Get-Content -LiteralPath (Join-Path $BundleRoot 'VERSION') -Raw).Trim() -ne $Version){throw 'The bundle version does not match the requested installer version.'}
 $build=Get-Content -LiteralPath (Join-Path $BundleRoot 'build-info.json') -Raw | ConvertFrom-Json
 if($build.sourceSha256 -cnotmatch '^[0-9a-f]{64}$' -or $build.buildId -cne ($Version+'+'+$build.sourceSha256.Substring(0,16))){throw 'Invalid source identity in the bundle'}

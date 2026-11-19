@@ -44,8 +44,21 @@ function Get-DesktopProcess([string]$Executable){
  # The owner can be starting or an older build with no status file.
  foreach($process in $candidates){
   $details=Get-CimInstance Win32_Process -Filter ('ProcessId='+$process.Id)
-  if($details.CommandLine -match '\s+--(?:renderer|companion)\s*$' -and !$process.HasExited){return $process}
+  if($details.CommandLine -match '\s+--renderer\s*$' -and !$process.HasExited){return $process}
  }
+}
+function Get-CompanionProcess([string]$Executable){
+ $session=[Diagnostics.Process]::GetCurrentProcess().SessionId
+ $ownerFile=Join-Path (Split-Path -Parent $Executable) 'companion-host.json'
+ foreach($process in Get-Process LiquidDesktop -ErrorAction SilentlyContinue){
+  if($process.Path -eq $Executable -and $process.SessionId -eq $session -and (Read-DesktopHostState $ownerFile $process)){return $process}
+ }
+}
+function Test-DesktopCompanionRunning([string]$Executable){
+ $process=Get-CompanionProcess $Executable
+ if(!$process){return $false}
+ $state=Read-DesktopHostState (Join-Path (Split-Path -Parent $Executable) 'companion-host.json') $process
+ return $state.companionRunning -eq $true -or $state.state -eq 'starting'
 }
 function Stop-DesktopRenderer([string]$Executable,[string]$HostFile,$Process,[bool]$Maintenance=$false){
  if(!$Process -or $Process.HasExited){return $false}
@@ -202,6 +215,7 @@ public static class DesktopTaskbar {
 '@
 $ownedBridge={Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object {$_.CommandLine -and $_.CommandLine.Contains($bridge)}}
 if($Mode -eq 'CompanionCleanup'){
+ if(Test-DesktopCompanionRunning $glassPath){return}
  $process=Get-DesktopProcess $glassPath
  $hostState=Read-DesktopHostState $hostFile $process
  if($process -and !$hostState -and $process.WaitForExit(1000)){
@@ -236,8 +250,13 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   @{TaskbarState=[DesktopTaskbar]::State();DesktopIconsVisible=[DesktopTaskbar]::IconsVisible();HideIcons=(Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced').HideIcons;Created=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content $statePath -Encoding utf8
  }
  # Stop only this desktop scheme; leave games, music and other user apps running.
+ if($StopCompanion){
+  $companion=Get-CompanionProcess $glassPath
+  if($companion){& $glassPath '--stop-companion';if(!$companion.WaitForExit(8000)){throw '伴随屏未能正常关闭。'}}
+ }
  if(Test-Path -LiteralPath $readyPath){Remove-Item -LiteralPath $readyPath}
  $keepCompanion=Stop-DesktopRenderer $glassPath $hostFile (Get-DesktopProcess $glassPath) $StopCompanion.IsPresent
+ $keepCompanion=$keepCompanion -or (Test-DesktopCompanionRunning $glassPath)
  if(!$keepCompanion){& $ownedBridge | ForEach-Object {Stop-Process -Id $_.ProcessId -ErrorAction Stop}}
  Stop-PrismGlassSkins $rainmeter -KeepCompanion:$keepCompanion
  $remainingSkins=if(!$keepCompanion){@(Stop-PrismGlassRainmeter $rainmeter)}
@@ -345,6 +364,7 @@ if($Mode -eq 'Game' -or $Mode -eq 'Recovery'){
   $target=if($startedRenderer){$startedRenderer}else{$rollbackRenderer}
   $keepCompanion=(Read-DesktopHostState $hostFile (Get-DesktopProcess $glassPath)).companionRunning -eq $true
   if($target -and !$target.HasExited){try{$keepCompanion=Stop-DesktopRenderer $glassPath $hostFile $target}catch{$recoveryFailures.Add('关闭渲染进程：'+$_.Exception.Message)}}
+  $keepCompanion=$keepCompanion -or (Test-DesktopCompanionRunning $glassPath)
  }
  if($beautySkinsActivated){try{Stop-PrismGlassSkins $rainmeter -KeepCompanion:$keepCompanion}catch{$recoveryFailures.Add('关闭 PrismGlass 皮肤：'+$_.Exception.Message)}}
  if(!$keepCompanion -and $Mode -eq 'Beauty' -and $rainmeterWasRunning -eq $false){try{[void](Stop-PrismGlassRainmeter $rainmeter)}catch{$recoveryFailures.Add('退出本次启动的 Rainmeter：'+$_.Exception.Message)}}

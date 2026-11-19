@@ -14,4 +14,5 @@ foreach($name in @('TopIsland.cs','LiquidDesktop.cs','FileShelf.cs','WidgetBacke
 & (Join-Path $PSScriptRoot 'TestDesktopModeFailure.ps1')
 & (Join-Path $PSScriptRoot 'TestSetupIntegration.ps1')
 & (Join-Path $PSScriptRoot 'TestCompanionVideoNetwork.ps1')
+& (Join-Path $PSScriptRoot 'TestAutoUpdateApply.ps1')
 'Windows PowerShell 5.1 runtime syntax, failure reporting, installation and cleanup checks passed.'

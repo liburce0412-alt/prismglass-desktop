@@ -31,6 +31,7 @@ public static class StartupTransition {
   var startupClock=Stopwatch.StartNew();
   bool exit=args.Length==1&&args[0]=="--exit",login=args.Length==1&&args[0]=="--login";
   if(args.Length!=0&&!login&&!exit)throw new ArgumentException("未知启动参数。");
+  if(!exit&&AutoUpdateRuntime.IsApplying())return 0;
   string root=AppDomain.CurrentDomain.BaseDirectory;
   string script=Path.GetFullPath(Path.Combine(root,"..","DesktopMode.ps1"));
   if(!File.Exists(script))throw new FileNotFoundException("找不到桌面启动脚本。",script);

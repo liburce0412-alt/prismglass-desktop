@@ -1,11 +1,11 @@
 # 模块边界与扩展方式
 
-本说明对应 PrismGlass Desktop 2.0.0。`DesktopSession` 在同一个 Windows 用户进程中持有伴随服务，并独立控制桌面渲染器的启停。
+当前源码将 `DesktopSession` 与 `CompanionSession` 分为同一 Windows 用户会话中的两个进程。同一安装提供两个启动角色，沿用既有配对目录和伴随服务网络规则。
 
 ```mermaid
 flowchart LR
   Session[DesktopSession] --> Desktop
-  Session --> Server
+  CompanionSession --> Server
   Desktop[LiquidDesktop / 原生宿主] --> Preferences[DesktopPreferences / RuntimePolicy]
   Desktop --> Windows[StageManager / NativeWindowMotion]
   Desktop --> Cards[DesktopWidgets / WidgetPositions]
@@ -25,7 +25,7 @@ flowchart LR
 | 责任 | 实际入口与依赖 | 添加功能的位置 |
 | --- | --- | --- |
 | 桌面协调 | `LiquidDesktop` 创建显示器宿主，读取 `RuntimePolicy` 和偏好，协调窗口可见性、输入和布局 | 只保留宿主生命周期与路由；设备 I/O 不放入 Tick |
-| 启停 | `PrismGlass.exe` 通过 `StartupTransition` 显示遮罩并等待真实就绪。`DesktopSession` 管理桌面渲染器、共享服务和独立伴随窗口 | 普通退出释放桌面并保留已开启的伴随服务。维护退出同时关闭两者 |
+| 启停 | `PrismGlass.exe` 通过 `StartupTransition` 等待桌面实际就绪。`DesktopSession` 管理渲染器，`CompanionSession` 管理伴随服务、投屏和独立窗口 | 桌面退出保留伴随进程。覆盖安装通过伴随进程的空闲确认后再关闭两个角色，并按更新前状态重新开启 |
 | 保存与显示器 | `DesktopPreferences` 验证设置，`DesktopSettingsFiles` 原子写入；`MonitorCatalog` 提供显示器标识 | 设置需同时接默认值、校验、桌面控件及必要的伴随字段 |
 | 组件位置 | `ComponentPosition` 管理原生栏；`WidgetPositions` 管理 Rainmeter 卡片 | 只把明确拖动写入保存布局；断屏、缩放和避让采用临时位置 |
 | 台前调度 | `StageManager` 管窗口分组、尺寸、恢复日志；`StageStrip` 管输入与 WPF 卡片 | 新布局进入现有恢复/切换链；先计算全部目标，再改变实际成员，保留恢复日志 |

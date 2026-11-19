@@ -30,7 +30,7 @@ internal sealed class AppLibrary : IDisposable {
  readonly Dictionary<string,string> pinyin=new Dictionary<string,string>();
  readonly Dictionary<string,string> icons=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
  readonly List<FileSystemWatcher> watchers=new List<FileSystemWatcher>();
- AppLibrarySnapshot state; volatile bool dirty=true; volatile bool disposed;DateTime scanned=DateTime.MinValue;string observed;
+ AppLibrarySnapshot state; volatile bool dirty=true; volatile bool disposed;DateTime scanned=DateTime.MinValue,observedWrite;string observed;
  public bool NeedsRefresh { get {return dirty||DateTime.UtcNow-scanned>TimeSpan.FromMinutes(10);} }
  public AppLibrary(string folder) {
   root=folder;file=Path.Combine(root,"app-library.json");Directory.CreateDirectory(root);state=Read();
@@ -41,6 +41,7 @@ internal sealed class AppLibrary : IDisposable {
  static string[] Roots(){return new[]{Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)}.Where(p=>!String.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();}
  static AppLibrarySnapshot Defaults(){var s=new AppLibrarySnapshot();string[] names={"未分类","游戏","学习","工作","娱乐","其他"};string[] ids={"uncategorized","games","study","work","media","other"};for(int i=0;i<names.Length;i++)s.categories.Add(new AppLibraryCategory{id=ids[i],name=names[i],order=i});return s;}
  AppLibrarySnapshot Read(){
+  observedWrite=File.GetLastWriteTimeUtc(file);
   if(!File.Exists(file)){observed=null;return Defaults();}
   try {if(new FileInfo(file).Length>32*1024*1024)throw new InvalidDataException("应用库文件过大");observed=File.ReadAllText(file,Encoding.UTF8);var s=json.Deserialize<AppLibrarySnapshot>(observed);if(s==null||s.version!=1||s.entries==null||s.categories==null||s.folders==null||s.excluded==null)throw new InvalidDataException("应用库格式或版本不受支持");
    if(!s.categories.Any(c=>c.id=="uncategorized"))s.categories.Insert(0,new AppLibraryCategory{id="uncategorized",name="未分类"});
@@ -50,11 +51,20 @@ internal sealed class AppLibrary : IDisposable {
  void Commit(AppLibrarySnapshot next){
   if(!String.IsNullOrEmpty(next.error))throw new InvalidOperationException(next.error);
   next.revision=Math.Max(next.revision,state.revision)+1;string temp=file+"."+Guid.NewGuid().ToString("N")+".tmp";
-  try{string content=json.Serialize(next);using(var stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None))using(var writer=new StreamWriter(stream,new UTF8Encoding(false))){writer.Write(content);writer.Flush();stream.Flush(true);}if((File.Exists(file)?File.ReadAllText(file,Encoding.UTF8):null)!=observed)throw new IOException("应用库刚刚被外部修改，请刷新后重试。");if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);state=next;observed=content;}
+  try{string content=json.Serialize(next);using(var stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None))using(var writer=new StreamWriter(stream,new UTF8Encoding(false))){writer.Write(content);writer.Flush();stream.Flush(true);}using(var writerGate=new Mutex(false,"Local\\PrismGlassAppLibrary")){
+   bool held;try{held=writerGate.WaitOne(3000);}catch(AbandonedMutexException){held=true;}
+   if(!held)throw new IOException("应用库正在由另一窗口保存，请刷新后重试。");
+   try{
+    if((File.Exists(file)?File.ReadAllText(file,Encoding.UTF8):null)!=observed)throw new IOException("应用库刚刚被外部修改，请刷新后重试。");
+    if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);
+    state=next;observed=content;observedWrite=File.GetLastWriteTimeUtc(file);
+   }finally{writerGate.ReleaseMutex();}
+  }}
   finally{if(File.Exists(temp))File.Delete(temp);}
  }
- public AppLibrarySnapshot GetSnapshot(){lock(gate){var s=json.Deserialize<AppLibrarySnapshot>(json.Serialize(state));foreach(var e in s.entries){Index(e);e.icon=CachedIcon(e.path);}foreach(var a in new[]{new[]{"settings","PrismGlass 设置","设置 shezhi settings"},new[]{"windows-settings","Windows 设置","系统设置 xitong shezhi settings"},new[]{"task-manager","任务管理器","renwu guanliqi task manager"},new[]{"explorer","文件资源管理器","wenjian ziyuan guanliqi explorer"}}){var entry=new AppLibraryEntry{id="action:"+a[0],name=a[1],path=a[0],kind="action",category="uncategorized",folder="",alias=a[2],exists=true,order=Int32.MaxValue};Index(entry);s.entries.Add(entry);}s.excluded.Clear();return s;}}
- public AppLibraryEntry Find(string id){lock(gate){var e=state.entries.FirstOrDefault(x=>x.id==id);if(e==null)return null;var result=json.Deserialize<AppLibraryEntry>(json.Serialize(e));result.icon=CachedIcon(result.path);result.exists=result.exists&&EntryExists(result);return result;}}
+ void ReloadChanged(){if(File.GetLastWriteTimeUtc(file)!=observedWrite)state=Read();}
+ public AppLibrarySnapshot GetSnapshot(){lock(gate){ReloadChanged();var s=json.Deserialize<AppLibrarySnapshot>(json.Serialize(state));foreach(var e in s.entries){Index(e);e.icon=CachedIcon(e.path);}foreach(var a in new[]{new[]{"settings","PrismGlass 设置","设置 shezhi settings"},new[]{"windows-settings","Windows 设置","系统设置 xitong shezhi settings"},new[]{"task-manager","任务管理器","renwu guanliqi task manager"},new[]{"explorer","文件资源管理器","wenjian ziyuan guanliqi explorer"}}){var entry=new AppLibraryEntry{id="action:"+a[0],name=a[1],path=a[0],kind="action",category="uncategorized",folder="",alias=a[2],exists=true,order=Int32.MaxValue};Index(entry);s.entries.Add(entry);}s.excluded.Clear();return s;}}
+ public AppLibraryEntry Find(string id){lock(gate){ReloadChanged();var e=state.entries.FirstOrDefault(x=>x.id==id);if(e==null)return null;var result=json.Deserialize<AppLibraryEntry>(json.Serialize(e));result.icon=CachedIcon(result.path);result.exists=result.exists&&EntryExists(result);return result;}}
  static string Text(string s){return (s??"").Trim();}
  static string Name(string s){s=Text(s);if(s.Length==0||s.Length>80)throw new ArgumentException("名称需为 1–80 个字符");return s;}
  internal static string Identity(string path,string arguments){path=Text(path);if(!path.StartsWith("shell:",StringComparison.OrdinalIgnoreCase))path=Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);return path.ToLowerInvariant()+"\n"+Text(arguments);}

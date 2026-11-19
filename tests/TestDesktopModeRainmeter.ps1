@@ -43,7 +43,7 @@ function New-FixtureProcess([string]$Path,[bool]$Exited=$false,[int]$Code=0){
  $result=[pscustomobject]@{Path=$Path;HasExited=$Exited;ExitCode=$Code;Disposed=$false}
  $result | Add-Member ScriptMethod Dispose {$this.Disposed=$true} -PassThru
 }
-function Get-Process {param($Name,$ErrorAction) if($Name -ne 'Rainmeter'){throw 'Unexpected process query'};return $script:existingProcesses}
+function Get-Process {param($Name,$ErrorAction) if($Name -eq 'LiquidDesktop'){return};if($Name -ne 'Rainmeter'){throw 'Unexpected process query'};return $script:existingProcesses}
 function Start-Process {
  param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru)
  if($FilePath -ne $executable -or $ArgumentList -or $WindowStyle -ne 'Hidden' -or !$PassThru){throw 'Unexpected process launch'}

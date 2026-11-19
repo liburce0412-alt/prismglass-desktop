@@ -4,7 +4,7 @@ $file=Join-Path $repo 'scripts/runtime/DesktopMode.ps1'
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw $errors[0]}
-foreach($name in 'Read-DesktopHostState','Get-DesktopProcess','Stop-DesktopRenderer'){
+foreach($name in 'Read-DesktopHostState','Get-DesktopProcess','Get-CompanionProcess','Test-DesktopCompanionRunning','Stop-DesktopRenderer'){
  $function=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
  Invoke-Expression $function.Extent.Text
 }
@@ -38,6 +38,10 @@ try{
  if((Get-DesktopProcess $exe).Id -ne $process.Id){throw 'The older renderer was not selected'}
  $script:legacyHost=$false
  if(Get-DesktopProcess $exe){throw 'A preview or menu was mistaken for an owner'}
+ $companionFile=Join-Path $fixture 'companion-host.json'
+ [IO.File]::WriteAllText($companionFile,($state|ConvertTo-Json -Compress))
+ if((Get-CompanionProcess $exe).Id -ne $process.Id -or !(Test-DesktopCompanionRunning $exe) -or (Get-DesktopProcess $exe)){throw 'Dedicated companion confused desktop ownership'}
+ [IO.File]::Delete($companionFile)
  Save-State
  @'
  $file=Join-Path $PSScriptRoot 'desktop-host.json';Add-Content (Join-Path $PSScriptRoot 'requests.txt') $args[0]

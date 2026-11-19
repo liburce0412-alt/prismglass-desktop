@@ -22,6 +22,11 @@ internal sealed class CompanionConfiguration {
  public Dictionary<string,string> apps=new Dictionary<string,string>();
 }
 
+internal sealed class CompanionIslandState {
+ public bool running,screen,pointer,audio;
+ public int connected;
+}
+
 internal sealed class CompanionHost : IDisposable {
  readonly Control owner;readonly string root;readonly AppLibrary library;readonly CompanionServer server;readonly CompanionBridge bridge;readonly string file;readonly SharedDesktopData shared;readonly DockLyrics lyrics;
  readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly CompanionDiscovery discovery=new CompanionDiscovery();CompanionConfiguration config=new CompanionConfiguration();CompanionManagement management;volatile bool closed,sessionLocked;CompanionNetworkChoice activeNetwork;internal Func<CompanionNetworkChoice[]> ReadNetworks=CompanionConnection.Networks;
@@ -30,6 +35,16 @@ internal sealed class CompanionHost : IDisposable {
  internal Func<string,string,string,string,Task> ApplyVideoPlan=CompanionConnection.ApplyVideo;
  internal Func<string,bool> ConfirmVideo;
  internal Func<bool> RecoverDisplay;bool recoveringDisplay;
+ readonly object requestGate=new object();
+ int requests;
+ bool draining;
+ internal bool IsBusy {get{lock(requestGate)return Busy();}}
+ bool Busy(){return requests!=0||stoppingRemote||recoveringDisplay||videoApplying||VideoBusy||bridge.ScreenActive||bridge.PointerActive||bridge.PowerActive||management!=null&&management.Busy;}
+ internal bool TryDrainIdle(){lock(requestGate){if(Busy())return false;draining=true;return true;}}
+ CompanionReply RunRequest(Func<CompanionReply> run){
+  lock(requestGate){if(draining)return CompanionReply.Error(503,"maintenance","伴随屏正在退出，请稍后重连。");requests++;}
+  try{return run();}finally{lock(requestGate)requests--;}
+ }
  [DllImport("user32.dll",SetLastError=true)]static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
  [DllImport("user32.dll")]static extern bool CloseDesktop(IntPtr desktop);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder value,int bytes,out int needed);
@@ -37,7 +52,7 @@ internal sealed class CompanionHost : IDisposable {
   owner=desktop;root=directory;library=apps;shared=data;this.lyrics=lyrics;file=Path.Combine(root,"runtime-data","companion-settings.json");
   ConfirmVideo=text=>{Show();return MessageBox.Show(DialogOwner??owner as Form,text,"修复投屏连接",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;};
   if(File.Exists(file))try{if(new FileInfo(file).Length<1048576){var saved=json.Deserialize<CompanionConfiguration>(File.ReadAllText(file));if(saved!=null&&saved.apps!=null&&saved.apps.Count<=500)config=saved;}}catch{}
-  bridge=new CompanionBridge(root,apps,settings,data,lyrics,Dispatch,IsLocked,streamAddress:()=>server.LocalAddress);bridge.Allow(config.apps);server=new CompanionServer(root,bridge.Handle,IsLocked);server.BeforeScreen=PrepareVideo;
+  bridge=new CompanionBridge(root,apps,settings,data,lyrics,Dispatch,IsLocked,streamAddress:()=>server.LocalAddress);bridge.Allow(config.apps);server=new CompanionServer(root,(route,request,grant)=>RunRequest(()=>bridge.Handle(route,request,grant)),IsLocked);server.BeforeScreen=(peer,grant,offer)=>RunRequest(()=>PrepareVideo(peer,grant,offer));
   RecoverDisplay=bridge.RecoverIdleDisplay;
   server.VideoApprovalPending=()=>videoApplying&&!sessionLocked&&!closed;
   SystemEvents.SessionSwitch+=SessionChanged;NetworkChange.NetworkAddressChanged+=NetworkChanged;
@@ -53,7 +68,8 @@ internal sealed class CompanionHost : IDisposable {
   finally{recoveringDisplay=false;}
  }
  void SessionChanged(object sender,SessionSwitchEventArgs e){if(e.Reason==SessionSwitchReason.SessionLock||e.Reason==SessionSwitchReason.SessionLogoff){sessionLocked=true;Interlocked.Increment(ref islandRevision);bridge.StopControls();}else if(e.Reason==SessionSwitchReason.SessionUnlock){sessionLocked=false;Interlocked.Increment(ref islandRevision);}}
- internal bool IsLocked(){if(closed||sessionLocked)return true;IntPtr input=OpenInputDesktop(0,false,1);if(input==IntPtr.Zero)return true;try{int needed;var name=new StringBuilder(256);return !GetUserObjectInformation(input,2,name,512,out needed)||!String.Equals(name.ToString(),"Default",StringComparison.OrdinalIgnoreCase);}finally{CloseDesktop(input);}}
+ internal bool IsLocked(){return closed||sessionLocked||InputDesktopLocked();}
+ internal static bool InputDesktopLocked(){IntPtr input=OpenInputDesktop(0,false,1);if(input==IntPtr.Zero)return true;try{int needed;var name=new StringBuilder(256);return !GetUserObjectInformation(input,2,name,512,out needed)||!String.Equals(name.ToString(),"Default",StringComparison.OrdinalIgnoreCase);}finally{CloseDesktop(input);}}
  object Dispatch(Func<object> operation){
   if(closed||owner.IsDisposed||!owner.IsHandleCreated)throw new InvalidOperationException();if(!owner.InvokeRequired)return operation();
   var result=new TaskCompletionSource<object>();int cancelled=0;
@@ -68,7 +84,11 @@ internal sealed class CompanionHost : IDisposable {
  CompanionManagement Management {get{if(management==null)management=new CompanionManagement(this);return management;}}
  public object ManagementSnapshot(){return Management.Snapshot();}
  internal int IslandRevision {get{return Volatile.Read(ref islandRevision);}}
- internal object IslandSnapshot(){bool running=!closed&&server.IsRunning&&!IsLocked();return new{running=running,connected=running?server.ActiveDeviceCount:0,screen=running&&bridge.ScreenActive,pointer=running&&bridge.PointerActive,audio=running&&bridge.AudioActive};}
+ internal CompanionIslandState IslandSnapshot(){
+  bool running=!closed&&server.IsRunning&&!IsLocked();
+  return new CompanionIslandState{running=running,connected=running?server.ActiveDeviceCount:0,screen=running&&bridge.ScreenActive,pointer=running&&bridge.PointerActive,audio=running&&bridge.AudioActive};
+ }
+ internal Task<bool> RestoreService(){return Management.Restore();}
  internal async Task StopRemoteControls(){
   if(closed||stoppingRemote)return;stoppingRemote=true;ResetVideo();int revision=videoRevision;Interlocked.Increment(ref islandRevision);
   try{await Task.Run(()=>{bridge.StopControls();if(bridge.PointerActive)throw new InvalidOperationException();});if(!closed&&revision==videoRevision)Management.VideoNotice("远程控制已停止，伴随屏连接和设备授权已保留。",false);}
@@ -141,6 +161,30 @@ internal sealed class CompanionHost : IDisposable {
    string status=host.server.IsRunning?(host.IsLocked()?"电脑已锁定 · 控制已暂停":host.discovery.Status=="error"?"名称发现失败："+host.discovery.Error:host.activeNetwork!=null&&!host.discovery.IsRegistered?"正在发布固定名称…":"伴随屏已开启"):"伴随屏已关闭";
    return new {status=status,service=state,notice=notice,error=noticeError,busy=working||connecting||host.VideoBusy,readingNetwork=readingNetwork,address=selectedAddress,port=selectedPort,networks=networks.Select(n=>new{address=n.address,label=n.Description}).ToArray(),qr=qrImage,code=code,entryQr=entryQr,result=result,appsLoaded=appsLoaded,apps=entries.Select(e=>new{id=e.id,name=e.name,exists=e.exists,allowed=Allowed(e)}).ToArray()};
   }
+  internal bool Busy {get{return working||connecting;}}
+  internal async Task<bool> Restore(){
+   if(IsDisposed||Busy||host.server.IsRunning)return host.server.IsRunning;
+   int attempt=++connectionRevision;connecting=true;
+   try{
+    var record=CompanionConnection.ReadRecord(host.root);
+    string address=host.config.address,id=CompanionConnection.Text(record,"interfaceId"),name=CompanionConnection.Text(record,"hostName");
+    int port=host.config.port;
+    if(record==null||address!=CompanionConnection.Text(record,"address")||port!=CompanionConnection.Number(record,"port")||id.Length==0)throw new InvalidOperationException("未找到上次连接的配置，请重新检查连接。");
+    networks=await Task.Run(()=>host.ReadNetworks());
+    var choice=networks.FirstOrDefault(n=>n.IsPrivate&&n.address==address&&String.Equals(n.id,id,StringComparison.OrdinalIgnoreCase));
+    if(choice==null)throw new InvalidOperationException("上次的专用网络当前不可用，请重新检查连接。");
+    var check=await CompanionConnection.Check(host.root,choice,name,port,CompanionConnection.Text(record,"setupRecord"),false);
+    if(IsDisposed||attempt!=connectionRevision)return false;
+    if(!CompanionConnection.Flag(check,"configured"))throw new InvalidOperationException("上次的网络配置未通过检查，请重新检查连接。");
+    var current=await Task.Run(()=>host.ReadNetworks());
+    if(IsDisposed||attempt!=connectionRevision)return false;
+    choice=current.FirstOrDefault(n=>n.IsPrivate&&CompanionConnection.SameNetwork(n,choice));
+    if(choice==null)throw new InvalidOperationException("专用网络在检查期间发生变化，请重新检查连接。");
+    Start(choice,name,port,false);
+    return await WaitDiscovery(attempt);
+   }catch(Exception error){ConnectionError(error);return false;}
+   finally{connecting=false;Notify();}
+  }
   bool Allowed(AppLibraryEntry entry){string signature;return host.config.apps.TryGetValue(entry.id,out signature)&&signature==CompanionBridge.EntrySignature(entry);}
   static CompanionGrant Grants(Dictionary<string,object> message){object raw;if(!message.TryGetValue("grants",out raw)||!(raw is Dictionary<string,object>))throw new ArgumentException("权限草稿无效，请重新选择设备。");var values=(Dictionary<string,object>)raw;var keys=new[]{"apps","music","control","tasks","notes","pointer","power","screen","keyboard"};if(values.Count!=keys.Length+(values.ContainsKey("audio")?1:0)||values.ContainsKey("audio")&&!(values["audio"] is bool)||keys.Any(k=>!values.ContainsKey(k)||!(values[k] is bool)))throw new ArgumentException("权限草稿无效，请重新选择设备。");return new CompanionGrant{apps=(bool)values["apps"],music=(bool)values["music"],control=(bool)values["control"],tasks=(bool)values["tasks"],notes=(bool)values["notes"],pointer=(bool)values["pointer"],power=(bool)values["power"],screen=(bool)values["screen"],keyboard=(bool)values["keyboard"],audio=values.ContainsKey("audio")&&(bool)values["audio"]};}
   string DeviceName(string id,bool pending){var snapshot=host.json.Deserialize<Dictionary<string,object>>(host.json.Serialize(host.server.Status()));var list=snapshot[pending?"pending":"devices"] as System.Collections.IEnumerable;if(list!=null)foreach(Dictionary<string,object> item in list)if(CompanionBridge.Text(item,"id")==id)return CompanionBridge.Text(item,"name");throw new InvalidOperationException("设备或请求已失效，请重新选择。");}
@@ -187,7 +231,7 @@ internal sealed class CompanionHost : IDisposable {
    }finally{connecting=false;Notify();}
   }
   async Task<bool> WaitDiscovery(int attempt){for(int i=0;i<100;i++){if(IsDisposed||attempt!=connectionRevision||!host.server.IsRunning)return false;if(host.discovery.IsRegistered)return true;if(host.discovery.Status=="error"){string error=host.discovery.Error;host.Stop();throw new InvalidOperationException(error);}await Task.Delay(100);}host.Stop();throw new TimeoutException("固定名称发布超时，请重新检查连接。");}
-  void Start(CompanionNetworkChoice choice,string name,int requestedPort){string oldAddress=host.config.address;int oldPort=host.config.port;host.server.Start(choice.address,requestedPort,name);try{host.discovery.Start(choice.address,requestedPort,name,choice.index);host.config.address=choice.address;host.config.port=requestedPort;host.Save();host.activeNetwork=choice;host.StartSources();}catch{host.config.address=oldAddress;host.config.port=oldPort;host.Stop();throw;}Notify();}
+  void Start(CompanionNetworkChoice choice,string name,int requestedPort,bool save=true){string oldAddress=host.config.address;int oldPort=host.config.port;host.server.Start(choice.address,requestedPort,name);try{host.discovery.Start(choice.address,requestedPort,name,choice.index);host.config.address=choice.address;host.config.port=requestedPort;if(save)host.Save();host.activeNetwork=choice;host.StartSources();}catch{host.config.address=oldAddress;host.config.port=oldPort;host.Stop();throw;}Notify();}
   async Task LoadApps(){var snapshot=await Task.Run(()=>host.library.GetSnapshot());if(IsDisposed)return;entries=snapshot.entries.Where(e=>e.kind!="action").OrderBy(e=>e.name).ToList();appsLoaded=true;}
   async Task SaveApps(Dictionary<string,object> message){
    object raw;if(!message.TryGetValue("ids",out raw)||!(raw is System.Collections.IEnumerable)||raw is string)throw new ArgumentException("应用共享范围无效。");var next=new Dictionary<string,string>();foreach(object item in (System.Collections.IEnumerable)raw){var id=item as string;var entry=entries.Find(e=>e.id==id);if(entry==null)throw new InvalidOperationException("应用列表已更新，请刷新后重新选择。");if(!entry.exists&&!Allowed(entry))throw new InvalidOperationException("不能共享已失效的入口。");next[id]=CompanionBridge.EntrySignature(entry);}if(next.Count>500)throw new InvalidOperationException("最多共享 500 个入口。");

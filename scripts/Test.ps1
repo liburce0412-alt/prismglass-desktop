@@ -23,6 +23,7 @@ foreach($script in @('TestCompanionServer.ps1','TestCompanionDiscovery.ps1','Tes
 & (Join-Path $repo 'tests/TestDesktopModeFailure.ps1')
 & (Join-Path $repo 'tests/TestDesktopModeRainmeter.ps1')
 & (Join-Path $repo 'tests/TestDesktopHostLifecycle.ps1')
+& (Join-Path $repo 'tests/TestAutoUpdateApply.ps1')
 foreach($test in 'TestStageHandoff.ps1','TestStageRecoveryOwnership.ps1','TestStageMonitorReassignment.ps1'){
  & (Join-Path $repo ('tests/'+$test))
 }

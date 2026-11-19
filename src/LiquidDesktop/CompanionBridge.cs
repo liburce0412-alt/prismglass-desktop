@@ -22,6 +22,7 @@ internal sealed class CompanionBridge {
  internal bool ScreenActive {get {lock(gate)return screenStream!=null&&screenStream.IsActive;}}
  internal bool AudioActive {get {lock(gate)return screenStream!=null&&screenStream.AudioActive;}}
  internal bool PointerActive {get{return controls.IsActive;}}
+ internal bool PowerActive {get{return controls.PowerActive;}}
  public void StopControls(){controls.CancelAll();if(screenStream!=null)screenStream.Stop();}
  public void Dispose(){lock(gate){disposed=true;controls.Dispose();if(screenStream!=null)screenStream.Dispose();}}
  internal bool RecoverIdleDisplay(){lock(gate){if(disposed)return false;Action recover=()=>new CompanionVirtualDisplay(root).RecoverIdle();if(screenStream!=null)return screenStream.RecoverIdleDisplay(recover);recover();return true;}}
@@ -99,9 +100,10 @@ internal sealed class CompanionBridge {
  string NoCover(){cover=null;coverId="";coverSource="";PublishAssets();return "";}
  string Cover(Dictionary<string,object> music){
   try{if(!Object.Equals(Value(music,"available"),true)){return NoCover();}
-   var song=MediaSnapshot.Read(root,DateTime.UtcNow);if(song==null||song.title!=Text(music,"title")||song.artist!=Text(music,"artist")||song.source!=Text(music,"source"))return NoCover();
-   string directory=Path.GetFullPath(Path.Combine(root,"..","music-data")),file=LyricBackgroundPalette.CoverPath(root,song);if(String.IsNullOrEmpty(file))return NoCover();
+   var song=MediaSnapshot.Read(root,DateTime.UtcNow,lyrics.CompanionProcess);if(song==null||song.title!=Text(music,"title")||song.artist!=Text(music,"artist")||song.source!=Text(music,"source"))return NoCover();
+   string directory=MediaSnapshot.DataDirectory(root),file=LyricBackgroundPalette.CoverPath(root,song,lyrics.CompanionProcess);if(String.IsNullOrEmpty(file))return NoCover();
    bool session=song.cover==Path.GetFileName(file)&&System.Text.RegularExpressions.Regex.IsMatch(song.cover??"",@"^session-cover-[a-f0-9]{16}\.bin$");if(!session&&(DateTime.UtcNow-File.GetLastWriteTimeUtc(Path.Combine(directory,"now.txt"))).TotalSeconds>12)return NoCover();
+   if(session)directory=MediaSnapshot.DataDirectory(root,lyrics.CompanionProcess);
    if(!String.Equals(Path.GetDirectoryName(file),directory,StringComparison.OrdinalIgnoreCase)||!File.Exists(file)||new FileInfo(file).Length>4194304||(File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)return NoCover();
    string stamp=file+File.GetLastWriteTimeUtc(file).Ticks;if(stamp!=coverSource){using(var source=Image.FromFile(file)){if(source.Width>8192||source.Height>8192)return NoCover();double scale=Math.Min(1,256.0/Math.Max(source.Width,source.Height));using(var small=new Bitmap(source,new Size(Math.Max(1,(int)(source.Width*scale)),Math.Max(1,(int)(source.Height*scale)))))using(var output=new MemoryStream()){small.Save(output,ImageFormat.Jpeg);cover=output.ToArray();}}coverSource=stamp;coverId=Guid.NewGuid().ToString("N");PublishAssets();}return "/api/assets/"+coverId;
   }catch{return NoCover();}

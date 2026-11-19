@@ -62,6 +62,7 @@ internal sealed class CompanionControls : IDisposable {
   if(Allowed(grant,false)){if(job!=null&&ReferenceEquals(job.owner,grant))power=JobState(job);else if(Pending(job))power=new{status="busy",action="",id="",executeAt=0L,message="另一台设备已有电源操作，请稍后再试。"};}
   return new{pointer=new{active=own,expiresAt=own?Stamp(lease.expires):0},power=power};
  }}
+ internal bool PowerActive {get{lock(gate)return Pending(job);}}
  internal bool IsActive {get{lock(gate){Prune(clock());return lease!=null||releasePending||touchReleasePending;}}}
  public CompanionReply Pointer(string path,Dictionary<string,object> request,CompanionGrant grant,Rectangle? capture=null){lock(gate){
   DateTime now=clock();Prune(now);if(!Allowed(grant,true))return Error(403,"forbidden","此设备未获鼠标控制权限，或电脑已锁定。");

@@ -15,16 +15,16 @@ internal static class LyricBackgroundPalette {
  static readonly string[] Neutral={"#263f62","#39595f","#40365d"};
  sealed class Sample {public string key;public Task<string[]> colors;}
  static readonly object gate=new object();static readonly List<Sample> cache=new List<Sample>();
- public static LyricPaletteState Read(string root,MediaSnapshot song){
-  string wallpaper=Path.Combine(root,"wallpaper.png"),cover=CoverPath(root,song),wallpaperKey,coverKey;
+ public static LyricPaletteState Read(string root,MediaSnapshot song,bool companionProcess=false){
+  string wallpaper=Path.Combine(root,"wallpaper.png"),cover=CoverPath(root,song,companionProcess),wallpaperKey,coverKey;
   var backdrop=ReadColors(wallpaper,out wallpaperKey)??Neutral;var album=ReadColors(cover,out coverKey);
   return new LyricPaletteState{wallpaper=backdrop,album=album??backdrop,wallpaperKey=wallpaperKey,albumKey=coverKey.Length==0?wallpaperKey:coverKey,status=album!=null?"使用当前专辑的配色":cover.Length>0?"封面配色暂不可用 · 跟随壁纸":"暂无专辑封面 · 跟随壁纸"};
  }
- internal static string CoverPath(string root,MediaSnapshot song){
+ internal static string CoverPath(string root,MediaSnapshot song,bool companionProcess=false){
   if(song==null)return "";
   string data=Path.GetFullPath(Path.Combine(root,"..","music-data"));
   if(Regex.IsMatch(song.cover??"",@"^session-cover-[a-f0-9]{16}\.bin$")){
-   string session=Path.Combine(data,song.cover);if(File.Exists(session))return session;
+   string session=Path.Combine(MediaSnapshot.DataDirectory(root,companionProcess),song.cover);if(File.Exists(session))return session;
   }
   try{string file=Path.Combine(data,"now.txt");if(new FileInfo(file).Length>16384)return "";var lines=File.ReadAllLines(file);if(lines.Length<3||!String.Equals(lines[0].Trim(),song.title,StringComparison.Ordinal)||!String.Equals(lines[1].Trim(),song.artist,StringComparison.Ordinal))return "";string path=Path.GetFullPath(lines[2]);if(path.StartsWith(data+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)&&File.Exists(path))return path;}catch{}
   return "";

@@ -10,13 +10,13 @@ Windows 液态玻璃桌面：灵动岛式顶部栏、双侧组件、应用 Dock�
 [![License: MIT](https://img.shields.io/badge/License-MIT-6d83b3.svg)](LICENSE)
 ![Platform: Windows x64](https://img.shields.io/badge/Windows-x64-586a92.svg)
 
-**2.0.0 正式版 · Windows 10/11 x64。** 使用 C# WinForms、WebView2、WebGL 和 Rainmeter。默认登录进入普通 Windows 桌面，可在设置中开启 PrismGlass 自启。
+**2.0.1 正式版 · Windows 10/11 x64。** 使用 C# WinForms、WebView2、WebGL 和 Rainmeter。默认登录进入普通 Windows 桌面，可在设置中开启 PrismGlass 自启。
 
 [看显示效果](#显示效果) · [歌词效果](#dock-歌词效果) · [功能](#功能) · [构建与安装](#构建与安装) · [操作速查](#操作速查) · [常见问题](#常见问题)
 
 ## 下载与安装
 
-免费开源，采用 MIT 许可。在正式版发布页选择 `PrismGlass-Setup-2.0.0-x64.exe` 安装。发布页同时提供源码压缩包和安装器 SHA-256 校验文件。升级前请在 Windows 托盘关闭正在使用的 iPad 伴随屏，再退出 PrismGlass 桌面。[2.0.0 发布页](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v2.0.0) · [更新与验收范围](docs/RELEASE-2.0.0.md)
+免费开源，采用 MIT 许可。在正式版发布页选择 `PrismGlass-Setup-2.0.1-x64.exe` 安装。发布页也提供源码和安装器 SHA-256 校验文件。手动升级前，请在 Windows 托盘关闭 iPad 伴随屏，再退出 PrismGlass 桌面。[2.0.1 发布页](https://github.com/liburce0412-alt/prismglass-desktop/releases/tag/v2.0.1) · [更新与验收范围](docs/RELEASE-2.0.1.md)
 
 1. 运行中文安装向导，组件页自动检查 Rainmeter、WebView2 Runtime 和 .NET Framework 4.8。缺少时点击“一键补齐缺失组件”，按提示下载、校验并调用官方安装程序；失败可重试，也可选择已有程序或从官网离线安装。使用系统自带 Windows PowerShell 5.1，无需另装 PowerShell 7、Git、Node.js 或开发工具。
 2. 许可页默认接受协议，默认创建一个名为 **PrismGlass** 的桌面图标，完成页默认勾选“启动 PrismGlass”。这些选择可在向导中修改；不创建开机启动项。
@@ -107,6 +107,8 @@ iPad 竖屏首页的音乐与待办不再重叠，横屏投屏页将触控板与
 ## 既有投屏与更新功能
 
 新增 **检查更新**：在设置页或托盘手动检查 GitHub 最新正式版本；发现新版后可打开官方发布页下载安装。匿名 API 限流时使用官方发布页的安全跳转作为后备，不需要 GitHub 登录，不自动安装。
+
+从 2.0.1 起，**设置 → 检查更新** 提供自动覆盖更新开关，默认关闭。启用后从 GitHub 限速下载正式版并核对 SHA-256。有投屏或共享控制时，安装包留在本机等待。空闲后覆盖原目录，并按更新前状态重新打开桌面和伴随服务。2.0.0 及更早的版本需要先手动安装 2.0.1。
 
 伴随屏新增 **投屏 / 独立副屏** 两种模式。投屏仅列出主屏或其他有线物理屏；点击 **打开副屏** 才启用 iPad 虚拟屏，停止或断线超时后关闭。切换时保留实体屏原来的复制/扩展关系，并保存、恢复普通桌面图标位置。独立副屏仍需用户另行安装受支持的 Virtual Display Driver；缺少时明确显示不可用，不自动安装驱动。详见 [投屏与副屏说明](docs/COMPANION-SCREEN.md)。
 

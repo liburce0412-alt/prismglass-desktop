@@ -37,15 +37,13 @@ internal sealed class WorkspaceWindow : Form {
  readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly JavaScriptSerializer json=new JavaScriptSerializer{MaxJsonLength=16777216};
  readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();readonly WidgetBackend widgets;
  CancellationTokenSource weatherSearch;List<WeatherPlace> weatherResults=new List<WeatherPlace>();string weatherObserved;int weatherRequest;string requestedSection="";
- CancellationTokenSource releaseCheck;ReleaseUpdateState releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion};
+ AutoUpdates updates;
+ public AutoUpdates Updates {get{return updates;}set{if(updates!=null)updates.Changed-=PublishUpdates;updates=value;if(updates!=null)updates.Changed+=PublishUpdates;}}
  CancellationTokenSource npuOperation;bool npuCapturing,npuVisible;string npuText="";
  bool ready,closed,reading,interacting,picker,runtimePaused;int generation;string wallpaperVersion;string page="apps",widgetKey="",preferenceKey="";Screen display;Rectangle dockAnchor;object runtime;
  public event Action SettingsChanged;
- CompanionHost companion;
- public CompanionHost Companion {get{return companion;}set{if(companion!=null)companion.ManagementChanged-=OnCompanionChanged;companion=value;if(companion!=null)companion.ManagementChanged+=OnCompanionChanged;}}
- void OnCompanionChanged(){if(IsOpen&&companionVisible)PublishCompanion();}
  readonly System.Windows.Forms.Timer dismissal=new System.Windows.Forms.Timer{Interval=100};
- Rectangle settingsBounds;bool placing,companionVisible;string companionKey="";
+ Rectangle settingsBounds;bool placing;
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetClassName(IntPtr h,StringBuilder value,int length);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,StringBuilder value,int length);
@@ -73,15 +71,14 @@ internal sealed class WorkspaceWindow : Form {
   dismissal.Tick+=(s,e)=>{var active=GetForegroundWindow();if(!Visible||page!="apps"||ContainsFocus||active==Handle){dismissal.Stop();return;}if(active!=IntPtr.Zero&&!IsInteracting&&!DockActive(active)){dismissal.Stop();Hide();}};
   VisibleChanged+=(s,e)=>{if(!Visible){generation++;interacting=false;CancelWeatherSearch();if(!npuCapturing)ClearNpu();Send(new{type="visibility",visible=false});}else if(ready){Send(new{type="visibility",visible=true});Publish();}};
   FormClosing+=(s,e)=>{if(!closed&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();}};
-  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(wallpaperVersion!=MonitorWallpaper.For(root,display.Bounds).Version)PublishLayout();if(page=="settings"){PublishLyrics();PublishCompanion();}}};timer.Start();
+  timer.Interval=1000;timer.Tick+=(s,e)=>{if(IsOpen){pixels.Sync();PublishSettings();if(wallpaperVersion!=MonitorWallpaper.For(root,display.Bounds).Version)PublishLayout();if(page=="settings"){PublishLyrics();}}};timer.Start();
   Resize+=(s,e)=>{view.Visible=Visible&&WindowState!=FormWindowState.Minimized;Shape();if(ready){Send(new{type="visibility",visible=IsOpen});PublishLayout();}};
   Move+=(s,e)=>{if(!placing&&Visible&&WindowState!=FormWindowState.Minimized){display=Screen.FromControl(this);if(page=="settings")settingsBounds=Bounds;if(ready)PublishLayout();}};
  }
  protected override void SetVisibleCore(bool value){if(!value)view.Visible=false;base.SetVisibleCore(value);if(value)view.Visible=WindowState!=FormWindowState.Minimized;}
  void Shape(){if(Width<24||Height<24)return;using(var path=new GraphicsPath()){GlassWindow.Round(path,0,0,Width,Height,32);var old=Region;Region=GlassWindow.Clip(path,ClientRectangle);if(old!=null)old.Dispose();}}
  void Place(){placing=true;try{var bounds=WorkspacePlacement.Calculate(display.WorkingArea,display.Bounds,dockAnchor,page=="apps");if(page=="settings"&&!settingsBounds.IsEmpty){display=Screen.FromRectangle(settingsBounds);var area=display.WorkingArea;bounds=new Rectangle(Math.Max(area.Left,Math.Min(settingsBounds.Left,area.Right-bounds.Width)),Math.Max(area.Top,Math.Min(settingsBounds.Top,area.Bottom-bounds.Height)),Math.Min(bounds.Width,area.Width),Math.Min(bounds.Height,area.Height));}MinimumSize=new Size(Math.Min(560,bounds.Width),Math.Min(420,bounds.Height));Bounds=bounds;Shape();pixels.Sync();}finally{placing=false;}}
- public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;if(next=="toggle-apps"&&IsOpen&&page=="apps"){Hide();return;}if(next=="toggle-apps")next="apps";dismissal.Stop();display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="glass"||next=="components"||next=="welcome"||next=="weather"||next=="updates"||next=="companion"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates")CheckUpdates();}
- void PublishCompanion(){if(Companion==null||!IsOpen||!companionVisible)return;string key=json.Serialize(Companion.ManagementSnapshot());if(key!=companionKey){companionKey=key;Send(new{type="companion",value=json.DeserializeObject(key)});}}
+ public void OpenPage(string next,Screen screen,Rectangle dockBounds=default(Rectangle)){if(closed)return;if(next=="toggle-apps"&&IsOpen&&page=="apps"){Hide();return;}if(next=="toggle-apps")next="apps";dismissal.Stop();display=screen??Screen.PrimaryScreen;dockAnchor=dockBounds;requestedSection=next=="glass"||next=="components"||next=="welcome"||next=="weather"||next=="updates"||next=="companion"?next:"";page=next=="apps"?"apps":"settings";WindowState=FormWindowState.Normal;Place();Show();Activate();view.Focus();if(ready){Publish();RefreshApps(false);}if(next=="updates"&&Updates!=null)Updates.Check();}
  public void PublishRuntime(object value,bool motionPaused=false){runtime=value;runtimePaused=motionPaused;if(IsOpen){Send(new{type="runtime",value=runtime});PublishLayout();}}
  void Send(object message){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));}
  void PublishLayout(){var b=display.Bounds;var sample=MonitorWallpaper.For(root,b);wallpaperVersion=sample.Version;Send(new{type="layout",width=ClientSize.Width,height=ClientSize.Height,sceneWidth=b.Width,sceneHeight=b.Height,originX=Left-b.Left,originY=Top-b.Top,theme=preferences.Current.theme,paused=runtimePaused||preferences.Current.manualPaused||preferences.Current.reducedMotion,wallpaper=wallpaperVersion,wallpaperFile=sample.File});}
@@ -94,21 +91,15 @@ internal sealed class WorkspaceWindow : Form {
   try{
    var bounds=display.Bounds;if(bounds.Width<16||bounds.Height<16||(long)bounds.Width*bounds.Height>16777216)throw new IOException("当前屏幕尺寸不适合文字提取。");
    npuCapturing=true;Hide();await Task.Delay(300,operation.Token);operation.Token.ThrowIfCancellationRequested();
-   if(Companion==null||Companion.IsLocked())throw new IOException("请保持电脑解锁后再提取文字。");
+   if(CompanionHost.InputDesktopLocked())throw new IOException("请保持电脑解锁后再提取文字。");
    picture=new Bitmap(bounds.Width,bounds.Height);using(var graphics=Graphics.FromImage(picture))graphics.CopyFromScreen(bounds.Location,Point.Empty,bounds.Size);
    npuCapturing=false;if(closed)return;Show();Activate();Send(new{type="npu-result",text="",busy=true,message="正在识别…"});
    var result=await NpuText.Recognize(root,picture,operation.Token);
-   if(!closed&&IsOpen&&npuVisible&&!operation.IsCancellationRequested){if(Companion==null||Companion.IsLocked()){ClearNpu();return;}npuText=(string)result["text"];Send(new{type="npu-result",text=npuText,busy=false,message=npuText.Length==0?"没有识别到文字。":"已提取 · NPU · 请核对后复制"});}
+   if(!closed&&IsOpen&&npuVisible&&!operation.IsCancellationRequested){if(CompanionHost.InputDesktopLocked()){ClearNpu();return;}npuText=(string)result["text"];Send(new{type="npu-result",text=npuText,busy=false,message=npuText.Length==0?"没有识别到文字。":"已提取 · NPU · 请核对后复制"});}
   }catch(OperationCanceledException){}catch(Exception error){if(!closed&&!operation.IsCancellationRequested){if(npuCapturing){npuCapturing=false;Show();}Send(new{type="npu-result",text="",busy=false,message=error.Message,error=true});}}
   finally{npuCapturing=false;if(picture!=null)picture.Dispose();if(npuOperation==operation)npuOperation=null;if(operation.IsCancellationRequested&&!closed)Send(new{type="npu-result",text="",busy=false,message="已取消"});operation.Dispose();}
  }
- void PublishUpdates(){Send(new{type="updates",value=releaseUpdate});}
- async void CheckUpdates(){
-  if(releaseCheck!=null)return;var operation=new CancellationTokenSource();releaseCheck=operation;
-  releaseUpdate=new ReleaseUpdateState{current=Application.ProductVersion,state="checking",message="正在检查最新正式版本…"};PublishUpdates();
-  try{var result=await ReleaseUpdates.Check(Application.ProductVersion,operation.Token);if(!closed){releaseUpdate=result;PublishUpdates();}}
-  catch(OperationCanceledException){}finally{if(releaseCheck==operation)releaseCheck=null;operation.Dispose();}
- }
+ void PublishUpdates(){Send(new{type="updates",value=Updates==null?new ReleaseUpdateState{current=Application.ProductVersion}:Updates.State});}
  void PublishWeather(){try{weatherObserved=WeatherLocation.ReadText(root);Send(new{type="weather-location",place=WeatherLocation.ParseSaved(weatherObserved),error=""});}catch(Exception ex){Send(new{type="weather-location",place=(WeatherPlace)null,error=ex.Message});}}
  void CancelWeatherSearch(){weatherRequest++;weatherResults.Clear();if(weatherSearch!=null){weatherSearch.Cancel();weatherSearch=null;}}
  async void SearchWeather(string query,int request){CancelWeatherSearch();weatherRequest=request;var operation=new CancellationTokenSource();weatherSearch=operation;try{var results=await WeatherLocation.Search(query,operation.Token);if(!closed&&IsOpen&&weatherSearch==operation){weatherResults=results;Send(new{type="weather-results",request=request,places=results,error=""});}}
@@ -153,20 +144,28 @@ internal sealed class WorkspaceWindow : Form {
   if(String.IsNullOrEmpty(text)||text.Length>65536)return;
   var message=json.Deserialize<Dictionary<string,object>>(text);string action=Value(message,"action");scope=action;
   if(action=="close"){Hide();return;}if(action=="interaction"){interacting=Value(message,"active").Equals("true",StringComparison.OrdinalIgnoreCase);return;}
-  if(action=="section"){companionVisible=Value(message,"section")=="companion";npuVisible=Value(message,"section")=="npu";if(!npuVisible)ClearNpu();return;}
-  if(action=="page"){companionVisible=Value(message,"page")=="settings"&&Value(message,"section")=="companion";npuVisible=Value(message,"page")=="settings"&&Value(message,"section")=="npu";if(!npuVisible)ClearNpu();string next=Value(message,"page")=="apps"?"apps":"settings";if(page!=next){page=next;Place();PublishLayout();}return;}
+  if(action=="section"){npuVisible=Value(message,"section")=="npu";if(!npuVisible)ClearNpu();return;}
+  if(action=="page"){npuVisible=Value(message,"page")=="settings"&&Value(message,"section")=="npu";if(!npuVisible)ClearNpu();string next=Value(message,"page")=="apps"?"apps":"settings";if(page!=next){page=next;Place();PublishLayout();}return;}
   if(action=="settings"){
    object patch,revision;if(!message.TryGetValue("changes",out patch)||!(patch is Dictionary<string,object>)||!message.TryGetValue("revision",out revision))throw new ArgumentException("设置内容不完整，请重新打开。");
    preferences.Apply((Dictionary<string,object>)patch,Convert.ToInt64(revision));PublishSettings(true);Send(new{type="saved",scope="settings",message="已保存"});var handler=SettingsChanged;if(handler!=null)handler();return;
   }
   if(action=="photos"){ManagePhotos(message);return;}
-  if(action=="companion"){if(Companion!=null){Companion.DialogOwner=this;companionVisible=true;Companion.Manage(message);PublishCompanion();}return;}
+  if(action=="companion-open"){try{CompanionSession.Open(root);}catch(Exception ex){Send(new{type="error",message=ex.Message});}return;}
   if(action=="npu-read"){npuVisible=page=="settings";Send(new{type="npu-status",value=NpuText.Describe(root)});return;}
   if(action=="npu-capture"){CaptureText();return;}
   if(action=="npu-clear"){ClearNpu();return;}
-  if(action=="npu-copy"){if(IsOpen&&npuVisible&&npuText.Length>0&&Companion!=null&&!Companion.IsLocked()){try{Clipboard.SetText(npuText);Send(new{type="npu-result",text=npuText,busy=false,message="已复制"});}catch{Send(new{type="npu-result",text=npuText,busy=false,message="剪贴板暂不可用，请重试。",error=true});}}return;}
-  if(action=="updates-check"){CheckUpdates();return;}
-  if(action=="updates-open"){string address=releaseUpdate.state=="error"?ReleaseUpdates.LatestPage:releaseUpdate.state=="available"&&ReleaseUpdates.IsReleaseUrl(releaseUpdate.url,releaseUpdate.tag)?releaseUpdate.url:null;if(address==null)throw new InvalidOperationException("请先检查更新，取得有效的官方发布地址。");try{Process.Start(new ProcessStartInfo(address){UseShellExecute=true});}catch{releaseUpdate.state="error";releaseUpdate.message="无法打开浏览器，请检查默认浏览器后重试。";PublishUpdates();}return;}
+  if(action=="npu-copy"){if(IsOpen&&npuVisible&&npuText.Length>0&&!CompanionHost.InputDesktopLocked()){try{Clipboard.SetText(npuText);Send(new{type="npu-result",text=npuText,busy=false,message="已复制"});}catch{Send(new{type="npu-result",text=npuText,busy=false,message="剪贴板暂不可用，请重试。",error=true});}}return;}
+  if(action=="updates-check"){if(Updates!=null)Updates.Check();else PublishUpdates();return;}
+  if(action=="updates-auto"){
+   try{object value;if(!message.TryGetValue("enabled",out value)||!(value is bool)||Updates==null)throw new ArgumentException("自动更新设置无效。");Updates.SetEnabled((bool)value);}finally{PublishUpdates();}return;
+  }
+  if(action=="updates-open"){
+   var release=Updates==null?null:Updates.State;
+   string address=release==null?null:ReleaseUpdates.IsReleaseUrl(release.url,release.tag)?release.url:release.state=="error"?ReleaseUpdates.LatestPage:null;
+   if(address==null)throw new InvalidOperationException("请先检查更新，取得有效的官方发布地址。");
+   try{Process.Start(new ProcessStartInfo(address){UseShellExecute=true});}catch{throw new IOException("无法打开浏览器，请检查默认浏览器后重试。");}return;
+  }
   if(action=="startup-read"){PublishStartup();return;}
   if(action=="startup"){object value;if(!message.TryGetValue("enabled",out value)||!(value is bool))throw new ArgumentException("自启设置无效。");try{var state=LoginStartup.Set(root,(bool)value);Send(new{type="startup",value=state});if(state.error.Length>0)throw new IOException(state.error);Send(new{type="saved",message=state.enabled?"已开启：下次登录 Windows 时启动 PrismGlass":"已关闭开机自启"});}catch{PublishStartup();throw;}return;}
   if(action=="weather-cancel"){CancelWeatherSearch();return;}
@@ -206,5 +205,5 @@ internal sealed class WorkspaceWindow : Form {
   case "explorer":Process.Start(new ProcessStartInfo("explorer.exe"){UseShellExecute=true});break;
   default:throw new ArgumentException("无法识别的系统操作。");
  }}
- protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;Companion=null;generation++;CancelWeatherSearch();if(releaseCheck!=null)releaseCheck.Cancel();if(npuOperation!=null)npuOperation.Cancel();timer.Stop();timer.Dispose();dismissal.Dispose();widgets.Dispose();view.Dispose();}base.Dispose(disposing);}
+ protected override void Dispose(bool disposing){if(disposing&&!closed){closed=true;Updates=null;generation++;CancelWeatherSearch();if(npuOperation!=null)npuOperation.Cancel();timer.Stop();timer.Dispose();dismissal.Dispose();widgets.Dispose();view.Dispose();}base.Dispose(disposing);}
 }

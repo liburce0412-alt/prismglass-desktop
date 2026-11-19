@@ -1,11 +1,11 @@
-param([Parameter(Mandatory=$true)][string]$CacheRoot,[switch]$GlassOnly,[switch]$ControlCenterOnly,[switch]$ContourOnly,[switch]$MaterialOnly,[switch]$EditorSyncOnly,[switch]$SettingsSearchOnly,[switch]$WelcomeOnly)
+param([Parameter(Mandatory=$true)][string]$CacheRoot,[switch]$GlassOnly,[switch]$ControlCenterOnly,[switch]$ContourOnly,[switch]$MaterialOnly,[switch]$EditorSyncOnly,[switch]$SettingsSearchOnly,[switch]$WelcomeOnly,[switch]$CompanionManagementOnly)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $out=Join-Path $repo 'artifacts/workspace-ui'
 if($WelcomeOnly){$out=Join-Path $repo 'artifacts/welcome-fixture'}
 $app=Join-Path $out 'app'
 $captures=Join-Path $out 'captures'
-$logName=if($WelcomeOnly){'welcome-checks.txt'}elseif($SettingsSearchOnly){'settings-search-checks.txt'}elseif($EditorSyncOnly){'editor-sync-checks.txt'}elseif($MaterialOnly){'material-checks.txt'}elseif($ContourOnly){'contour-checks.txt'}elseif($ControlCenterOnly){'control-center-checks.txt'}elseif($GlassOnly){'glass-checks.txt'}else{'ui-checks.txt'}
+$logName=if($CompanionManagementOnly){'companion-management-checks.txt'}elseif($WelcomeOnly){'welcome-checks.txt'}elseif($SettingsSearchOnly){'settings-search-checks.txt'}elseif($EditorSyncOnly){'editor-sync-checks.txt'}elseif($MaterialOnly){'material-checks.txt'}elseif($ContourOnly){'contour-checks.txt'}elseif($ControlCenterOnly){'control-center-checks.txt'}elseif($GlassOnly){'glass-checks.txt'}else{'ui-checks.txt'}
 $sdk=Join-Path $CacheRoot 'webview2-1.0.4191.47'
 $process=$null
 New-Item -ItemType Directory -Force -Path $app,$captures | Out-Null
@@ -20,6 +20,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'UI test compilation failed'}
  $testArguments='"'+$app+'" "'+$captures+'"';if($GlassOnly){$testArguments+=' --glass-only'};if($ControlCenterOnly){$testArguments+=' --control-center-only'};if($ContourOnly){$testArguments+=' --contour-only'};if($MaterialOnly){$testArguments+=' --materials-only'};if($EditorSyncOnly){$testArguments+=' --editor-sync-only'}
  if($WelcomeOnly){$testArguments+=' --welcome-only'}
+ if($CompanionManagementOnly){$testArguments+=' --companion-management-only'}
  if($SettingsSearchOnly){$testArguments+=' --settings-search-only'}
  $process=Start-Process -FilePath "$out/TestWorkspaceUi.exe" -ArgumentList $testArguments -WindowStyle Hidden -PassThru
  if(!$process.WaitForExit(45000)){throw 'UI checks timed out'}

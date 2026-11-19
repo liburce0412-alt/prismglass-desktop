@@ -107,14 +107,19 @@ internal sealed class MediaSnapshot {
   string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","WindowsPowerShell","v1.0","powershell.exe");
   return new System.Diagnostics.ProcessStartInfo(shell,"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+Path.Combine(root,"MediaSession.ps1")+"\" -Control "+action+" -Source64 "+encoded+" -RequestedAt "+Unix(now).ToString("R",CultureInfo.InvariantCulture)){UseShellExecute=false,CreateNoWindow=true,WindowStyle=System.Diagnostics.ProcessWindowStyle.Hidden};
  }
- public static MediaSnapshot Read(string root,DateTime now){
-  var system=ReadFile(root,"session.json",now);
+ internal static string DataDirectory(string root,bool companionProcess=false){
+  string directory=Path.GetFullPath(Path.Combine(root,"..","music-data"));
+  return companionProcess?Path.Combine(directory,"companion"):directory;
+ }
+ public static MediaSnapshot Read(string root,DateTime now,bool companionProcess=false){
+  string directory=DataDirectory(root,companionProcess);
+  var system=ReadFile(directory,"session.json",now);
   if(system!=null&&system.timeline&&system.status=="playing")return system;
-  var netease=ReadFile(root,"netease-session.json",now);
+  var netease=ReadFile(directory,"netease-session.json",now);
   return netease!=null&&(netease.status=="playing"||system==null)?netease:system;
  }
- static MediaSnapshot ReadFile(string root,string name,DateTime now){
-  try{var file=Path.Combine(root,"..","music-data",name);if(!File.Exists(file)||new FileInfo(file).Length>32768)return null;
+ static MediaSnapshot ReadFile(string directory,string name,DateTime now){
+  try{var file=Path.Combine(directory,name);if(!File.Exists(file)||new FileInfo(file).Length>32768)return null;
    var s=new JavaScriptSerializer().Deserialize<MediaSnapshot>(LyricsFiles.Read(file));
    return s!=null&&s.Fresh(now)&&!String.IsNullOrWhiteSpace(s.title)&&s.duration>=0&&s.rate>=0&&s.rate<=16&&s.position>=0?s:null;
   }catch{return null;}
@@ -223,17 +228,18 @@ internal sealed class DockLyrics : IDisposable {
  List<LyricLine> lines=new List<LyricLine>();
  DateTime sample=DateTime.MinValue,published=DateTime.MinValue,retry=DateTime.MinValue,helperRetry=DateTime.MinValue,approached=DateTime.MinValue;
  int attempts;bool disposed,lastMotionPaused;MediaSnapshot media;LyricsSettings settings;
+ internal readonly bool CompanionProcess;
  public bool CompanionActive {get;set;}
  public bool DesktopMediaActive {get;set;}
  LyricPaletteState palette;DateTime paletteRead=DateTime.MinValue;string paletteTrack="";
- public DockLyrics(string directory,HttpMessageHandler transport=null,bool readSystemMedia=true){
-  this.readSystemMedia=readSystemMedia;
+ public DockLyrics(string directory,HttpMessageHandler transport=null,bool readSystemMedia=true,bool companionProcess=false){
+  this.readSystemMedia=readSystemMedia;CompanionProcess=companionProcess;
   http=transport==null?new HttpClient():new HttpClient(transport);
   http.Timeout=TimeSpan.FromSeconds(8);http.MaxResponseContentBufferSize=1048576;
-  root=directory;data=Path.GetFullPath(Path.Combine(root,"..","music-data"));Directory.CreateDirectory(data);
+  root=directory;data=MediaSnapshot.DataDirectory(root,CompanionProcess);Directory.CreateDirectory(data);
   if(readSystemMedia)netease=new NetEaseSession(data);
   http.DefaultRequestHeaders.UserAgent.ParseAdd("PrismGlass/1.0 (+https://github.com/liburce0412-alt/prismglass-desktop)");
-  try{string file=Path.Combine(data,"lyrics-cache.json");if(File.Exists(file)&&new FileInfo(file).Length<2097152){var saved=json.Deserialize<Dictionary<string,string>>(File.ReadAllText(file));foreach(var pair in saved.Take(32))cache[pair.Key]=pair.Value;}}catch{}
+  try{string file=Path.Combine(data,"lyrics-cache.json");if(CompanionProcess&&!File.Exists(file))file=Path.Combine(MediaSnapshot.DataDirectory(root),"lyrics-cache.json");if(File.Exists(file)&&new FileInfo(file).Length<2097152){var saved=json.Deserialize<Dictionary<string,string>>(File.ReadAllText(file));foreach(var pair in saved.Take(32))cache[pair.Key]=pair.Value;}}catch{}
  }
  void StartHelper(DateTime now){
   if(!readSystemMedia)return;
@@ -247,7 +253,7 @@ internal sealed class DockLyrics : IDisposable {
  void StopHelper(){helperRetry=DateTime.MinValue;if(helper==null)return;try{if(!helper.HasExited)helper.Kill();}catch{}helper.Dispose();helper=null;}
  void CancelLookup(){if(cancellation!=null){cancellation.Cancel();cancellation.Dispose();cancellation=null;}if(lookup!=null)lookup.ContinueWith(t=>{var ignored=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);lookup=null;}
  internal void StopSampling(){DesktopMediaActive=false;CancelLookup();StopHelper();if(netease!=null)netease.Enable(false);media=null;track="";lines.Clear();attempts=0;retry=sample=DateTime.MinValue;}
- void Status(string value){if(value==state)return;state=value;try{File.WriteAllText(Path.Combine(root,"lyrics-status.txt"),value);}catch(IOException){}}
+ void Status(string value){if(value==state)return;state=value;if(CompanionProcess)return;try{File.WriteAllText(Path.Combine(root,"lyrics-status.txt"),value);}catch(IOException){}}
  public void Tick(DateTime now,bool dockVisible,bool pointerNear,bool motionPaused){
   if(disposed)return;
   lastMotionPaused=motionPaused;
@@ -259,11 +265,11 @@ internal sealed class DockLyrics : IDisposable {
    if(netease!=null)netease.Enable(settings.enabled||CompanionActive||DesktopMediaActive);
    if(!settings.enabled){
     CancelLookup();track="";lines.Clear();Status("Dock 歌词已关闭");
-    if(CompanionActive||DesktopMediaActive){StartHelper(now);var observed=MediaSnapshot.Read(root,now);media=observed??(media!=null&&media.Fresh(now)?media:null);}
+    if(CompanionActive||DesktopMediaActive){StartHelper(now);var observed=MediaSnapshot.Read(root,now,CompanionProcess);media=observed??(media!=null&&media.Fresh(now)?media:null);}
     else{StopHelper();media=null;}
    }
    else {
-    StartHelper(now);var observed=MediaSnapshot.Read(root,now);
+    StartHelper(now);var observed=MediaSnapshot.Read(root,now,CompanionProcess);
     // A file replacement or missed sample is not a track change. Keep the last
     // valid sample only until its original heartbeat expires; never extend it.
     media=observed??(media!=null&&media.Fresh(now)?media:null);
@@ -307,8 +313,9 @@ internal sealed class DockLyrics : IDisposable {
   ReadPalette(now);
   return new{available=true,updatedAt=(long)(media.sampledAt*1000),title=media.title,artist=media.artist,source=media.source,playing=media.status=="playing",position=media.Position(now),duration=media.duration,current=pair[0],next=pair[1],lyricsEnabled=settings.enabled,lyricsOnline=settings.online,appearance=settings.appearance,motionPaused=lastMotionPaused,gap=gap,palette=new{album=palette.album,wallpaper=palette.wallpaper,status=palette.status}};
  }
- void ReadPalette(DateTime now){string key=media==null?"":media.Key+"|"+media.cover;if(palette==null||paletteTrack!=key||(now-paletteRead).TotalMilliseconds>=750){palette=LyricBackgroundPalette.Read(root,media);paletteRead=now;paletteTrack=key;}}
+ void ReadPalette(DateTime now){string key=media==null?"":media.Key+"|"+media.cover;if(palette==null||paletteTrack!=key||(now-paletteRead).TotalMilliseconds>=750){palette=LyricBackgroundPalette.Read(root,media,CompanionProcess);paletteRead=now;paletteTrack=key;}}
  void Publish(DateTime now,string current,string next,bool motionPaused,bool gap=false){
+  if(CompanionProcess)return;
   string value=(current.Length>0?"1":"0")+"|"+(motionPaused?"1":"0")+"\n"+Convert.ToBase64String(Encoding.UTF8.GetBytes(LyricsTimeline.DisplayText(current)))+"\n"+Convert.ToBase64String(Encoding.UTF8.GetBytes(LyricsTimeline.DisplayText(next)))+"\n";
   var appearance=settings==null?new LyricsAppearance():settings.appearance;
   ReadPalette(now);

@@ -75,4 +75,7 @@ Copy-Item "$out/Glass-Wallpaper-Sample.png" "$app/wallpaper.png"
 '[]' | Set-Content "$app/pins.json" -Encoding utf8
 'Sky' | Set-Content "$app/theme.txt" -Encoding ascii
 'false' | Set-Content "$app/paused.txt" -Encoding ascii
+$preserved=@('LiquidDesktop/pins.json','LiquidDesktop/theme.txt','LiquidDesktop/paused.txt','LiquidDesktop/wallpaper.png','Glass-Wallpaper-Sample.png','update-inventory.json')
+$managed=@(Get-ChildItem -LiteralPath $out -File -Recurse | ForEach-Object {[IO.Path]::GetRelativePath($out,$_.FullName).Replace('\','/')} | Where-Object {$_ -notin $preserved} | Sort-Object)
+[IO.File]::WriteAllText((Join-Path $out 'update-inventory.json'),([ordered]@{format=1;files=$managed}|ConvertTo-Json -Compress))
 Write-Output "Built $out"

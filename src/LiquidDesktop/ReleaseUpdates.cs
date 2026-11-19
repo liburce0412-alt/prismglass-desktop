@@ -11,15 +11,25 @@ using System.Web.Script.Serialization;
 
 internal sealed class ReleaseUpdateState {
  public string current,latest="",tag="",url="",state="idle",message="点击检查 GitHub 上的最新正式版本。";
+ public bool automaticSupported,automaticEnabled;
+ public int progress;
+ internal ReleaseAsset installer;
+}
+internal sealed class ReleaseAsset {
+ internal readonly string name,sha256,url;
+ internal readonly long size;
+ internal ReleaseAsset(string name,string sha256,string url,long size){this.name=name;this.sha256=sha256;this.url=url;this.size=size;}
 }
 internal static class ReleaseUpdates {
  internal const string Endpoint="https://api.github.com/repos/liburce0412-alt/prismglass-desktop/releases/latest";
  internal const string LatestPage="https://github.com/liburce0412-alt/prismglass-desktop/releases/latest";
  const string ReleasePath="/liburce0412-alt/prismglass-desktop/releases/tag/";
+ const string DownloadUrl="https://github.com/liburce0412-alt/prismglass-desktop/releases/download/";
+ internal const long MaxInstallerSize=256L*1024*1024;
  const int Limit=262144;
  static readonly HttpClient client=CreateClient();
  static readonly Regex versionPattern=new Regex(@"\Av?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\z",RegexOptions.CultureInvariant);
- static HttpClient CreateClient(){var value=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false,SslProtocols=System.Security.Authentication.SslProtocols.Tls12});value.Timeout=TimeSpan.FromSeconds(10);value.MaxResponseContentBufferSize=Limit;return value;}
+ internal static HttpClient CreateClient(){var value=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false,SslProtocols=System.Security.Authentication.SslProtocols.Tls12});value.Timeout=TimeSpan.FromSeconds(10);value.MaxResponseContentBufferSize=Limit;return value;}
  static bool Numeric(string value){foreach(char c in value)if(c<'0'||c>'9')return false;return value.Length>0;}
  static Match Version(string value){
   if(value==null||value.Length>128)throw new IOException("版本信息无效，请稍后重试。");
@@ -44,7 +54,22 @@ internal static class ReleaseUpdates {
   Version(current);if(text==null||Encoding.UTF8.GetByteCount(text)>Limit)throw new IOException("更新服务返回的数据过大，请稍后重试。");
   var data=new JavaScriptSerializer{MaxJsonLength=Limit}.DeserializeObject(text) as Dictionary<string,object>;object draft,preview,tag,url;
   if(data==null||!data.TryGetValue("draft",out draft)||!Object.Equals(draft,false)||!data.TryGetValue("prerelease",out preview)||!Object.Equals(preview,false)||!data.TryGetValue("tag_name",out tag)||!(tag is string)||!data.TryGetValue("html_url",out url)||!(url is string))throw new IOException("没有取得有效的正式版本信息，请稍后重试。");
-  return FromTag((string)tag,(string)url,current);
+  var release=FromTag((string)tag,(string)url,current);object assets;
+  if(release.state=="available"&&data.TryGetValue("assets",out assets))release.installer=FindInstaller(assets as object[],release);
+  return release;
+ }
+ static ReleaseAsset FindInstaller(object[] assets,ReleaseUpdateState release){
+  if(assets==null||!Regex.IsMatch(release.tag,@"\Av[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}\z"))return null;
+  string expectedName="PrismGlass-Setup-"+release.latest+"-x64.exe",expectedUrl=DownloadUrl+release.tag+"/"+expectedName;
+  ReleaseAsset installer=null;
+  foreach(object candidate in assets){
+   var asset=candidate as Dictionary<string,object>;object name,state,url,digest,size;
+   if(asset==null||!asset.TryGetValue("name",out name)||!Object.Equals(name,expectedName))continue;
+   if(installer!=null||!asset.TryGetValue("state",out state)||!Object.Equals(state,"uploaded")||!asset.TryGetValue("browser_download_url",out url)||!Object.Equals(url,expectedUrl)||!asset.TryGetValue("digest",out digest)||!(digest is string)||!Regex.IsMatch((string)digest,@"\Asha256:[0-9a-fA-F]{64}\z")||!asset.TryGetValue("size",out size)||!(size is int||size is long))return null;
+   long length=Convert.ToInt64(size);if(length<=0||length>MaxInstallerSize)return null;
+   installer=new ReleaseAsset(expectedName,((string)digest).Substring(7).ToLowerInvariant(),expectedUrl,length);
+  }
+  return installer;
  }
  internal static ReleaseUpdateState ParseRedirect(HttpStatusCode status,Uri location,string current){
   if(status!=HttpStatusCode.Redirect||location==null||!location.IsAbsoluteUri||!location.AbsolutePath.StartsWith(ReleasePath,StringComparison.Ordinal))throw new IOException("GitHub 暂时无法提供更新信息，请重试或打开官方发布页。");
