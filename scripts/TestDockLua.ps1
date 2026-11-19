@@ -1,10 +1,10 @@
-﻿param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe',[ValidateSet('lyrics','drag','trash')][string]$Case='lyrics')
+param([string]$RainmeterPath='C:\Program Files\Rainmeter\Rainmeter.exe',[ValidateSet('lyrics','drag','trash')][string]$Case='lyrics',[string]$LayerTrace)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $fixture=Join-Path $repo ('artifacts/lua-'+[guid]::NewGuid().ToString('N'))
 $skin=Join-Path $fixture 'Skins/DockTest'
 $testScript=if($Case -eq 'trash'){'TestDockTrashLua.lua'}elseif($Case -eq 'drag'){'TestDockDragLua.lua'}else{'TestDockLua.lua'}
-$expected=if($Case -eq 'trash'){'Completed 6 native Trash Lua checks.'}elseif($Case -eq 'drag'){'Completed 25 native Dock interaction Lua checks.'}else{'Completed 38 native Lua checks.'}
+$expected=if($Case -eq 'trash'){'Completed 16 native Trash Lua checks.'}elseif($Case -eq 'drag'){'Completed 25 native Dock interaction Lua checks.'}else{'Completed 68 native Lua checks.'}
 $evidence=Join-Path $repo ("artifacts/tests/dock-$Case-lua-checks.txt")
 $process=$null
 New-Item -ItemType Directory -Force -Path $skin,(Split-Path $evidence) | Out-Null
@@ -27,6 +27,7 @@ AlwaysOnTop=-2
 Update=1000
 [Variables]
 Fixture=$fixture\
+TraceLayer=$(if($LayerTrace){1}else{0})
 ProductionScript=$repo\rainmeter\PrismGlass\@Resources\Dock.lua
 [Check]
 Measure=Script
@@ -40,10 +41,11 @@ Shape=Rectangle 0,0,1,1 | Fill Color 0,0,0,1 | StrokeWidth 0
  do{
   Start-Sleep -Milliseconds 200
   [string]$text=if(Test-Path -LiteralPath "$fixture/lua-checks.txt"){Get-Content -LiteralPath "$fixture/lua-checks.txt" -Raw}else{''}
- }while($text -notmatch 'Completed|ERROR' -and [datetime]::UtcNow -lt $deadline -and !$process.HasExited)
+ }while($text -notmatch '(?m)^(Completed [0-9]+ |ERROR )' -and [datetime]::UtcNow -lt $deadline -and !$process.HasExited)
  $text | Set-Content -LiteralPath $evidence -Encoding utf8
  if(Test-Path -LiteralPath "$fixture/Rainmeter.log"){Copy-Item -LiteralPath "$fixture/Rainmeter.log" -Destination (Join-Path $repo 'artifacts/tests/dock-lua-rainmeter.log') -Force}
- if(!$text.Contains($expected) -or $text -match 'FAIL|ERROR'){throw "Native Lua checks failed. See $evidence and $fixture"}
+ if(!$text.Contains($expected) -or $text -match '(?m)^(FAIL|ERROR)\b'){throw "Native Lua checks failed. See $evidence and $fixture"}
+ if($LayerTrace){Copy-Item -LiteralPath "$fixture/layer-trace.json" -Destination $LayerTrace}
  $text
 }finally{
  if($process){if(!$process.HasExited){Stop-Process -Id $process.Id};$process.WaitForExit(5000) | Out-Null;$process.Dispose()}

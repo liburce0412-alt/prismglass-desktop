@@ -41,6 +41,7 @@ function Update()
  local label=f<.02 and '新月' or f>.98 and '满月' or (f>.46 and f<.54) and (waxing and '上弦月' or '下弦月') or waxing and (f<.5 and '峨眉月' or '盈凸月') or (f<.5 and '残月' or '亏凸月')
  SKIN:Bang('!SetOption','LitMoonClip','Phase',PhasePath(f,waxing));SKIN:Bang('!UpdateMeter','LitMoonClip')
  SKIN:Bang('!SetOption','PhaseLabel','Text',label..'  '..math.floor(f*100+.5)..'%');SKIN:Bang('!UpdateMeter','PhaseLabel')
+ SKIN:Bang('!SetOption','LunarDate','Text',os.date('%m / %d')..' · 今夜月相');SKIN:Bang('!UpdateMeter','LunarDate')
  SKIN:Bang('!UpdateMeter','MoonLight');SKIN:Bang('!Redraw');return f
 end
 function Initialize()lastHour=nil;Update()end

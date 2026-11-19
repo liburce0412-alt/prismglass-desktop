@@ -15,7 +15,13 @@ internal static class NativeGlassMaterial {
  static string root;static MaterialHost host;
  public static void Register(string directory){
   root=directory;DockPreview.ConfigureMaterial=owner=>new Surface(owner,18);
-  DockBackend.CreateMenu=CreateMenu;Application.ApplicationExit+=(s,e)=>{if(host!=null)host.Dispose();host=null;};
+  DockBackend.CreateMenu=CreateMenu;Application.Idle-=Warm;Application.Idle+=Warm;
+  Application.ApplicationExit+=(s,e)=>{Application.Idle-=Warm;if(host!=null)host.Dispose();host=null;};
+ }
+ static async void Warm(object sender,EventArgs args){
+  Application.Idle-=Warm;MaterialHost renderer=null;
+  try{renderer=Host();await renderer.Ready;if(host==renderer&&!renderer.IsDisposed)renderer.HideWhenIdle();}
+  catch{if(renderer!=null&&host==renderer){renderer.Dispose();host=null;}}
  }
  public static ContextMenuStrip CreateMenu(){var menu=new ContextMenuStrip{Renderer=new MenuRenderer(),BackColor=Color.FromArgb(24,36,60),ForeColor=Color.FromArgb(237,245,255)};new Surface(menu,9);return menu;}
  static MaterialHost Host(){if(host==null||host.IsDisposed){host=new MaterialHost(root);host.Show();}return host;}
@@ -52,16 +58,18 @@ internal static class NativeGlassMaterial {
  sealed class MaterialHost:Form {
   const string Page="https://prism-native.local/native-glass.html";
   readonly string directory;readonly WebView2 view=new WebView2{Dock=DockStyle.Fill,DefaultBackgroundColor=Color.Transparent};readonly DesktopPreferences preferences;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly SemaphoreSlim gate=new SemaphoreSlim(1,1);readonly OpticalBackdrop optical;
-  readonly TaskCompletionSource<bool> loaded=new TaskCompletionSource<bool>();TaskCompletionSource<bool> painted,wallpaperReady;string wallpaperVersion;Control active;RuntimePolicy runtime;int serial;bool paused;DateTime wallpaperStamp;WebViewPixelScale pixels;
+  readonly TaskCompletionSource<bool> loaded=new TaskCompletionSource<bool>();TaskCompletionSource<bool> painted,wallpaperReady;string wallpaperVersion;Control active;RuntimePolicy runtime;int serial;bool paused;string wallpaperStamp;WebViewPixelScale pixels;
   public Task Ready {get;private set;}
   public bool Failed {get;private set;}
   [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SystemParametersInfo(uint action,uint parameter,out bool value,uint flags);
   protected override bool ShowWithoutActivation{get{return true;}}
   protected override CreateParams CreateParams{get{var p=base.CreateParams;p.ExStyle|=0x08000080;return p;}}
   public MaterialHost(string folder){
-   directory=folder;preferences=new DesktopPreferences(folder);FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;Location=new Point(-24000,-24000);ClientSize=new Size(400,240);AutoScaleMode=AutoScaleMode.None;Opacity=0;Controls.Add(view);
+   // VisibleChanged may request a snapshot before Show dispatches Shown.
+   // A null readiness task used to throw there and impose a five-second retry.
+   Ready=loaded.Task;directory=folder;preferences=new DesktopPreferences(folder);FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;Location=new Point(-24000,-24000);ClientSize=new Size(400,240);AutoScaleMode=AutoScaleMode.None;Opacity=0;Controls.Add(view);
    WebViewVisibility.Track(view);pixels=new WebViewPixelScale(view,null);optical=LiveGlassBackdrop.Attach(()=>active,view);
-   Shown+=(s,e)=>{runtime=new RuntimePolicy(Handle);Ready=Initialize();};
+   Shown+=async(s,e)=>{runtime=new RuntimePolicy(Handle);try{await Initialize();}catch(Exception error){Failed=true;loaded.TrySetException(error);}};
   }
   async Task Initialize(){
    await view.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(null,Path.Combine(directory,"runtime-data")));
@@ -76,14 +84,14 @@ internal static class NativeGlassMaterial {
    if(Failed)throw new InvalidOperationException("Native glass renderer stopped");
    preferences.Reload();runtime.ReadPower();bool animations=true;SystemParametersInfo(0x1042,0,out animations,0);paused=RuntimePolicy.Reasons(preferences.Current,runtime.Signals,false,false,animations).Length>0;
    LiveGlassBackdrop.Configure(directory,preferences.Current.liveGlassBackground,paused);
-   return bounds+"|"+radius+"|"+preferences.Current.theme+"|"+preferences.Current.glassOpacity+"|"+preferences.Current.glassStyle+"|"+json.Serialize(preferences.Current.glassOverrides)+"|"+json.Serialize(preferences.Current.glassPresets)+"|"+preferences.Current.liveGlassBackground+"|"+paused+"|"+File.GetLastWriteTimeUtc(Path.Combine(directory,"wallpaper.png")).Ticks+"|"+(LiveGlassBackdrop.Enabled?optical.Version:0);
+   return bounds+"|"+radius+"|"+preferences.Current.theme+"|"+preferences.Current.glassOpacity+"|"+preferences.Current.glassStyle+"|"+json.Serialize(preferences.Current.glassOverrides)+"|"+json.Serialize(preferences.Current.glassPresets)+"|"+preferences.Current.liveGlassBackground+"|"+paused+"|"+MonitorWallpaper.For(directory,Screen.FromRectangle(bounds).Bounds).Version+"|"+(LiveGlassBackdrop.Enabled?optical.Version:0);
   }
   public async Task<Bitmap> Snapshot(Control owner,Rectangle bounds,int radius){
    if(!await gate.WaitAsync(0))return null;
    try{
     if(owner.IsDisposed||!owner.Visible||IsDisposed)return null;bool reset=active!=owner,resized=ClientSize!=bounds.Size;active=owner;view.Visible=true;view.CoreWebView2.Resume();ClientSize=bounds.Size;optical.Refresh();await pixels.SyncAsync(reset||resized);
-    var screen=Screen.FromRectangle(bounds).Bounds;var stamp=File.GetLastWriteTimeUtc(Path.Combine(directory,"wallpaper.png"));
-    if(wallpaperStamp!=stamp){wallpaperVersion=stamp.Ticks.ToString();wallpaperReady=new TaskCompletionSource<bool>();await view.CoreWebView2.ExecuteScriptAsync("receive({type:'wallpaper',version:'"+wallpaperVersion+"'})");if(await Task.WhenAny(wallpaperReady.Task,Task.Delay(2000))!=wallpaperReady.Task)return null;wallpaperStamp=stamp;}
+    var screen=Screen.FromRectangle(bounds).Bounds;var sample=MonitorWallpaper.For(directory,screen);var stamp=sample.Version;
+    if(wallpaperStamp!=stamp){wallpaperVersion=stamp;wallpaperReady=new TaskCompletionSource<bool>();await view.CoreWebView2.ExecuteScriptAsync("receive("+json.Serialize(new{type="wallpaper",version=wallpaperVersion,file=sample.File})+")");if(await Task.WhenAny(wallpaperReady.Task,Task.Delay(2000))!=wallpaperReady.Task)return null;wallpaperStamp=stamp;}
     // Native regions already clip the edge; do not composite a second transparent inset onto a dark GDI background.
     var layout=new{type="layout",width=bounds.Width,height=bounds.Height,sceneWidth=screen.Width,sceneHeight=screen.Height,originX=bounds.Left-screen.Left,originY=bounds.Top-screen.Top,theme=preferences.Current.theme,paused=paused,cards=new[]{new{name="NativePopup",x=-2,y=-2,w=bounds.Width+4,h=bounds.Height+4,r=radius,fixedShape=true}}};
     int id=++serial;painted=new TaskCompletionSource<bool>();view.CoreWebView2.PostWebMessageAsJson(json.Serialize(new{type="snapshot",id=id,reset=reset,preferences=new{glassPresets=preferences.Current.glassPresets,glassOverrides=preferences.Current.glassOverrides,glassStyle=preferences.Current.glassStyle,glassOpacity=preferences.Current.glassOpacity,liveGlassBackground=preferences.Current.liveGlassBackground&&!paused},layout=layout}));
@@ -92,7 +100,8 @@ internal static class NativeGlassMaterial {
    }finally{gate.Release();}
   }
   public void Release(Control owner){if(active!=owner)return;active=null;if(painted!=null)painted.TrySetResult(false);if(!view.IsDisposed){try{if(view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson("{\"type\":\"stop\"}");}catch(InvalidOperationException){}catch(COMException){}view.Visible=false;}}
-  protected override void WndProc(ref Message message){if(runtime!=null)runtime.WindowMessage(ref message);base.WndProc(ref message);}
+  public void HideWhenIdle(){if(active==null&&!view.IsDisposed)view.Visible=false;}
+  protected override void WndProc(ref Message message){StartupWindowOrder.Constrain(message.HWnd,message.Msg,message.LParam);if(runtime!=null)runtime.WindowMessage(ref message);base.WndProc(ref message);}
   protected override void Dispose(bool disposing){if(disposing){active=null;if(painted!=null)painted.TrySetResult(false);if(runtime!=null)runtime.Dispose();view.Dispose();}base.Dispose(disposing);}
  }
 }

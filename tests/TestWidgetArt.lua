@@ -1,0 +1,48 @@
+function Initialize()
+ local nativeSkin=SKIN;local root=nativeSkin:GetVariable('Fixture');local script=nativeSkin:GetVariable('ProductionScript')
+ local report=assert(io.open(root..'lua-checks.txt','w'));local originalTime,originalClock=os.time,os.clock
+ local now=originalTime({year=2026,month=11,day=10,hour=12,min=0,sec=0});local tick,checks,redraws=0,0,0
+ local values={LiquidRoot=root,AmbientPaused='0',AmbientIdleDivider='125',['@']=script:gsub('WidgetArt.lua$','')};local options={}
+ local function check(value,name)report:write((value and 'PASS ' or 'FAIL ')..name..'\n');report:flush();if not value then error(name)end;checks=checks+1 end
+ local function write(name,text)local file=assert(io.open(root..name,'w'));file:write(text);file:close()end
+ SKIN={GetVariable=function(_,key,default)return values[key] or default end,Bang=function(_,command,meter,key,value)if command=='!SetOption' then options[meter..'.'..key]=value elseif command=='!Redraw' then redraws=redraws+1 end end}
+ os.time=function(value)return value and originalTime(value) or now end;os.clock=function()return tick end
+ local ok,err=pcall(function()
+  write('paused.txt','false');dofile(script)
+  for _,kind in ipairs({'Hourglass','SunPath','YearDots','Tide','Orrery','Bonsai'})do
+   values.WidgetKind=kind;options={};Initialize();check(options['Art.Shape']~=nil and options['Ambient.UpdateDivider']=='125',kind..' paints in low-frequency idle mode')
+   local count,finite=0,true;for key,value in pairs(options)do if key:match('^Art%.Shape')then count=count+1;finite=finite and not value:match('nan') and not value:match('inf')end end
+   check((count>=8 or options['Sculpture.Hidden']=='0' and options['Sculpture.ImageName']~='') and finite,kind..' has independent finite vector or transparent sculptural content')
+  end
+  values.WidgetKind='Hourglass';Initialize();check(Update()==300,'countdown starts at five minutes');Activate();now=now+37;check(Update()==263 and options['Caption.Text']=='04:23','countdown follows wall time')
+  Activate();now=now+90;check(Update()==263,'paused countdown preserves remaining time');Initialize();check(Update()==263,'paused countdown survives reload')
+  Activate();now=now+20;Initialize();check(Update()==243,'running countdown resumes from stored deadline');now=now+300;Update();check(options['Caption.Text']=='时间到','elapsed countdown reaches its completion caption');Reset();check(Update()==300,'reset restores five minutes')
+  Preset(15);check(Update()==900,'fifteen-minute preset is immediately usable');Preset(25);check(Update()==1500,'twenty-five-minute preset is immediately usable');Preset(50);check(Update()==3000,'fifty-minute preset is immediately usable');Activate();now=now+10;Update();Initialize();check(Update()==2990,'chosen duration and running deadline survive reload');Reset();check(Update()==3000,'reset preserves selected duration');Preset(9);check(Update()==3000,'unsupported preset cannot change the timer');Preset(5)
+  values.WidgetKind='YearDots';now=originalTime({year=2024,month=12,day=31,hour=12});Initialize();local day,total=YearProgress(now);check(day==366 and total==366,'calendar helper keeps leap-year civil days');Activate();local request=assert(io.open(root..'shelf.request'));check(request:read('*a')=='countdown','date card opens existing countdown editor');request:close();Reset();request=assert(io.open(root..'panel.request'));check(request:read('*a')=='calendar','date card opens existing calendar');request:close()
+  local offset=28800;now=originalTime({year=2026,month=11,day=10,hour=12});local start=math.floor((now+offset)/86400)*86400-offset;local rise=start+6*3600;local sunset=start+18*3600
+  local valid='{"fetchedAt":'..(now*1000)..',"body":"{\\"utc_offset_seconds\\":28800,\\"sunrise\\":['..rise..'],\\"sunset\\":['..sunset..']}"}'
+  local fraction=Daylight(now,valid);check(fraction and fraction>=0 and fraction<=1,'daylight consumes the existing escaped weather cache')
+  check(Daylight(now,valid,'30.2\n120.3\nNew city\n')==nil,'a city change never reuses the previous location cache')
+  check(Daylight(now+7201,valid)==nil,'stale weather does not invent a sun position');check(Daylight(now,'{}')==nil,'missing weather stays unavailable');check(Daylight(now,(valid:gsub(tostring(sunset),tostring(rise))))==nil,'invalid daylight interval stays unavailable')
+  values.WidgetKind='SunPath';write('weather-cache.json',valid);Initialize();check(options['Detail.Text']:match('日落还有'),'daylight shows useful remaining time in the configured timezone');write('weather-cache.json','{}');Initialize();check(options['Detail.Text']=='天气待同步','unavailable weather has truthful fallback')
+  Activate();local request=assert(io.open(root..'workspace.request','r'));check(request:read('*a')=='weather','sunpath opens the existing weather settings');request:close()
+  write('widget-work-context.txt','stamp='..now..'\nversion=1\ntasksAvailable=1\ntaskPending=2\ntaskTotal=3\ntaskFirst=核对设计稿\ncountdownTitle=作品提交\ncountdownDate=2026-11-20\nfocusAvailable=1\nfocusTotal=1500\nfocusRemaining=1200\nfocusDeadline=0\nfocusCompleted=3')
+  values.WidgetKind='Bonsai';Initialize();check(options['Caption.Text']=='2 件待办' and options['Detail.Text']=='核对设计稿','bonsai reads only the actual pending task summary');Activate();local request=assert(io.open(root..'shelf.request'));check(request:read('*a')=='tasks','bonsai opens the existing task editor');request:close()
+  values.WidgetKind='Orrery';Initialize();check(options['Caption.Text']=='20:00' and options['Detail.Text']=='已完成 3 轮专注','orrery shows the existing computer focus state');Activate();request=assert(io.open(root..'widget-action.request'));check(request:read('*a')=='focus-toggle','orrery issues the fixed existing focus action');request:close();Reset();request=assert(io.open(root..'widget-action.request'));check(request:read('*a')=='focus-reset','orrery reset uses the existing timer');request:close()
+  now=now+20;values.WidgetKind='Bonsai';Initialize();check(options['Caption.Text']=='小小待办','stale work context cannot masquerade as current task data')
+  values.WidgetKind='Tide';values.AmbientPaused='0';Initialize();local before=redraws;for i=1,10 do tick=tick+.1;now=now+1;Update()end;check(redraws==before,'rest is idle until explicitly started');Activate();now=now+5;Update();check(options['Caption.Text']=='00:55' and options['Detail.Text']:match('呼气'),'one-minute rest has actual elapsed time and breathing phase');Activate();now=now+10;Update();check(options['Caption.Text']=='00:55','pausing rest freezes elapsed time');Activate();now=now+60;Update();check(options['Caption.Text']=='00:00' and options['Ambient.UpdateDivider']=='125','rest settles after one minute');Reset();check(options['Caption.Text']=='01:00','rest reset is explicit');Activate();values.AmbientPaused='1';MotionPolicy();now=now+10;Update();check(options['Caption.Text']=='01:00' and options['Ambient.UpdateDivider']=='125','host motion pause stops the rest interval and motion')
+  values.AmbientPaused='0';values.WidgetKind='Tide';Initialize();Activate();Update();local curve=options['Art.RibbonPath1'];tick=tick+.016;Update();check(options['Art.RibbonPath1']~=curve and options['Ambient.UpdateDivider']=='1','native ribbon geometry moves between data seconds');Activate();local heldCurve=options['Art.RibbonPath1'];tick=tick+.5;Update();check(options['Art.RibbonPath1']==heldCurve and options['Ambient.UpdateDivider']=='125','paused native ribbons settle without a frame loop')
+  values.WidgetKind='Hourglass';Initialize();check(options['Art.Vessel'] and not options['Sculpture.ImageName'],'hourglass vessel is retained vector geometry rather than a PNG shell')
+  values.WidgetKind='YearDots';Initialize();local days=0;for i=0,41 do if options['Day'..i..'.Hidden']=='0' then days=days+1 end end;check(days==30,'November renders thirty actual civil-day text cells')
+  dofile((script:gsub('WidgetArt.lua$','Clock.lua')));Initialize();local hand=options['Hands.Shape3'];tick=tick+.25;Update();check(hand~=options['Hands.Shape3'] and options['Ambient.UpdateDivider']=='1','clock hands interpolate inside an actual wall-clock second');values.AmbientPaused='1';MotionPolicy();Update();hand=options['Hands.Shape3'];tick=tick+.25;Update();check(hand==options['Hands.Shape3'] and options['Ambient.UpdateDivider']=='63','clock reduced motion keeps time without a frame loop');now=now+1;Update();check(hand~=options['Hands.Shape3'],'paused clock still advances actual civil seconds')
+  local hasMotion=false;SKIN.GetMeter=function(_,name)if name=='Input' or name=='MotionToggle' and hasMotion then return {} end end
+  dofile((script:gsub('WidgetArt.lua$','LiquidGlass.lua')));write('heartbeat.txt',now..' Sky');Initialize();Update();local painted=redraws
+  for i=1,3 do now=now+1;Update()end;check(redraws==painted,'healthy unchanged glass heartbeat does not repaint native cards')
+  write('heartbeat.txt',now..' Astro');Update();check(redraws==painted+1,'glass theme change still repaints');painted=redraws
+  os.remove(root..'heartbeat.txt');Update();check(redraws==painted+1 and options['Input.ToolTipHidden']=='0','host departure repaints the fallback and restores native tooltip');painted=redraws
+  hasMotion=true;write('paused.txt','true');Update();check(redraws==painted+1 and options['MotionToggle.ToolTipText']=='动效已暂停，点击继续','motion toggle state changes remain visible');painted=redraws;Update();check(redraws==painted,'unchanged motion toggle does not force another redraw')
+  report:write('Completed '..checks..' new widget Lua checks.\n')
+ end)
+ if not ok then report:write('ERROR '..tostring(err)..'\n')end;report:close();SKIN=nativeSkin;os.time=originalTime;os.clock=originalClock
+end
+function Update()return 0 end

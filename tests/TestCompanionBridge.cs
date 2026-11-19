@@ -17,11 +17,11 @@ internal sealed class AppLibrarySnapshot {public List<AppLibraryEntry> entries=n
 internal sealed class AppLibrary {public AppLibrarySnapshot snapshot=new AppLibrarySnapshot();public AppLibrarySnapshot GetSnapshot(){return snapshot;}public AppLibraryEntry Find(string id){return snapshot.entries.Find(x=>x.id==id);}}
 internal sealed class DesktopPreferenceState {public string theme="Sky";public bool manualPaused;}
 internal sealed class DesktopPreferences {public long Revision=7;public string error="";public DesktopPreferenceState Current=new DesktopPreferenceState();public Dictionary<string,object> extra=new Dictionary<string,object>{{"glassOpacity",85},{"textScale",110},{"reducedMotion",false},{"dockIconSize",48},{"dockAutoHide",true},{"showLabels",true},{"gridColumns",6},{"pauseOnBattery",false},{"pauseOnPowerSaver",true},{"pauseOnRemote",true},{"hiddenCards",new[]{"notes"}},{"hiddenLeftCards",new[]{"Weather"}}};public void Reload(){}public object Snapshot(){var value=new Dictionary<string,object>(extra);value["theme"]=Current.theme;value["manualPaused"]=Current.manualPaused;value["hotkey"]="PRIVATE_HOTKEY";value["monitors"]=new[]{"PRIVATE_MONITOR_ID"};value["error"]=error;return value;}public void Apply(Dictionary<string,object> patch,long revision){DesktopSettingsFiles.Locked(()=>{if(revision!=Revision||error!="")throw new IOException();foreach(var pair in patch){if(pair.Key=="theme")Current.theme=(string)pair.Value;else if(pair.Key=="manualPaused")Current.manualPaused=(bool)pair.Value;else if(extra.ContainsKey(pair.Key))extra[pair.Key]=pair.Value;else throw new ArgumentException();}Revision++;});}}
-internal sealed class WidgetBackend {public readonly List<string> actions=new List<string>();public int ensures;public object EnsureCompanionSources(){ensures++;return new{};}public void Action(string value){actions.Add(value);}}
+internal sealed class WidgetBackend {public readonly List<string> actions=new List<string>();public int ensures;public object EnsureCompanionSources(){ensures++;return new{};}public void Action(string value,Func<bool> allowed=null){if(allowed==null||allowed())actions.Add(value);}}
 internal sealed class SharedDesktopData {public object widgets;public readonly WidgetBackend Widgets=new WidgetBackend();public object ReadWidgets(){return widgets;}public void Invalidate(){}}
 internal sealed class DockLyrics {public bool CompanionActive;public object snapshot=new{available=false};public object CompanionSnapshot(DateTime now){return snapshot;}}
 internal static class TopIsland {public static int calls;public static void Media(byte value,string root){calls++;}}
-internal static class DockBackend {public static int calls;public static string path,arguments,name;public static void OpenApplication(string target,string args,string title){calls++;path=target;arguments=args;name=title;}}
+internal static class DockBackend {public static int calls;public static string path,arguments,name;public static void OpenApplication(string target,string args,string title,string icon=""){calls++;path=target;arguments=args;name=title;}}
 
 internal static class TestCompanionBridge {
  static int checks;static readonly JavaScriptSerializer json=new JavaScriptSerializer();
@@ -46,6 +46,11 @@ internal static class TestCompanionBridge {
   int pointerCalls=0,powerCalls=0;var controlClock=DateTime.UtcNow;
   var fakeControls=new CompanionControls(()=>locked,()=>controlClock,input=>{pointerCalls++;return true;},action=>{powerCalls++;return null;});
   var controlBridge=new CompanionBridge(root,library,settings,shared,lyrics,operation=>operation(),()=>locked,context,fakeControls);
+  var dispatchQueued=new System.Threading.ManualResetEventSlim();var resumeDispatch=new System.Threading.ManualResetEventSlim();
+  var exiting=new CompanionBridge(root,library,settings,shared,lyrics,op=>{dispatchQueued.Set();resumeDispatch.Wait();return op();},()=>false,context);
+  var pending=System.Threading.Tasks.Task.Factory.StartNew(()=>exiting.Handle("/api/state",Request(),all));
+  Check(dispatchQueued.Wait(2000),"request reached desktop dispatch");var shutdown=System.Threading.Tasks.Task.Factory.StartNew(()=>exiting.Dispose());
+  bool timely=shutdown.Wait(1000);resumeDispatch.Set();Check(timely&&pending.Wait(2000)&&pending.Result.Status!=200,"shutdown bypasses queued desktop request and cancels it");
   var device=new CompanionGrant{Active=true,pointer=true,power=true};
   Check(controlBridge.Handle("/api/pointer/begin",Request(),all).Status==403,"old control grant cannot acquire mouse permission");
   var lease=Body(controlBridge.Handle("/api/pointer/begin",Request(),device));
@@ -98,6 +103,11 @@ internal static class TestCompanionBridge {
   File.WriteAllText(lyricFile,"{\"online\":\"wrong type\"}");Check(bridge.Handle("/api/lyrics-style",style,all).Status==503&&File.ReadAllText(lyricFile).Contains("wrong type"),"wrong typed saved lyrics cannot be overwritten with defaults");File.WriteAllText(lyricFile,goodLyrics);
   Check(bridge.Handle("/api/action",Request("action","run","targetId","cmd.exe"),all).Status==400,"arbitrary command is rejected");
   foreach(object invalidVolume in new object[]{null,"50",-1,101,2.5}){var volumeRequest=new Dictionary<string,object>{{"action","volume.set"}};if(invalidVolume!=null)volumeRequest["value"]=invalidVolume;Check(bridge.Handle("/api/action",volumeRequest,all).Status==400,"volume setter rejects missing string fractional or out-of-range value "+invalidVolume);}
+  var brightnessSet=new Dictionary<string,object>{{"action","brightness.set"},{"targetId",@"\\?\DISPLAY#panel#port#{id}"},{"value",55}};
+  Check(bridge.Handle("/api/action",brightnessSet,none).Status==403&&shared.Widgets.actions.Count==0,"brightness setter needs control permission");
+  foreach(object invalid in new object[]{null,"50",-1,101,2.5}){brightnessSet["value"]=invalid;Check(bridge.Handle("/api/action",brightnessSet,all).Status==400,"brightness setter rejects invalid integer "+invalid);}brightnessSet["value"]=55;
+  Check(bridge.Handle("/api/action",brightnessSet,all).Status==200&&shared.Widgets.actions.Single()=="brightness-set:55:"+Uri.EscapeDataString((string)brightnessSet["targetId"]),"brightness request preserves exact encoded target and absolute value");shared.Widgets.actions.Clear();
+  brightnessSet["targetId"]="";Check(bridge.Handle("/api/action",brightnessSet,all).Status==400,"brightness never writes an unspecified target");
   var volumeSet=new Dictionary<string,object>{{"action","volume.set"},{"value",55}};Check(bridge.Handle("/api/action",volumeSet,none).Status==403&&shared.Widgets.actions.Count==0,"volume set needs control permission");
   shared.widgets=new{volume=new{value=30},sourceStatus=new{volume=new{available=false}}};Check(bridge.Handle("/api/action",volumeSet,all).Status==503&&shared.Widgets.actions.Count==0,"unavailable Music sampler blocks absolute volume writes");shared.widgets=oldWidgets;
   Check(bridge.Handle("/api/action",volumeSet,all).Status==200&&shared.Widgets.actions.Single()=="volume-set:55","valid absolute volume reaches only the fixed fake widget command");shared.Widgets.actions.Clear();

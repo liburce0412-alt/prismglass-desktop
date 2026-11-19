@@ -61,11 +61,13 @@ class TestCompanionConnection {
   string[] trailing=Parse(CompanionConnection.Arguments(root+Path.DirectorySeparatorChar,choice,Host,9443,null,false,false));Check(trailing[5]==script&&trailing[7].TrimEnd(Path.DirectorySeparatorChar)==root,"a trailing appRoot separator neither loses the sibling repair tool nor swallows arguments");
   string videoScript=Path.Combine(parent,"RepairCompanionVideo.ps1"),peer="10.91.174.90";File.WriteAllText(videoScript,"throw 'This test fixture must never execute.'");
   foreach(string suffix in new[]{"","\\","/","\\\\"}){
-   string[] video=Parse(CompanionConnection.VideoArguments(root+suffix,choice.address,peer,false));
+   string[] video=Parse(CompanionConnection.VideoArguments(root+suffix,choice.address,peer));
    Check(video.SequenceEqual(new[]{"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",videoScript,"-AppRoot",root,"-Address",choice.address,"-PeerAddress",peer}),"video checks find the sibling tool with literal paths and trailing separator: "+suffix);
-   Check(Parse(CompanionConnection.VideoArguments(root+suffix,choice.address,peer,true)).SequenceEqual(video.Concat(new[]{"-Apply"})),"video repair uses the same normalized path and only adds explicit Apply");
+   string approved=new string('A',64);
+   Check(Parse(CompanionConnection.VideoArguments(root+suffix,choice.address,peer,approved)).SequenceEqual(video.Concat(new[]{"-Apply","-ExpectedPlan",approved})),"video repair carries the approved plan into the elevated check");
   }
-  File.Delete(videoScript);Check(Rejects(()=>CompanionConnection.VideoArguments(root+Path.DirectorySeparatorChar,choice.address,peer,false)),"missing video tool is rejected even when the general repair script exists");
+  Check(Rejects(()=>CompanionConnection.VideoArguments(root,choice.address,peer,"invalid")),"invalid approval cannot launch an elevated change");
+  File.Delete(videoScript);Check(Rejects(()=>CompanionConnection.VideoArguments(root+Path.DirectorySeparatorChar,choice.address,peer)),"missing video tool is rejected even when the general repair script exists");
   Check(Rejects(()=>CompanionConnection.Arguments(root,null,Host,9443,null,false,false))&&Rejects(()=>CompanionConnection.Arguments(root,new CompanionNetworkChoice{address=choice.address,index=0},Host,9443,null,false,false)),"missing choice and invalid interface index cannot build commands");
   Check(Rejects(()=>CompanionConnection.Arguments(root,new CompanionNetworkChoice{address="8.8.8.8",index=19},Host,9443,null,false,false))&&Rejects(()=>CompanionConnection.Arguments(root,choice,"anything.local",9443,null,false,false))&&Rejects(()=>CompanionConnection.Arguments(root,choice,Host,443,null,false,false)),"public IP, foreign hostname and privileged port are rejected before launch");
   Check(Rejects(()=>CompanionConnection.Arguments(root,choice,Host,9443,"previous\nrecord.json",false,false))&&Rejects(()=>CompanionConnection.Arguments(root,choice,Host,9443,"previous\"record.json",false,false)),"existing-record argument cannot contain line breaks or quotes");

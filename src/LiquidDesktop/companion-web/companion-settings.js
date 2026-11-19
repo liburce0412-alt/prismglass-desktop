@@ -4,6 +4,8 @@
   var desktop = [
     ['theme','主题',{Sky:'Sky · 晴空',Astro:'Astro · 星夜'}], ['glassOpacity','玻璃浓度',60,100], ['textScale','文字大小',90,130],
     ['dockIconSize','Dock 图标大小',32,72], ['gridColumns','应用列数',4,10], ['showLabels','显示应用名称'], ['dockAutoHide','自动隐藏 Dock'],
+    ['windowAnimations','Dock 窗口展开与收起动画（关闭即直接显示）'], ['stageManager','电脑台前调度'], ['stageHideCovered','最大化时收起台前调度（电脑左边缘可唤出），全屏时隐藏'],
+    ['stageGroupLayout','窗口组布局',{auto:'自动排列',columns:'并排',grid:'网格',preserve:'保留位置'}], ['stageSingleSize','单窗呼出尺寸',{fit:'自动适配',remember:'记住上次大小'}], ['stageMaxWidth','单窗最大宽度 %',50,100], ['stageMaxHeight','单窗最大高度 %',50,100],
     ['manualPaused','暂停电脑动效'], ['reducedMotion','减少电脑动画'], ['pauseOnBattery','电池供电时暂停'], ['pauseOnPowerSaver','节能模式时暂停'], ['pauseOnRemote','远程桌面时暂停']
   ];
   var lyrics = [

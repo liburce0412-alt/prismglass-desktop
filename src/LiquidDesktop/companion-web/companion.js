@@ -9,8 +9,13 @@
   var assets = Object.create(null), wantedAssets = Object.create(null), assetActive = 0, scene = 'auto', touchKey = '', rememberedContext = {};
   var pointerLease = '', pointerSeq = 0, pointerExpires = 0, pointerBusy = false, pointerTimer = 0, pointerTimerDelay = 0, pointerGeneration = 0, pointerDelta = null, fingers = {}, gesture = null;
   var pointerSamples = [], pointerActions = [], pointerHeld = false, pointerDragWanted = false, pointerLastSent = 0, pointerLastTap = null, pointerSpeed = 1, pointerNatural = true, wheelContact = null;
-  var powerTicket = null, powerBusy = false, powerError = '', controlsVersion = 0, resumePage = '', resumeScene = 'auto', volumeEditing = false;
+  var powerTicket = null, powerBusy = false, powerError = '', controlsVersion = 0, resumePage = '', resumeScene = 'auto', volumeEditing = false, brightnessEditing = false, brightnessTargets = '', brightnessWanted = '';
+  var levelSequence = 0;
+  function nextLevelSequence() { levelSequence = Math.max(Date.now(), levelSequence + 1); return levelSequence; }
+  var volumeLevel = window.PrismContinuousLevel(function (value) { return write('volume','/api/action',{action:'volume.set',sequence:nextLevelSequence(),value:value},'音量已发送，等待电脑读回'); }, 220);
+  var brightnessLevel = window.PrismContinuousLevel(function (value) { return write('brightness','/api/action',{action:'brightness.set',sequence:nextLevelSequence(),value:value.value,targetId:value.targetId},'亮度已发送，等待电脑读回'); }, 220);
   var powerNames = { lock: '锁定', sleep: '睡眠', restart: '重启', shutdown: '关机' };
+  var levelIntent = { volume: null, brightness: null }, levelReadbackUntil = { volume: 0, brightness: 0 };
   var directContact = null, directPosition = null, offlineText = null, keyboardRecovered = false;
   var nativeTouches = {}, touchFrames = [], touchGeometry = '', touchScreen = '';
   var keyboardComposing = false, keyboardSending = false, pointerRequest = null, pointerRequestKind = '';
@@ -34,7 +39,7 @@
   function blocked() { return cooling() || writesBlocked; }
   function rateNotice() { return (cooldownCode === 'busy' ? '电脑暂时繁忙' : '请求较多') + '，暂停同步 ' + Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000)) + ' 秒后自动恢复。编辑会保留，操作不会自动重放。'; }
   function responseError(response, data, isolated) {
-    var error = new Error(data.message || '请求未完成，请稍后重试。'); error.status = response.status; error.code = data.error;
+    var error = new Error(data.message || '请求未完成，请稍后重试。'); error.status = response.status; error.code = data.error; if (error.code === 'level_conflict' && Number.isSafeInteger(data.lastSequence)) levelSequence = Math.max(levelSequence, data.lastSequence);
     if (response.status === 429 && !isolated) {
       var header = response.headers && response.headers.get('Retry-After'), seconds = Number(header || data.retryAfter);
       if (!isFinite(seconds) || seconds <= 0) seconds = data.error === 'busy' ? 1 : 60;
@@ -73,7 +78,7 @@
     keyboardRecovered = false;
     $('screen-text').value = ''; keyboardComposing = false; keyboardSending = false; keyboardPanel(false);
     if (window.PrismCompanionScan) window.PrismCompanionScan.stop();
-    volumeEditing = false;
+    volumeEditing = brightnessEditing = false; volumeLevel.cancel(); brightnessLevel.cancel(); brightnessTargets = brightnessWanted = ''; levelIntent.volume = levelIntent.brightness = null;
     if (session && state) { resumePage = page; resumeScene = scene; }
     stopPointer(false); powerTicket = null; powerBusy = false; powerError = ''; if (window.PrismCompanionWidgets) window.PrismCompanionWidgets.clear();
     if (window.PrismCompanionLyrics) window.PrismCompanionLyrics.clear();
@@ -194,7 +199,7 @@
     $('presentation-toggle').disabled = cooling();
     if (document.body.dataset.presentation === 'true' && document.body.dataset.presentationMode === 'lyrics' && !permission('music')) setPresentation(true);
     document.body.dataset.theme = state.theme === 'Astro' ? 'Astro' : 'Sky';
-    if (window.PrismGlassOptics && window.PrismGlassOptics.setStyle) window.PrismGlassOptics.setStyle(state.settings && state.settings.glassStyle || '', state.settings && state.settings.glassOverrides, state.settings && state.settings.glassPresets);
+    if (window.PrismGlassOptics && window.PrismGlassOptics.setStyle) window.PrismGlassOptics.setStyle(state.settings && state.settings.glassStyle || '', state.settings && state.settings.glassOverrides, state.settings && state.settings.glassPresets, state.settings && state.settings.glassOpacity);
     var w = state.weather || {}, wd = w.data || {}, s = state.system || {}, sd = s.data || {}, v = state.volume || {};
     var weatherAvailable = w.available === true && number(wd.temp) !== null, weatherMetrics = [];
     if (number(wd.feelsLike) !== null) weatherMetrics.push('体感 ' + Math.round(wd.feelsLike) + '°');
@@ -214,7 +219,7 @@
     var m = permission('music') ? state.music || {} : {};
     text('track-title', m.available ? m.title || '未提供歌名' : permission('music') ? m.reason || '暂无播放' : '音乐尚未共享');
     text('track-artist', m.available ? m.artist || '' : ''); text('music-source', m.available ? m.source || '系统媒体' : '未获取');
-    text('playback-state', m.available ? m.playing === true ? '正在播放' : m.playing === false ? '已暂停' : '播放状态未提供' : '');
+    text('playback-state', pending['media.toggle'] || pending['media.next'] || pending['media.previous'] ? '等待播放器读回' : m.available ? m.playing === true ? '正在播放' : m.playing === false ? '已暂停' : '播放状态未提供' : '');
     if (window.PrismCompanionLyrics) window.PrismCompanionLyrics.render(m, $('reduce-motion').checked);
     else { text('lyric-current', m.available ? m.current || '暂无歌词' : ''); text('lyric-next', m.available ? m.next || '' : ''); }
     text('play-button', m.available && m.playing === true ? '暂停' : m.available && m.playing === false ? '播放' : '播放 / 暂停');
@@ -238,12 +243,12 @@
     $('task-text').maxLength = 120; $('task-text').disabled = !allowed; $('task-add').disabled = !allowed || !!pending.tasks || blocked();
     var items = allowed && Array.isArray(tasks.items) ? tasks.items : [];
     var open = items.filter(function (item) { return !item.done; });
-    text('home-task-count', allowed ? open.length ? open.length + ' 件待办' : '暂时都完成了' : permission('tasks') ? '等待电脑同步' : '待办尚未共享');
+    text('home-task-count', allowed ? open.length ? open.length + ' 件待办' : items.length ? '暂时都完成了' : '暂无待办' : permission('tasks') ? '等待电脑同步' : '待办尚未共享');
     text('home-task-first', allowed ? open.length ? open[0].text : '暂无待办' : '请在电脑开启待办共享');
     text('home-task-second', open.length > 1 ? open[1].text : ''); visible('home-task-second', open.length > 1);
     var filtered = items.filter(function (item) { return taskFilter === 'all' || (taskFilter === 'done') === !!item.done; }), listKey = JSON.stringify([!!allowed, tasks.revision, taskFilter, filtered]);
     ['all', 'open', 'done'].forEach(function (filter) { var button = $('task-filter-' + filter); button.disabled = !allowed; button.setAttribute('aria-pressed', String(filter === taskFilter)); });
-    text('task-count', allowed ? items.filter(function (t) { return !t.done; }).length + ' 项未完成' : permission('tasks') ? '暂不可用' : '未共享');
+    text('task-count', pending.tasks ? '正在保存到电脑' : allowed ? items.filter(function (t) { return !t.done; }).length + ' 项未完成' : permission('tasks') ? '暂不可用' : '未共享');
     text('tasks-empty', !allowed ? permission('tasks') ? tasks.reason || '电脑暂未提供待办，稍后会自动同步。' : '请在电脑允许此设备共享待办。' : taskFilter === 'open' ? '没有未完成的待办。' : taskFilter === 'done' ? '还没有已完成的待办。' : '暂无待办'); visible('tasks-empty', !filtered.length);
     if (listKey !== taskListKey) {
       taskListKey = listKey; $('task-list').textContent = '';
@@ -284,7 +289,7 @@
     var f = state && state.focus || {};
     if (!f.available) { text('focus-time', '--:--'); text('focus-status', '电脑专注组件未运行'); text('focus-completed', '由电脑计时'); text('home-focus-time', '--:--'); text('home-focus-label', '专注计时未开启'); return; }
     var running = f.deadline > 0, remaining = running ? Math.max(0, f.deadline - (Date.now() + clockOffset) / 1000) : f.remaining;
-    text('focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('focus-status', running ? remaining > 0 ? '正在专注' : '等待电脑确认完成' : '准备开始');
+    text('focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('focus-status', pending['focus.toggle'] || pending['focus.reset'] || pending['focus.25'] || pending['focus.5'] ? '等待电脑读回' : running ? remaining > 0 ? '正在专注' : '等待电脑确认完成' : remaining === 0 ? '本轮已完成' : remaining < f.total ? '已暂停' : '准备开始');
     text('focus-toggle', running ? '暂停' : '开始'); text('focus-completed', number(f.completed) !== null ? '电脑已记录 ' + f.completed + ' 轮专注' : '由电脑计时');
     text('home-focus-time', number(remaining) === null ? '--:--' : duration(remaining)); text('home-focus-label', running ? '正在专注' : '专注计时');
   }
@@ -687,10 +692,29 @@
   function renderWidgets() { if (window.PrismCompanionWidgets) window.PrismCompanionWidgets.render(state, session && session.grants || {}); }
   function renderControlCenter() {
     var v = state && state.volume || {}, context = state && state.context || {}, focus = state && state.focus || {};
-    if (!volumeEditing && !pending.volume && v.available) $('control-volume').value = Math.round(v.data.value);
-    $('control-volume').disabled = !permission('control') || !v.available || !!pending.volume || blocked();
-    text('control-volume-value', volumeEditing ? $('control-volume').value + '%' : v.available ? percent(v.data.value) : '等待电脑音量');
+    if ((!permission('control') || !v.available) && (volumeEditing || volumeLevel.busy() || levelIntent.volume !== null)) { volumeLevel.cancel(); volumeEditing = false; levelIntent.volume = null; }
+    if (levelIntent.volume !== null && !volumeEditing && !volumeLevel.busy() && (Date.now() > levelReadbackUntil.volume || v.available && Math.round(v.data.value) === levelIntent.volume)) levelIntent.volume = null;
+    // A completed write may still be followed by an older in-flight state poll.
+    if (!volumeEditing && !volumeLevel.busy() && levelIntent.volume === null && v.available) $('control-volume').value = Math.round(v.data.value);
+    $('control-volume').disabled = !permission('control') || !v.available || blocked();
+    text('control-volume-value', v.available ? $('control-volume').value + '%' : '等待电脑音量');
     $('control-volume').style.setProperty('--volume-level', (v.available ? Math.max(0, Math.min(100, Number($('control-volume').value))) : 0) + '%');
+    var audio = permission('control') && state && state.audioOutput || {};
+    text('control-mute', audio.available ? audio.muted ? '取消静音' : '静音' : '切换静音');
+    if (audio.available) $('control-mute').setAttribute('aria-pressed', String(audio.muted)); else $('control-mute').removeAttribute('aria-pressed');
+    text('control-volume-status', levelIntent.volume !== null ? '正在同步音量，等待电脑读回' : audio.available ? audio.name + (audio.muted ? ' · 已静音，调节音量会恢复声音' : ' · 正在使用') : audio.reason || '静音状态暂不可用');
+    var b = permission('control') && state && state.brightness || {}, selector = $('control-brightness-target'), targetKey = JSON.stringify(b.displays || []);
+    if ((!permission('control') || !b.available || levelIntent.brightness && b.targetId !== levelIntent.brightness.targetId) && (brightnessEditing || brightnessLevel.busy() || levelIntent.brightness)) { brightnessLevel.cancel(); brightnessEditing = false; levelIntent.brightness = null; }
+    if (levelIntent.brightness && !brightnessEditing && !brightnessLevel.busy() && !b.busy && (Date.now() > levelReadbackUntil.brightness || b.available && b.targetId === levelIntent.brightness.targetId && b.value === levelIntent.brightness.value)) levelIntent.brightness = null;
+    if (brightnessTargets !== targetKey) { brightnessTargets = targetKey; selector.textContent = ''; (b.displays || []).forEach(function (display) { var option = document.createElement('option'); option.value = display.id; option.textContent = display.name; selector.appendChild(option); }); }
+    if (!pending.brightnessTarget && b.targetId === brightnessWanted) brightnessWanted = '';
+    selector.value = brightnessWanted || b.targetId || '';
+    selector.disabled = !permission('control') || !(b.displays || []).length || !!pending.brightnessTarget || blocked();
+    if (!brightnessEditing && !brightnessLevel.busy() && !levelIntent.brightness && !b.busy && b.available) $('control-brightness').value = b.value;
+    $('control-brightness').disabled = !permission('control') || !b.available || !!brightnessWanted || !!pending.brightnessTarget || blocked();
+    text('control-brightness-value', b.available ? $('control-brightness').value + '%' : '—');
+    $('control-brightness').style.setProperty('--volume-level', (b.available ? $('control-brightness').value : 0) + '%');
+    text('control-brightness-status', !permission('control') ? '电脑端尚未允许系统控制' : b.reason || (levelIntent.brightness ? '正在同步所选屏幕，等待电脑读回' : b.busy ? '正在读取目标屏幕' : b.available && number(b.value) !== null ? '目标屏幕已读回 · ' + b.value + '%' : '屏幕亮度暂不可用'));
     var grants = []; if (permission('music')) grants.push('音乐'); if (permission('control')) grants.push('控制'); if (permission('pointer')) grants.push('触控'); if (permission('power')) grants.push('电源'); text('control-permissions', grants.length ? grants.join(' · ') : '查看共享权限');
     ['desktop-next','desktop-overview','desktop-show','desktop-maximize','desktop-restore','desktop-previous-space','desktop-next-space'].forEach(function (id) { $(id).disabled = !permission('control') || !context.available || !!pending['desktop.execute'] || blocked(); });
     text('desktop-control-status', context.available ? '当前 · ' + context.appName : '等待电脑前台窗口');
@@ -702,12 +726,17 @@
     if (writesBlocked) { feedback('本次会话操作额度已用尽，请在电脑解除配对后重新配对。同步仍可继续。', true); return; }
     if (cooling()) { feedback(rateNotice(), true, 'cooldown'); schedule(0); return; }
     if (!session || !state || document.hidden || versionChanged || pending[key]) return;
-    var generation = epoch; pending[key] = true; data.requestId = requestId(); renderState(); if (apps) renderApps(); feedback('', false);
-    try { var result = await request(path, data); if (generation !== epoch) return; if (key === 'settings' && result.revision != null) state.settings = result; if (key === 'lyricsStyle' && result.revision != null) state.lyricsSettings = result; if (onSuccess) onSuccess(result); feedback(result.message || message, false); }
-    catch (error) { if (error.status === 409 && error.code === 'conflict' && key === 'notes') { noteConflict = true; visible('note-reload', true); } unavailable(error, true); }
-    finally { if (generation === epoch) { delete pending[key]; if (state) renderState(); if (apps) renderApps(); } schedule(0); }
+    // Continuous controls already show their value/readback locally. A toast for
+    // every coalesced packet would interrupt dragging and repeatedly announce it.
+    var quiet = key === 'volume' || key === 'brightness' || key === 'brightnessTarget' || String(data.action || '').indexOf('volume.') === 0;
+    var levelFeedback = 'level:' + (key === 'brightness' || key === 'brightnessTarget' ? 'brightness' : 'volume');
+    var generation = epoch; pending[key] = true; data.requestId = requestId(); renderState(); if (apps) renderApps(); if (!quiet) feedback('', false);
+    try { var result = await request(path, data); if (generation !== epoch) return; if (key === 'settings' && result.revision != null) state.settings = result; if (key === 'lyricsStyle' && result.revision != null) state.lyricsSettings = result; if (onSuccess) onSuccess(result); if (!quiet) feedback(result.message || message, false); else if (feedbackKind === levelFeedback) feedback('', false); return true; }
+    catch (error) { if (generation === epoch && (key === 'volume' && levelIntent.volume === data.value || key === 'brightness' && levelIntent.brightness && levelIntent.brightness.value === data.value && levelIntent.brightness.targetId === data.targetId)) levelIntent[key] = null; if (error.status === 409 && error.code === 'conflict' && key === 'notes') { noteConflict = true; visible('note-reload', true); } unavailable(error, true); if (quiet && generation === epoch && !error.cancelled && !feedbackKind && !writesBlocked && !versionChanged) feedbackKind = levelFeedback; }
+    finally { if (generation === epoch) { delete pending[key]; if (state) renderState(); if (apps) renderApps(); } schedule(key === 'volume' || key === 'brightness' ? 500 : 0); }
   }
   function executeAction(action) {
+      if (action === 'volume.mute') { volumeLevel.cancel(); volumeEditing = false; levelIntent.volume = null; }
       if (action === 'volume.up' || action === 'volume.down') {
         var generation = epoch;
         volumeTail = volumeTail.then(function () { if (generation === epoch && session && !document.hidden) return write('volume', '/api/action', { action: action }, '音量请求已发送，等待电脑读回'); });
@@ -731,10 +760,19 @@
   $('local-widgets').onclick = function () { showPage('widgets'); };
   $('widgets-back').onclick = function () { showPage('home'); };
   $('touch-more').onclick = function () { var open = $('touch-extra').hidden; visible('touch-extra', open); this.setAttribute('aria-expanded', String(open)); if (window.PrismGlassOptics) window.PrismGlassOptics.invalidate(); };
-  $('control-volume').oninput = function () { volumeEditing = true; text('control-volume-value', this.value + '%'); this.style.setProperty('--volume-level', this.value + '%'); };
-  $('control-volume').onchange = function () { volumeEditing = false; write('volume','/api/action',{action:'volume.set',value:Number(this.value)},'音量已发送，等待电脑读回'); };
+  $('control-volume').oninput = function () { volumeEditing = true; levelReadbackUntil.volume = Date.now() + 6500; levelIntent.volume = Number(this.value); text('control-volume-value', this.value + '%'); text('control-volume-status', '正在同步音量，等待电脑读回'); this.style.setProperty('--volume-level', this.value + '%'); volumeLevel.set(Number(this.value)); };
+  $('control-volume').onchange = function () { this.oninput(); volumeEditing = false; };
+  $('control-volume').onpointercancel = $('control-volume').onblur = function () { if (volumeEditing) { volumeEditing = false; levelIntent.volume = null; volumeLevel.cancel(); renderControlCenter(); } };
+  $('control-brightness').oninput = function () { brightnessEditing = true; levelReadbackUntil.brightness = Date.now() + 6500; levelIntent.brightness = {value:Number(this.value),targetId:$('control-brightness-target').value}; text('control-brightness-value', this.value + '%'); text('control-brightness-status', '正在同步所选屏幕，等待电脑读回'); this.style.setProperty('--volume-level', this.value + '%'); brightnessLevel.set(levelIntent.brightness); };
+  $('control-brightness').onchange = function () { this.oninput(); brightnessEditing = false; };
+  $('control-brightness').onpointercancel = $('control-brightness').onblur = function () { if (brightnessEditing) { brightnessEditing = false; levelIntent.brightness = null; brightnessLevel.cancel(); renderControlCenter(); } };
+  $('control-brightness-target').onchange = function () { var generation = epoch; brightnessLevel.cancel(); brightnessEditing = false; levelIntent.brightness = null; brightnessWanted = this.value; write('brightnessTarget','/api/action',{action:'brightness.target',targetId:this.value},'正在读取所选屏幕').then(function (ok) { if (!ok && generation === epoch) { brightnessWanted = ''; renderControlCenter(); } }); };
   [['desktop-next','next-window'],['desktop-overview','task-view'],['desktop-show','show-desktop'],['desktop-maximize','maximize'],['desktop-restore','restore'],['desktop-previous-space','previous-desktop'],['desktop-next-space','next-desktop']].forEach(function (entry) { $(entry[0]).onclick = function () { var context = state && state.context || {}; if (!context.available || !permission('control')) return; write('desktop.execute','/api/action',{action:'desktop.execute',contextId:context.id,command:entry[1]},'窗口操作已发送'); }; });
-  window.addEventListener('companion-widget-navigate', function (event) { if (event.detail && event.detail.page === 'work') showPage('work'); });
+  window.addEventListener('companion-widget-navigate', function (event) { if (event.detail && (event.detail.page === 'work' || event.detail.page === 'home')) showPage(event.detail.page); });
+  window.addEventListener('companion-widget-action', function (event) {
+    var actions = {'focus-toggle':'focus.toggle','focus-reset':'focus.reset','focus-25':'focus.25','focus-5':'focus.5'}, name = event.detail && event.detail.action;
+    if (Object.prototype.hasOwnProperty.call(actions, name) && permission('control') && state && (state.focus || {}).available && !blocked()) executeAction(actions[name]);
+  });
   window.addEventListener('companion-widget-immerse', function () { setPresentation(true); });
   $('home-focus').onclick = function () { showPage('work'); };
   $('screen-touch-toggle').onclick = function () { if (pointerLease) stopPointer(true); else beginPointer(); };

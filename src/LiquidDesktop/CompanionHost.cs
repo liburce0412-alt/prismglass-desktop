@@ -27,7 +27,7 @@ internal sealed class CompanionHost : IDisposable {
  readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly CompanionDiscovery discovery=new CompanionDiscovery();CompanionConfiguration config=new CompanionConfiguration();CompanionManagement management;volatile bool closed,sessionLocked;CompanionNetworkChoice activeNetwork;internal Func<CompanionNetworkChoice[]> ReadNetworks=CompanionConnection.Networks;
  readonly object videoGate=new object();Task<CompanionReply> videoCheck;string videoKey="",videoPeer="",videoOffer="";CompanionGrant videoGrant;DateTime videoCheckedAt;int videoRevision,islandRevision;volatile bool videoApplying;bool stoppingRemote;
  internal Func<string,string,string,Task<Dictionary<string,object>>> ReadVideoPlan=CompanionConnection.CheckVideo;
- internal Func<string,string,string,Task> ApplyVideoPlan=CompanionConnection.ApplyVideo;
+ internal Func<string,string,string,string,Task> ApplyVideoPlan=CompanionConnection.ApplyVideo;
  internal Func<string,bool> ConfirmVideo;
  internal Func<bool> RecoverDisplay;bool recoveringDisplay;
  [DllImport("user32.dll",SetLastError=true)]static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
@@ -43,12 +43,12 @@ internal sealed class CompanionHost : IDisposable {
   SystemEvents.SessionSwitch+=SessionChanged;NetworkChange.NetworkAddressChanged+=NetworkChanged;
  }
  void NetworkChanged(object sender,EventArgs e){if(closed||activeNetwork==null||!owner.IsHandleCreated)return;try{owner.BeginInvoke(new Action(()=>{if(!closed&&management!=null)management.RefreshNetwork();}));}catch(InvalidOperationException){}}
- internal async Task RecoverIdleDisplay(){
+ internal async Task RecoverIdleDisplay(bool startup=false){
   if(closed||recoveringDisplay||IsLocked())return;
   string directory=Path.Combine(root,"runtime-data","companion"),failure=Path.Combine(directory,"display-recovery-error.txt");
   if(!File.Exists(Path.Combine(directory,"screen-stream.json")))return;
   recoveringDisplay=true;
-  try{bool recovered=await Task.Run(()=>!closed&&RecoverDisplay());if(recovered&&File.Exists(failure))File.Delete(failure);}
+  try{bool recovered=startup?RecoverDisplay():await Task.Run(()=>!closed&&RecoverDisplay());if(recovered&&File.Exists(failure))File.Delete(failure);}
   catch(Exception error){try{File.WriteAllText(failure,error.Message);}catch{}}
   finally{recoveringDisplay=false;}
  }
@@ -60,6 +60,7 @@ internal sealed class CompanionHost : IDisposable {
   owner.BeginInvoke(new Action(()=>{if(Volatile.Read(ref cancelled)!=0||closed){result.TrySetCanceled();return;}try{result.TrySetResult(operation());}catch(Exception ex){result.TrySetException(ex);}}));
   if(!((IAsyncResult)result.Task).AsyncWaitHandle.WaitOne(5000)){Interlocked.Exchange(ref cancelled,1);throw new TimeoutException();}return result.Task.GetAwaiter().GetResult();
  }
+ internal bool IsRunning {get{return server.IsRunning;}}
  public event Action ManagementRequested;
  public event Action ManagementChanged;
  public Form DialogOwner {get;set;}
@@ -86,8 +87,8 @@ internal sealed class CompanionHost : IDisposable {
   lock(videoGate){
    if(videoGrant!=null&&(videoGrant!=grant||videoKey!=local+"|"+peer)&&bridge.ScreenActive)return CompanionReply.Error(409,"screen_busy","已有投屏正在使用，请先停止原来的画面。");
    if(videoCheck!=null&&!videoCheck.IsCompleted)return CompanionReply.Error(409,"screen_network_pending","正在检查投屏连接，请留意电脑上的确认窗口…");
-   // Polls reuse one offer; a fresh user attempt must not inherit a failed repair.
-   if(videoCheck!=null&&videoKey==local+"|"+peer&&videoGrant==grant&&DateTime.UtcNow-videoCheckedAt<TimeSpan.FromMinutes(2)&&(videoCheck.Result==null||videoOffer==offer))return videoCheck.Result;
+   // A new offer checks the current program path even if the previous offer succeeded.
+   if(videoCheck!=null&&videoKey==local+"|"+peer&&videoGrant==grant&&videoOffer==offer&&DateTime.UtcNow-videoCheckedAt<TimeSpan.FromMinutes(2))return videoCheck.Result;
    videoKey=local+"|"+peer;videoPeer=peer;videoGrant=grant;videoOffer=offer;videoCheckedAt=DateTime.UtcNow;int revision=videoRevision;
    var completion=new TaskCompletionSource<CompanionReply>();videoCheck=completion.Task;
    try{owner.BeginInvoke(new Action(async()=>{try{completion.TrySetResult(await CheckVideo(local,peer,grant,revision));}catch{completion.TrySetResult(VideoError(503,"screen_network_failed","投屏连接检查失败，请在电脑点“检查连接”后重试。",revision));}finally{if(revision==videoRevision)NotifyManagement();}}));}
@@ -102,12 +103,14 @@ internal sealed class CompanionHost : IDisposable {
    var plan=await ReadVideoPlan(root,local,peer);
    if(!VideoCurrent(local,grant,revision))throw new InvalidOperationException("连接或设备权限已变化，请重新开始投屏。");
    if(CompanionConnection.Flag(plan,"needsApproval")){
-    string text="为当前已授权的 iPad 修复投屏连接：\n电脑 "+local+" → iPad "+peer+"\n网络："+CompanionConnection.Text(plan,"interfaceAlias")+"（专用）\n\n仅允许 MediaMTX 的 UDP 31890 视频通道访问这台 iPad。\n"+(CompanionConnection.Text(plan,"oldAddress").Length>0?"将替换原来的地址 "+CompanionConnection.Text(plan,"oldAddress")+" → "+CompanionConnection.Text(plan,"oldPeer")+"。\n":"将创建此设备专用的视频规则。\n")+"\n是否更新？确认后可能出现 Windows 管理员提示，iPad 会继续连接。";
+    string oldProgram=CompanionConnection.Text(plan,"oldProgram"),program=CompanionConnection.Text(plan,"program");
+    string programs=oldProgram.Length>0&&!String.Equals(oldProgram,program,StringComparison.OrdinalIgnoreCase)?"原 MediaMTX："+oldProgram+"\n新 MediaMTX："+program:"MediaMTX："+program;
+    string text="为当前已授权的 iPad 修复投屏连接：\n电脑 "+local+" → iPad "+peer+"\n网络："+CompanionConnection.Text(plan,"interfaceAlias")+"（专用）\n"+programs+"\n\n仅允许此程序的 UDP 31890 视频通道访问这台 iPad。\n"+(CompanionConnection.Text(plan,"oldAddress").Length>0?"现有规则的地址范围为 "+CompanionConnection.Text(plan,"oldAddress")+" → "+CompanionConnection.Text(plan,"oldPeer")+"。\n":"将创建此设备专用的视频规则。\n")+"\n是否更新？确认后可能出现 Windows 管理员提示，iPad 会继续连接。";
     VideoNotice("等待电脑确认投屏连接，请核对弹窗中的网络和设备。",false,revision);
     if(!ConfirmVideo(text))return VideoError(409,"screen_network_cancelled","电脑已取消投屏连接修复。需要时在 iPad 重新开始投屏。",revision);
     if(!VideoCurrent(local,grant,revision))throw new InvalidOperationException("连接或设备权限已变化，请重新开始投屏。");
     VideoNotice("等待 Windows 管理员确认并更新投屏连接…",false,revision);
-    videoApplying=true;try{await ApplyVideoPlan(root,local,peer);}finally{videoApplying=false;}
+    videoApplying=true;try{await ApplyVideoPlan(root,local,peer,CompanionConnection.Text(plan,"approval"));}finally{videoApplying=false;}
     VideoNotice("正在核对投屏连接配置…",false,revision);plan=await ReadVideoPlan(root,local,peer);
    }
    if(!VideoCurrent(local,grant,revision)||!CompanionConnection.Flag(plan,"configured"))throw new InvalidOperationException("投屏连接尚未准备好，请在电脑重新检查连接。");

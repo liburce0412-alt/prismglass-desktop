@@ -26,6 +26,7 @@ internal sealed class SideDock : Form {
  DateTime widgetRead=DateTime.MinValue,dataRead=DateTime.MinValue,heartbeat=DateTime.MinValue;string lastWidgets="";bool automaticPause;
  public bool IsReady {get{return painted&&!closed;}}
  public bool MusicOpen {get{return musicOpen&&Visible&&!closed;}}bool musicOpen;
+ public bool PanelOpen {get{return opened&&Visible&&!closed;}}
  public Rectangle OcclusionBounds {get{return new Rectangle(Left+(int)(4*scale),Top+(int)(4*scale),(int)(88*scale),(int)(railHeight*scale));}}
  Rectangle screen;bool opened;string pendingMode;bool motionPaused;float networkShape,bridgeY=40,panelTop=4;object pendingPreferences;
  [DllImport("user32.dll")]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
@@ -58,7 +59,7 @@ internal sealed class SideDock : Form {
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready){widgetRead=DateTime.MinValue;dataRead=DateTime.MinValue;Tick();}};
   Deactivate+=DismissOnDeactivate;
-  FormClosed+=(s,e)=>{closed=true;position.Dispose();timer.Stop();timer.Dispose();view.Dispose();};
+  FormClosed+=(s,e)=>{closed=true;position.Dispose();timer.Stop();timer.Dispose();if(shared==null)widgets.Dispose();view.Dispose();};
  }
  void Fail(string text){try{File.WriteAllText(Diagnostic("side-error.txt"),text);}catch{}Close();}
  void DismissOnDeactivate(object sender,EventArgs e){if(!IsRepositioning)Send(new{type="dismiss"});}
@@ -75,7 +76,7 @@ internal sealed class SideDock : Form {
   automaticPause=paused;
   if(closed)return;
   SyncPixelScale();
-  if(bounds!=screen){screen=bounds;Place();ApplyRegion();layout="";}
+  if(bounds!=screen||position.DisplayChanged){screen=bounds;Place();ApplyRegion();layout="";}
   if(theme!=nextTheme){theme=nextTheme;layout="";}
   PublishLayout();PublishVisibility(false);
   // Sit directly above desktop widgets, preserving the z-order of ordinary application windows.
@@ -83,10 +84,10 @@ internal sealed class SideDock : Form {
  }
  void PublishLayout(){
   if(!ready)return;
-  string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();
+  var scene=Screen.FromRectangle(screen).Bounds;var sample=MonitorWallpaper.For(root,scene);string stamp=sample.Version;
   string key=theme+Bounds.ToString()+screen.ToString()+stamp;
   if(layout==key)return;layout=key;
-  var scene=Screen.FromRectangle(screen).Bounds;Send(new {type="layout",theme=theme,scale=scale,x=Left-scene.Left,y=Top-scene.Top,width=scene.Width,height=scene.Height,viewWidth=Width,viewHeight=Height,wallpaper=stamp,preview=preview});
+  Send(new {type="layout",theme=theme,scale=scale,x=Left-scene.Left,y=Top-scene.Top,width=scene.Width,height=scene.Height,viewWidth=Width,viewHeight=Height,wallpaper=stamp,wallpaperFile=sample.File,preview=preview});
  }
  void Send(object value){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  public void ApplyPreferences(object snapshot){pendingPreferences=snapshot;Send(new{type="preferences",snapshot=snapshot});}
@@ -124,7 +125,7 @@ internal sealed class SideDock : Form {
    else if(text=="settings-network")OpenSettings("ms-settings:network-status");
    else if(text=="wifi-connect"){try{OpenSettings("ms-availablenetworks:");}catch{OpenSettings("ms-settings:network-wifi");}}
    else if(text=="close-preview"&&preview)Close();
-  }catch(Exception ex){File.WriteAllText(Diagnostic("side-error.txt"),ex.ToString());Send(new{type="action-error",message="未能打开，请重试。"});}
+  }catch(Exception ex){File.WriteAllText(Diagnostic("side-error.txt"),ex.ToString());Send(new{type="action-error",action=text.StartsWith("action:")?text.Substring(7):"",message="操作未完成，请检查后重试。"});}
  }
  string ReadTheme(){try{return File.ReadAllText(Path.Combine(root,"theme.txt")).Trim()=="Astro"?"Astro":"Sky";}catch{return "Sky";}}
  static void OpenSettings(string uri){Process.Start(new ProcessStartInfo(uri){UseShellExecute=true});}

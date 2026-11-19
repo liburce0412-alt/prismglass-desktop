@@ -16,7 +16,7 @@ using System.Xml;
 
 internal sealed class DockPin {public string id,name,path,arguments,icon;public bool exists;}
 internal sealed class DockWindow {public long handle;public uint pid;public string title,path,appId;}
-internal sealed class DockEntry {public string id,name,icon,path,arguments;public bool pinned,active,attention,system;public List<DockWindow> windows=new List<DockWindow>();}
+internal sealed class DockEntry {public string id,name,icon,path,arguments,launchState;public bool pinned,active,attention,system;public List<DockWindow> windows=new List<DockWindow>();}
 internal enum DockClickAction { Launch,Activate,Minimize,ChooseWindow }
 internal sealed class DockForegroundHistory {
  internal long current;DockWindow application,previous;bool dock;DateTime observed,entered;
@@ -43,7 +43,7 @@ internal sealed class DockBackend {
  readonly HashSet<long> attention=new HashSet<long>();public void Attention(long h){attention.Add(h);}
  DockDrag drag;DateTime requestPoll;string externalToken="";
  static DockPreview applicationPicker;
- static Form activationWindow;static System.Windows.Forms.Timer activationExpiry;
+ static int activationGeneration;static Form activationWindow;static System.Windows.Forms.Timer activationExpiry;
  static readonly DockForegroundHistory foregroundHistory=new DockForegroundHistory();
  sealed class DockDrag {public string id,instance,token;public DockPin external;public Point start,release;public bool moved,released;public DateTime releasedAt;public IDisposable hold;public List<DockEntry> entries;public string feedback="",feedbackInstance="";}
  internal sealed class ExternalDragRequest {public string token;public long expires;public DockPin entry;public bool ended,cancelled;}
@@ -60,6 +60,7 @@ internal sealed class DockBackend {
  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h,uint flags);
  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h,int cmd);
+ [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h,uint message,IntPtr wParam,IntPtr lParam);
  [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out UIntPtr result);
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] static extern IntPtr GetLastActivePopup(IntPtr h);
@@ -90,6 +91,16 @@ internal sealed class DockBackend {
  [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SHQueryRecycleBin(string root,ref RecycleInfo info);
  [DllImport("shell32.dll")]static extern int SHGetStockIconInfo(int id,uint flags,ref StockIconInfo info);
  [DllImport("user32.dll")]static extern bool DestroyIcon(IntPtr icon);
+ [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SHDefExtractIcon(string path,int index,uint flags,out IntPtr large,IntPtr small,uint size);
+ // The Dock peaks at 82 logical pixels. A 256px source covers the 100–200% acceptance range.
+ const int DockArtworkSize=256;
+ static void SaveResourceIcon(string path,int index,string destination){
+  IntPtr handle=IntPtr.Zero;
+  try{
+   if(SHDefExtractIcon(path,index,0,out handle,IntPtr.Zero,DockArtworkSize)!=0||handle==IntPtr.Zero)throw new IOException("没有可读取的图标资源。");
+   using(var icon=Icon.FromHandle(handle))using(var pixels=icon.ToBitmap())pixels.Save(destination,ImageFormat.Png);
+  }finally{if(handle!=IntPtr.Zero)DestroyIcon(handle);}
+ }
  [StructLayout(LayoutKind.Sequential)] struct BITMAPINFO {public uint size;public int width,height;public ushort planes,bits;public uint compression,imageSize;public int x,y;public uint used,important;}
  [DllImport("gdi32.dll")]static extern IntPtr CreateCompatibleDC(IntPtr h);
  [DllImport("gdi32.dll")]static extern bool DeleteDC(IntPtr h);
@@ -104,9 +115,11 @@ internal sealed class DockBackend {
    path=PackageTarget(path);bool packageDesktop=false;string packageIcon;lock(packageTargets)if(packageIcons.TryGetValue(path,out packageIcon)){path=packageIcon;packageDesktop=true;}
   string saved;string cacheKey=path+"|"+custom;if(icons.TryGetValue(cacheKey,out saved))return saved;
   saved=Path.Combine(root,"dock-icons",key+".png");
-  try{if(!String.IsNullOrEmpty(custom)&&File.Exists(custom)){using(var input=Image.FromFile(custom))input.Save(saved,ImageFormat.Png);}
-   else if(packageDesktop){using(var icon=Icon.ExtractAssociatedIcon(path))using(var bitmap=icon.ToBitmap())bitmap.Save(saved,ImageFormat.Png);}
-   else {IImageFactory factory=null;IntPtr bitmap=IntPtr.Zero;try{var iid=typeof(IImageFactory).GUID;SHCreateItemFromParsingName(path,IntPtr.Zero,ref iid,out factory);if(factory.GetImage(new SIZE{x=128,y=128},5,out bitmap)!=0)throw new Exception("icon");SaveBitmap(bitmap,saved);}finally{if(bitmap!=IntPtr.Zero)DeleteObject(bitmap);if(factory!=null)Marshal.ReleaseComObject(factory);}}
+  try{if(!String.IsNullOrEmpty(custom)&&File.Exists(custom)){
+    if(!String.Equals(Path.GetFullPath(custom),Path.GetFullPath(saved),StringComparison.OrdinalIgnoreCase))using(var input=Image.FromFile(custom))input.Save(saved,ImageFormat.Png);
+   }
+   else if(packageDesktop){SaveResourceIcon(path,0,saved);}
+   else {IImageFactory factory=null;IntPtr bitmap=IntPtr.Zero;try{var iid=typeof(IImageFactory).GUID;SHCreateItemFromParsingName(path,IntPtr.Zero,ref iid,out factory);if(factory.GetImage(new SIZE{x=DockArtworkSize,y=DockArtworkSize},5,out bitmap)!=0||bitmap==IntPtr.Zero)throw new IOException("没有可读取的图标。");SaveBitmap(bitmap,saved);}finally{if(bitmap!=IntPtr.Zero)DeleteObject(bitmap);if(factory!=null)Marshal.ReleaseComObject(factory);}}
   }catch{try{using(var ico=Icon.ExtractAssociatedIcon(path))using(var img=ico.ToBitmap())img.Save(saved,ImageFormat.Png);}catch{using(var img=SystemIcons.Application.ToBitmap())img.Save(saved,ImageFormat.Png);}}
   icons[cacheKey]=saved;return saved;
  }
@@ -213,11 +226,17 @@ internal sealed class DockBackend {
   }
   entries=entries.Where(e=>e.pinned).Concat(entries.Where(e=>!e.pinned).OrderBy(e=>Int32.Parse(e.id.Substring(1)))).ToList();
   attention.RemoveWhere(h=>!all.Any(w=>w.handle==h));foreach(var e in entries){if(e.active)foreach(var w in e.windows)attention.Remove(w.handle);e.attention=e.windows.Any(w=>attention.Contains(w.handle));}
+  foreach(var entry in entries){
+   foreach(var window in entry.windows){IslandEvents.ObserveWindow(entry.id,window.handle);IslandEvents.ObserveWindow(window.path,window.handle);if(!String.IsNullOrEmpty(window.appId))IslandEvents.ObserveWindow(@"shell:AppsFolder\"+window.appId,window.handle);}
+   entry.launchState=IslandEvents.DockLaunchState(entry.id,entry.path);
+   var requested=entry.windows.FirstOrDefault(w=>attention.Contains(w.handle));
+   IslandEvents.ObserveAttention(entry.id,entry.attention,entry.name,entry.icon,requested==null?(Action)null:()=>Activate(requested));
+  }
   entries.Add(TrashEntry());var displayed=DisplayEntries(entries,OverflowIcon());
   var overflow=displayed.FirstOrDefault(e=>e.id==OverflowId);if(overflow!=null)entries.Insert(entries.Count-1,overflow);
   string data=json.Serialize(entries);if(data==previous)return;previous=data;
   AtomicWrite(Path.Combine(root,"dock-state.json"),data);
-  var lines=new StringBuilder();foreach(var e in displayed)lines.AppendLine(e.id+"\t"+B64(e.name)+"\t"+B64(e.icon)+"\t"+e.windows.Count+"\t"+(e.active?"1":"0")+"\t"+(e.pinned?"1":"0")+"\t"+(e.attention?"1":"0"));
+  var lines=new StringBuilder();foreach(var e in displayed)lines.AppendLine(e.id+"\t"+B64(e.name)+"\t"+B64(e.icon)+"\t"+e.windows.Count+"\t"+(e.active?"1":"0")+"\t"+(e.pinned?"1":"0")+"\t"+(e.attention?"1":"0")+"\t"+e.launchState);
   AtomicWrite(Path.Combine(root,"dock-state.txt"),lines.ToString());
  }
  internal static List<DockEntry> DisplayEntries(List<DockEntry> entries,string icon){
@@ -232,10 +251,41 @@ internal sealed class DockBackend {
   if(trashRead==null&&DateTime.UtcNow>=nextTrashRead){nextTrashRead=DateTime.UtcNow.AddSeconds(3);trashRead=Task.Run((Func<long?>)RecycleCount);}
   return TrashEntry(TrashIcon(trashCount.HasValue&&trashCount.Value>0),trashCount);
  }
- string TrashIcon(bool full){var path=Path.Combine(root,"dock-icons",full?"trash-full.png":"trash-empty.png");if(File.Exists(path))return path;var stock=new StockIconInfo{size=(uint)Marshal.SizeOf(typeof(StockIconInfo))};try{if(SHGetStockIconInfo(full?32:31,0x104,ref stock)!=0||stock.icon==IntPtr.Zero)throw new IOException("无法读取回收站图标。");using(var icon=Icon.FromHandle(stock.icon))using(var bitmap=icon.ToBitmap())bitmap.Save(path,ImageFormat.Png);}catch{using(var bitmap=SystemIcons.Application.ToBitmap())bitmap.Save(path,ImageFormat.Png);}finally{if(stock.icon!=IntPtr.Zero)DestroyIcon(stock.icon);}return path;}
+ readonly HashSet<string> preparedGlyphs=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+ string TrashIcon(bool full){
+  var path=Path.Combine(root,"dock-icons",full?"trash-full.png":"trash-empty.png");
+  if(preparedGlyphs.Contains(path)&&File.Exists(path))return path;
+  var stock=new StockIconInfo{size=(uint)Marshal.SizeOf(typeof(StockIconInfo))};
+  try{
+   if(SHGetStockIconInfo(full?32:31,0x104,ref stock)!=0||stock.icon==IntPtr.Zero)throw new IOException("无法读取回收站图标。");
+   try{SaveResourceIcon(stock.path,stock.index,path);}
+   catch(IOException){using(var icon=Icon.FromHandle(stock.icon))using(var bitmap=icon.ToBitmap())bitmap.Save(path,ImageFormat.Png);}
+  }catch{using(var bitmap=SystemIcons.Application.ToBitmap())bitmap.Save(path,ImageFormat.Png);}
+  finally{if(stock.icon!=IntPtr.Zero)DestroyIcon(stock.icon);}
+  preparedGlyphs.Add(path);return path;
+ }
  internal static DockEntry WorkspaceEntry(string icon){return new DockEntry{id=WorkspaceId,name="应用中心",icon=icon,path="",arguments="",pinned=true,system=true};}
- string WorkspaceIcon(){var path=Path.Combine(root,"dock-icons","workspace.png");if(!File.Exists(path)){using(var bitmap=new Bitmap(128,128))using(var g=Graphics.FromImage(bitmap))using(var brush=new SolidBrush(Color.FromArgb(232,243,255))){g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;for(int y=0;y<3;y++)for(int x=0;x<3;x++)g.FillEllipse(brush,17+x*34,17+y*34,25,25);bitmap.Save(path,ImageFormat.Png);}}return path;}
- string OverflowIcon(){var path=Path.Combine(root,"dock-icons","more-apps.png");if(!File.Exists(path)){using(var bitmap=new Bitmap(64,64))using(var g=Graphics.FromImage(bitmap))using(var brush=new SolidBrush(Color.FromArgb(224,235,248)))using(var ink=new SolidBrush(Color.FromArgb(39,59,83))){g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;g.FillEllipse(brush,2,2,60,60);for(int i=0;i<3;i++)g.FillEllipse(ink,14+i*14,28,8,8);bitmap.Save(path,ImageFormat.Png);}}return path;}
+ string WorkspaceIcon(){return SystemGlyph(false);}
+ string OverflowIcon(){return SystemGlyph(true);}
+ string SystemGlyph(bool more){
+  var path=Path.Combine(root,"dock-icons",more?"more-apps.png":"workspace.png");
+  if(preparedGlyphs.Contains(path)&&File.Exists(path))return path;
+  using(var bitmap=new Bitmap(DockArtworkSize,DockArtworkSize))
+  using(var g=Graphics.FromImage(bitmap))
+  using(var brush=new SolidBrush(more?Color.FromArgb(224,235,248):Color.FromArgb(232,243,255))){
+   g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+   g.ScaleTransform(DockArtworkSize/(more?64f:128f),DockArtworkSize/(more?64f:128f));
+   if(more){
+    g.FillEllipse(brush,2,2,60,60);
+    brush.Color=Color.FromArgb(39,59,83);
+    for(int i=0;i<3;i++)g.FillEllipse(brush,14+i*14,28,8,8);
+   }else{
+    for(int y=0;y<3;y++)for(int x=0;x<3;x++)g.FillEllipse(brush,17+x*34,17+y*34,25,25);
+   }
+   bitmap.Save(path,ImageFormat.Png);
+  }
+  preparedGlyphs.Add(path);return path;
+ }
  static void MoreMenu(string root){
   var all=new JavaScriptSerializer().Deserialize<List<DockEntry>>(File.ReadAllText(Path.Combine(root,"dock-state.json")));var entries=all.Where(e=>e.id!=OverflowId&&e.id!=TrashId).Skip(all.Any(e=>e.id==TrashId)?30:31).ToList();
   using(Hold(root))using(var owner=new Form())using(var menu=CreateMenu()){
@@ -249,10 +299,18 @@ internal sealed class DockBackend {
  public static void Activate(DockWindow w){
   if(Activating!=null&&Activating(w))return;
   if(AnimateRestore!=null&&AnimateRestore(w))return;
+  if(Application.MessageLoop){SetDesktopWindow(w,false);return;}
   ActivateImmediate(w);
  }
+ static async void SetDesktopWindow(DockWindow w,bool minimize){
+  try{
+   if(!minimize){await ActivateAsync(w);return;}
+   int generation=++activationGeneration;Func<bool> current=()=>generation==activationGeneration;
+   if(!await SetMinimizedAsync(w,true,current)&&current())throw new InvalidOperationException("窗口暂时无法最小化，请使用该应用自己的最小化按钮。");
+  }catch(InvalidOperationException ex){MessageBox.Show(ex.Message,"无法切换窗口",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+ }
  internal static void HoldActivation(){
-  if(activationWindow==null){
+  activationGeneration++;if(activationWindow==null){
    activationWindow=new Form{Text="PrismGlass 窗口切换",FormBorderStyle=FormBorderStyle.None,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Size=new Size(1,1),Opacity=0};
    activationExpiry=new System.Windows.Forms.Timer{Interval=1500};activationExpiry.Tick+=(s,e)=>ReleaseActivation();Application.ApplicationExit+=(s,e)=>{activationExpiry.Dispose();activationWindow.Dispose();};
   }
@@ -275,6 +333,29 @@ internal sealed class DockBackend {
   // Custom application chrome may handle only the system-menu command.
   if(IsIconic(h)!=minimized){UIntPtr result;SendMessageTimeout(h,0x112,new IntPtr(minimized?0xF020:0xF120),IntPtr.Zero,2,120,out result);for(int i=0;i<12&&IsIconic(h)!=minimized;i++)Thread.Sleep(5);}
   return Valid(w)&&IsIconic(h)==minimized;
+ }
+ internal static async Task<bool> SetMinimizedAsync(DockWindow w,bool minimized,Func<bool> current=null){
+  if(!Valid(w)||!CanManage(w)||current!=null&&!current())return false;var h=new IntPtr(w.handle);if(IsIconic(h)==minimized)return true;
+  ShowWindowAsync(h,minimized?6:9);
+  for(int i=0;i<24;i++){
+   if(!Valid(w))return false;if(IsIconic(h)==minimized)return true;
+   if(i==6&&(current==null||current()))PostMessage(h,0x112,new IntPtr(minimized?0xF020:0xF120),IntPtr.Zero);
+   await Task.Delay(10);
+  }
+  return Valid(w)&&IsIconic(h)==minimized;
+ }
+ internal static async Task ActivateAsync(DockWindow w){
+  int generation=++activationGeneration;Func<bool> current=()=>generation==activationGeneration;
+  try{
+   if(!Valid(w))throw new InvalidOperationException("窗口已经关闭或变化，请重新选择应用。");
+   if(IsIconic(new IntPtr(w.handle))){
+    bool restored=await SetMinimizedAsync(w,false,current);if(!current())return;
+    if(!restored)throw new InvalidOperationException("窗口暂时无法还原，请从 Windows 任务栏打开后重试。");
+   }
+   var h=new IntPtr(w.handle);var popup=GetLastActivePopup(h);uint popupPid;GetWindowThreadProcessId(popup,out popupPid);SetForegroundWindow(popup!=IntPtr.Zero&&popupPid==w.pid&&IsWindowVisible(popup)?popup:h);
+   for(int i=0;i<10&&current()&&Valid(w)&&!Foreground(w,false);i++)await Task.Delay(10);
+   if(current()&&(!Valid(w)||!Foreground(w,false)))throw new InvalidOperationException("Windows 暂未允许切到该窗口，请从任务栏选择它后重试。");
+  }finally{if(current())ReleaseActivation();}
  }
  internal static DockClickAction ResolveClick(int windows,bool foreground,bool minimized,bool forceNew){
   if(forceNew||windows==0)return DockClickAction.Launch;
@@ -316,24 +397,28 @@ internal sealed class DockBackend {
   var action=ResolveClick(windows.Count,active!=null,false,forceNew);
   if(folder!=null)try{AtomicWrite(Path.Combine(folder,"dock-click.json"),new JavaScriptSerializer().Serialize(new{at=DateTime.UtcNow.ToString("o"),id=entry.id,action=action.ToString(),windows=windows.Count,foreground=GetForegroundWindow().ToInt64(),target=active==null?0:active.handle}));}catch(IOException){}catch(UnauthorizedAccessException){}
   if(folder!=null)foregroundHistory.Invalidate(); // A Dock activation belongs to one click only.
+  if(action==DockClickAction.Launch){
+   // Dock IDs bind completion to the existing application matcher, never to an arbitrary foreground window.
+   if(!String.IsNullOrEmpty(entry.id))IslandEvents.BeginLaunch(entry.id,entry.name,entry.icon,windows.Select(w=>w.handle).ToArray());
+   try{Launch(entry.path,entry.arguments);}catch{IslandEvents.LaunchFailed(entry.id);throw;}
+   // Animation may dismiss a preview, but cannot consume or prevent the launch request.
+   if(Animate!=null)try{Animate(entry,action,null);}catch(Exception){}
+   return;
+  }
   if(action==DockClickAction.Activate||action==DockClickAction.ChooseWindow)HoldActivation();
   if(Animate!=null&&Animate(entry,action,active??windows.FirstOrDefault()))return;
-  if(action==DockClickAction.Launch){Launch(entry.path,entry.arguments);return;}
-  if(action==DockClickAction.Minimize){if(!SetMinimized(active,true))throw new InvalidOperationException("窗口暂时无法最小化，请使用该应用自己的最小化按钮。");return;}
+  if(action==DockClickAction.Minimize){if(Application.MessageLoop){SetDesktopWindow(active,true);return;}if(!SetMinimized(active,true))throw new InvalidOperationException("窗口暂时无法最小化，请使用该应用自己的最小化按钮。");return;}
   if(action==DockClickAction.Activate){Activate(windows[0]);return;}
   entry.windows=windows;var area=Screen.FromPoint(Cursor.Position).WorkingArea;
   var anchor=new Rectangle(area.Left,area.Bottom-24,area.Width,24);
-  if(folder==null){
-   if(applicationPicker!=null&&!applicationPicker.IsDisposed)applicationPicker.Close();
-   var picker=new DockPreview(entry,anchor,false,true);applicationPicker=picker;
-   picker.FormClosed+=(s,e)=>{if(applicationPicker==picker)applicationPicker=null;picker.Dispose();};
-   try{picker.Show();}catch{if(applicationPicker==picker)applicationPicker=null;picker.Dispose();throw;}return;
-  }
-  using(Hold(folder))using(var picker=new DockPreview(entry,anchor,false,true))picker.ShowDialog();
+  if(applicationPicker!=null&&!applicationPicker.IsDisposed)applicationPicker.Close();
+  var picker=new DockPreview(entry,anchor,false,true);applicationPicker=picker;var hold=folder==null?null:Hold(folder);
+  picker.FormClosed+=(s,e)=>{if(applicationPicker==picker)applicationPicker=null;if(hold!=null)hold.Dispose();picker.Dispose();};
+  try{if(Application.MessageLoop)picker.Show();else picker.ShowDialog();}catch{if(applicationPicker==picker)applicationPicker=null;if(hold!=null)hold.Dispose();picker.Dispose();throw;}
  }
- public static void OpenApplication(string path,string arguments,string name){
+ public static void OpenApplication(string path,string arguments,string name,string icon=""){
   if(String.IsNullOrWhiteSpace(path))throw new ArgumentException("应用入口路径无效。");
-  Interact(null,new DockEntry{path=path,arguments=arguments??"",name=name,pinned=true,windows=WindowsFor(path,arguments)},false);
+  Interact(null,new DockEntry{icon=icon,id=LaunchIdentity(path,arguments??"")[0],path=path,arguments=arguments??"",name=name,pinned=true,windows=WindowsFor(path,arguments)},false);
  }
  public DockEntry Entry(string id){if(previous.Length==0)return null;var e=json.Deserialize<List<DockEntry>>(previous).FirstOrDefault(x=>x.id==id);if(e!=null)e.windows=e.windows.Where(Valid).ToList();return e;}
  internal static uint ResidentProcess(string root){

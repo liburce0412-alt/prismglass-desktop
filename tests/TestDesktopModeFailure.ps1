@@ -2,7 +2,7 @@
 $repo=Split-Path $PSScriptRoot
 $tokens=$null;$errors=$null
 $source=Join-Path $repo 'scripts/runtime/DesktopMode.ps1'
-$ast=[Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$errors)
+$ast=[Management.Automation.Language.Parser]::ParseInput([IO.File]::ReadAllText($source),[ref]$tokens,[ref]$errors)
 if($errors.Count){throw $errors[0]}
 $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-DesktopModeFailure'},$true)
 Invoke-Expression $function.Extent.Text
@@ -25,6 +25,14 @@ try{
  foreach($enabled in @($true,$false)){$readiness=@{primaryEnabled=$enabled};Check ((Invoke-Expression $visibleExpression) -eq !$enabled) ('Primary enabled='+$enabled+' gives the correct native icon visibility')}
  Check ([IO.File]::ReadAllText($source).Contains("-ArgumentList '--renderer'")) 'Internal renderer launch cannot recurse through the public startup entry'
  Check ($ast.ParamBlock.Parameters.Name.VariablePath.UserPath -contains 'ShowErrors') 'Interactive launches can opt into visible errors; background callers stay nonmodal'
+ $stages=$ast.FindAll({param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.Value.StartsWith('PRISMGLASS_STARTUP_STAGE ')},$true)
+ $expectedStages=@('SHELL','SERVICES','RENDERER','PANELS','HANDOFF','ROLLBACK') | ForEach-Object {'PRISMGLASS_STARTUP_STAGE '+$_}
+ Check (($stages.Value -join '|') -ceq ($expectedStages -join '|')) 'Startup stage output is ordered and uses fixed messages'
+ $flagWrite=$ast.Find({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.Extent.Text.StartsWith('Set-Content -LiteralPath $readyPath')},$true)
+ Check ($stages[4].Extent.StartOffset -lt $icons.Extent.StartOffset -and $icons.Extent.StartOffset -lt $flagWrite.Extent.StartOffset) 'Handoff stage precedes icon change and ready flag'
+ $shellHandoff=$ast.Find({param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if($readiness.taskbarHiddenExpected')},$true)
+ $commit=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] -and $node.Value -ceq 'PRISMGLASS_DESKTOP_READY'},$true))[-1]
+ Check ($null -ne $shellHandoff -and $flagWrite.Extent.EndOffset -lt $shellHandoff.Extent.StartOffset -and $shellHandoff.Extent.EndOffset -lt $commit.Extent.StartOffset -and $shellHandoff.Extent.Text.Contains('[DesktopTaskbar]::TaskbarsHidden()') -and $shellHandoff.Extent.Text.Contains('AddSeconds(4)') -and $shellHandoff.Extent.Text.Contains('throw')) 'Expected native taskbar hiding is confirmed before successful launcher handoff, with bounded rollback'
  $dockTemplate=[IO.File]::ReadAllText((Join-Path $repo 'rainmeter/PrismGlass/Dock/Main.ini'))
  Check (!$dockTemplate.Contains('LegacyGlass') -and !$dockTemplate.Contains('LiquidGlass.lua') -and !(Test-Path -LiteralPath (Join-Path $repo 'rainmeter/PrismGlass/Topbar/Main.ini'))) 'Retired Topbar and flat Dock fallback are absent from shipped templates'
 }finally{

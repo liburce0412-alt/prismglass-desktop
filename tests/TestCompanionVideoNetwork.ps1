@@ -44,6 +44,26 @@ try{
  Check ($plan.oldAddress -eq '10.0.0.10' -and $plan.oldPeer -eq '10.0.0.20' -and $r.LocalAddresses -eq '10.0.0.10') 'stale legacy rule is reported without mutation'
  [void](Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true)
  Check ($script:rules.Count -eq 1 -and $r.LocalAddresses -eq '192.168.1.50' -and $r.RemoteAddresses -eq '192.168.1.90' -and $r.Description.Contains($app)) 'approved migration adopts the exact legacy rule instead of adding another'
+ $upgrade=Join-Path $fixture 'mediamtx-1.21.4/mediamtx.exe'
+ [void][IO.Directory]::CreateDirectory((Split-Path $upgrade));[IO.File]::WriteAllText($upgrade,'upgrade fixture')
+ $updatedConfig=@{enabled=$true;address='10.0.0.10';mediamtx=$upgrade}|ConvertTo-Json
+ [IO.File]::WriteAllText($configFile,$updatedConfig)
+ $approvalChecks=$script:applyChecks
+ $plan=Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $false
+ Check ($plan.needsApproval -and $plan.oldProgram -eq $program -and $plan.program -eq $upgrade -and $r.ApplicationName -eq $program -and $script:applyChecks -eq $approvalChecks) 'MediaMTX path change requires fresh approval without touching the firewall'
+ $r.RemoteAddresses='192.168.1.91'
+ Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true $plan.approval} 'changed firewall scope invalidates the desktop approval before mutation'
+ Check ($r.ApplicationName -eq $program -and $r.RemoteAddresses -eq '192.168.1.91' -and $script:applyChecks -eq $approvalChecks) 'stale approval leaves both program and scope intact'
+ $plan=Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $false
+ $script:readCount=0;$script:failReadback=$true
+ Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true $plan.approval} 'a failed MediaMTX rule replacement reports failure'
+ Check ($r.Enabled -and $r.ApplicationName -eq $program -and $r.RemoteAddresses -eq '192.168.1.91') 'failure restores the old program and peer';$script:failReadback=$false
+ $r.Description='';Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $false} 'untagged legacy rule does not authorize a different program';$r.Description=$owner
+ $r.ApplicationName=Join-Path $fixture 'other.exe';Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $false} 'the old program must also have the MediaMTX executable name';$r.ApplicationName=$program
+ $created=Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true $plan.approval
+ Check ($created.configured -and $script:rules.Count -eq 1 -and $r.ApplicationName -eq $upgrade -and $r.RemoteAddresses -eq '192.168.1.90' -and $r.Description -ceq $owner) 'approved upgrade replaces the owned path in place and keeps device scope'
+ Check ([IO.File]::ReadAllText($configFile) -ceq $updatedConfig) 'MediaMTX migration preserves the user-configured stream settings'
+ $original=$updatedConfig
  $r.RemoteAddresses='192.168.1.91';$script:readCount=0;$script:failReadback=$true
  Reject {Invoke-VideoRepair $app '192.168.1.50' '192.168.1.90' $true} 'failed readback reports failure'
  Check ($r.Enabled -and $r.RemoteAddresses -eq '192.168.1.91' -and $r.LocalAddresses -eq '192.168.1.50') 'failed update restores the prior rule scope';$script:failReadback=$false

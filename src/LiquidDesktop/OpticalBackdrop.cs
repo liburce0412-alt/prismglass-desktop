@@ -14,7 +14,7 @@ using Microsoft.Web.WebView2.WinForms;
 internal sealed class OpticalBackdrop : IDisposable {
  sealed class Layer {internal LiveGlassBackdrop.Source window;internal bool dock;}
  sealed class Source : IDisposable {
-  internal LiveGlassBackdrop.Source window;internal SharedWindowCapture.Subscription capture;internal CoreWebView2SharedBuffer buffer;internal string id;internal int width,height;internal long serial,frame=-1;internal bool awaiting,copying,disposed;internal DateTime sent;
+  internal LiveGlassBackdrop.Source window;internal SharedWindowCapture.Subscription capture;internal CoreWebView2SharedBuffer buffer;internal string id;internal int width,height;internal long serial,frame=-1,notBefore;internal bool awaiting,copying,disposed;internal DateTime sent;
   public void Dispose(){disposed=true;if(capture!=null)capture.Dispose();capture=null;if(!copying)ReleaseBuffer();}
   internal void ReleaseBuffer(){if(buffer!=null)buffer.Dispose();buffer=null;}
  }
@@ -22,6 +22,8 @@ internal sealed class OpticalBackdrop : IDisposable {
  readonly Func<Control> current;readonly WebView2 view;readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer{Interval=8};readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly Dictionary<long,Source> sources=new Dictionary<long,Source>();
  Control owner;bool connected,disposed,busy,active;long serial;string layout="";DateTime enumerated,retry;public long Version {get;private set;}
  IntPtr overlay;Rectangle overlayBounds;
+ readonly SharedWindowCapture.StageTiming bufferCopyTiming=new SharedWindowCapture.StageTiming();
+ internal object Diagnostics {get{return new{bufferCopy=bufferCopyTiming.Snapshot()};}}
  [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr window);
  internal string Error="";
  public OpticalBackdrop(Func<Control> owner,WebView2 browser){current=owner;view=browser;timer.Tick+=Tick;view.CoreWebView2InitializationCompleted+=(s,e)=>{if(e.IsSuccess)Connect();};view.VisibleChanged+=(s,e)=>Refresh();view.Disposed+=(s,e)=>Dispose();Connect();}
@@ -67,23 +69,26 @@ internal sealed class OpticalBackdrop : IDisposable {
     layers=layers.Where(l=>l.dock).Concat(layers.Where(l=>!l.dock)).ToList();
     var handles=new HashSet<long>(visible.Select(w=>w.handle.ToInt64()));foreach(var key in sources.Keys.Where(k=>!handles.Contains(k)).ToArray()){sources[key].Dispose();sources.Remove(key);}
     foreach(var window in visible){long key=window.handle.ToInt64();Source source;if(sources.TryGetValue(key,out source)&&source.window.pid!=window.pid){source.Dispose();sources.Remove(key);source=null;}
-     if(source==null){source=new Source{window=window,id=key+"-"+window.pid};source.capture=SharedWindowCapture.Acquire(window.handle,window.pid);sources.Add(key,source);}source.window=window;
+     if(source==null){source=new Source{window=window,id=key+"-"+window.pid,notBefore=window.wallpaper?(long)(System.Diagnostics.Stopwatch.GetTimestamp()*(10000000.0/System.Diagnostics.Stopwatch.Frequency)):0};source.capture=SharedWindowCapture.Acquire(window.handle,window.pid);sources.Add(key,source);}source.window=window;
     }
     string nextLayout=json.Serialize(new{type="optical-layout",active=true,width=area.Width,height=area.Height,sources=layers.Select(l=>new{id=sources[l.window.handle.ToInt64()].id,x=l.window.visible.X-area.X,y=l.window.visible.Y-area.Y,w=l.window.visible.Width,h=l.window.visible.Height,target=l.dock?"Dock":null}).ToArray()});
     if(nextLayout!=layout){layout=nextLayout;active=true;Version++;view.CoreWebView2.PostWebMessageAsJson(nextLayout);}
    }
    foreach(var source in sources.Values.ToArray()){
+    if(source.window.wallpaper&&LiveGlassBackdrop.HasVisibleDesktopIcons(source.window.handle)){Clear();return;}
     if(source.capture==null)continue;if(!source.capture.Valid){if(!String.IsNullOrEmpty(source.capture.Error))throw new InvalidOperationException(source.capture.Error);layout="";enumerated=DateTime.MinValue;continue;}
     if(source.awaiting){if((now-source.sent).TotalSeconds>2)throw new TimeoutException("玻璃渲染器未及时接收画面。");continue;}
-    using(var pixels=source.capture.Latest(source.frame)){
+    using(var pixels=source.capture.Latest(source.frame,source.notBefore)){
      Source currentSource;if(pixels==null||!Enabled()||!sources.TryGetValue(source.window.handle.ToInt64(),out currentSource)||source!=currentSource)continue;
      int width=pixels.Width,height=pixels.Height;bool created=source.buffer==null||source.width!=width||source.height!=height;
      if(created){if(source.buffer!=null)source.buffer.Dispose();source.buffer=view.CoreWebView2.Environment.CreateSharedBuffer((ulong)width*(ulong)height*4);source.width=width;source.height=height;}
      if((ulong)width*(ulong)height*4>source.buffer.Size)throw new InvalidOperationException("玻璃画面缓冲区大小不匹配。");
      var target=source.buffer.Buffer;source.copying=true;
-     try{await Task.Run(()=>Marshal.Copy(pixels.Pixels,0,target,checked(width*height*4)));}
+     try{await Task.Run(()=>{long started=System.Diagnostics.Stopwatch.GetTimestamp();pixels.CopyTo(target);bufferCopyTiming.Record(started);});}
      finally{source.copying=false;if(source.disposed)source.ReleaseBuffer();}
-     if(source.disposed||!Enabled())continue;source.frame=pixels.Serial;
+     if(source.disposed||!Enabled())continue;
+     if(source.window.wallpaper&&LiveGlassBackdrop.HasVisibleDesktopIcons(source.window.handle)){Clear();return;}
+     source.frame=pixels.Serial;
      source.serial=++serial;source.awaiting=true;source.sent=DateTime.UtcNow;var data=new{type="optical-frame",id=source.id,serial=source.serial,width=width,height=height};
      if(created)view.CoreWebView2.PostSharedBufferToScript(source.buffer,CoreWebView2SharedBufferAccess.ReadOnly,json.Serialize(data));else Send(data);Version++;
     }

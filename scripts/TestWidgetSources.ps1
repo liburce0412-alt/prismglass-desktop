@@ -4,8 +4,11 @@ $out=Join-Path $repo 'artifacts/tests'
 $fixture=Join-Path $out ('widget-sources-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $out,$fixture | Out-Null
 try{
- $sources=@('tests/TestWidgetSources.cs','src/LiquidDesktop/WidgetBackend.cs','src/LiquidDesktop/WeatherData.cs','src/LiquidDesktop/WeatherLocation.cs','src/LiquidDesktop/DesktopPreferences.cs','src/LiquidDesktop/RuntimePolicy.cs','src/LiquidDesktop/MonitorCatalog.cs')|ForEach-Object {Join-Path $repo $_}
- & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo "/out:$out/TestWidgetSources.exe" /r:System.Management.dll /r:System.Web.Extensions.dll /r:System.Net.Http.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll @sources
+ $audioAssemblies=@(& (Join-Path $PSScriptRoot 'GetNAudio.ps1'))
+ $audioAssemblies | ForEach-Object {Copy-Item -LiteralPath $_ -Destination $out -Force}
+ $audioRefs=@($audioAssemblies | ForEach-Object {'/r:'+$_})
+ $sources=@('tests/TestWidgetSources.cs','src/LiquidDesktop/WidgetBackend.cs','src/LiquidDesktop/RainmeterCommands.cs','src/LiquidDesktop/CompanionContent.cs','src/LiquidDesktop/DisplayBrightness.cs','src/LiquidDesktop/AudioOutputState.cs','src/LiquidDesktop/WeatherData.cs','src/LiquidDesktop/WeatherLocation.cs','src/LiquidDesktop/DesktopPreferences.cs','src/LiquidDesktop/RuntimePolicy.cs','src/LiquidDesktop/MonitorCatalog.cs')|ForEach-Object {Join-Path $repo $_}
+ & "$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" /nologo "/out:$out/TestWidgetSources.exe" /r:System.Management.dll "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/netstandard.dll" @audioRefs /r:System.Web.Extensions.dll /r:System.Net.Http.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll @sources
  if($LASTEXITCODE -ne 0){throw 'Widget source compilation failed'}
  & (Join-Path $out 'TestWidgetSources.exe') $fixture | Tee-Object -FilePath (Join-Path $out 'widget-source-checks.txt')
  if($LASTEXITCODE -ne 0){throw 'Widget source checks failed'}

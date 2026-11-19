@@ -2,7 +2,7 @@
   #error BundleRoot must name the clean Build.ps1 output directory.
 #endif
 #ifndef AppVersion
-  #define AppVersion "1.1.1"
+  #error AppVersion must be supplied by scripts/Package.ps1.
 #endif
 #ifndef OutputRoot
   #define OutputRoot "..\artifacts\release"
@@ -15,6 +15,7 @@
 AppId=PrismGlass.Desktop
 AppName=PrismGlass 桌面
 AppVersion={#AppVersion}
+VersionInfoProductTextVersion={#BuildId}
 AppPublisher=PrismGlass 项目贡献者
 AppPublisherURL=https://github.com/liburce0412-alt/prismglass-desktop
 AppSupportURL=https://github.com/liburce0412-alt/prismglass-desktop/issues
@@ -50,6 +51,10 @@ Source: "VerifyDependency.ps1"; Flags: dontcopy
 Name: desktopicon; Description: "创建桌面快捷方式"
 
 [InstallDelete]
+Type: files; Name: "{app}\LiquidDesktop\companion-web\widget-hourglass-shell.png"
+Type: files; Name: "{app}\LiquidDesktop\companion-web\widget-bonsai.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\WidgetArt\hourglass-shell.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\WidgetArt\bonsai.png"
 Type: files; Name: "{app}\rainmeter\PrismGlass\Topbar\Main.ini"
 Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\Topbar"
 Type: files; Name: "{app}\rainmeter\PrismGlass\Starlight\Main.ini"
@@ -58,15 +63,54 @@ Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\AmbientArt\starlight-n
 Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\AmbientArt\sunlit-garden.png"
 Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\Starlight"
 Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\MoodNote"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\README.md"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-00.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-01.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-02.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-03.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-04.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-05.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-06.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-07.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-08.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-09.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-10.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\workspace-11.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-00.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-01.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-02.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-03.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-04.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-05.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-06.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-07.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-08.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-09.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-10.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-empty-11.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-00.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-01.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-02.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-03.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-04.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-05.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-06.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-07.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-08.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-09.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-10.png"
+Type: files; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons\trash-full-11.png"
+Type: dirifempty; Name: "{app}\rainmeter\PrismGlass\@Resources\DockIcons"
 
 [Icons]
-Name: "{group}\开启 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
-Name: "{group}\退出 PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Game -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; WorkingDir: "{app}"
+Name: "{group}\开启 PrismGlass"; Filename: "{app}\LiquidDesktop\PrismGlass.exe"; WorkingDir: "{app}"
+Name: "{group}\退出 PrismGlass"; Filename: "{app}\LiquidDesktop\PrismGlass.exe"; Parameters: "--exit"; WorkingDir: "{app}"
+Name: "{group}\iPad 伴随屏"; Filename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Parameters: "--companion"; WorkingDir: "{app}"
 Name: "{group}\卸载 PrismGlass"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\PrismGlass"; Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; IconFilename: "{app}\LiquidDesktop\LiquidDesktop.exe"; Tasks: desktopicon
+Name: "{autodesktop}\PrismGlass"; Filename: "{app}\LiquidDesktop\PrismGlass.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{code:GetPowerShell}"; Parameters: "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\DesktopMode.ps1"" -Mode Beauty -ShowErrors"; Description: "启动 PrismGlass"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent runhidden
+Filename: "{app}\LiquidDesktop\PrismGlass.exe"; Description: "启动 PrismGlass"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent
 
 [Code]
 var
@@ -345,7 +389,7 @@ begin
   if MissingDependencies <> '' then begin Result := '缺少运行组件：' + MissingDependencies + '。请使用图形向导的一键补齐，或先手动安装；静默安装不会下载组件。'; Exit; end;
   ExtractTemporaryFile('SetupIntegration.ps1');
   if not RunIntegration(ExpandConstant('{tmp}\SetupIntegration.ps1'), 'Preflight', ExpandConstant('{app}')) then
-    Result := '安装前检查未通过。请先退出 PrismGlass，再检查组件路径和安装目录。此安装器只能升级由它创建的安装；已有手工安装或归属其他目录的 PrismGlass 皮肤会保留，不会被覆盖。';
+    Result := '安装前检查未通过。请先退出 PrismGlass 桌面，并在 Windows 托盘关闭 iPad 伴随屏，再检查组件路径和安装目录。此安装器只能升级由它创建的安装；已有手工安装或归属其他目录的 PrismGlass 皮肤会保留，不会被覆盖。';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$AppRoot,[Parameter(Mandatory=$true)][string]$Address,[Parameter(Mandatory=$true)][string]$PeerAddress,[switch]$Apply)
+﻿param([Parameter(Mandatory=$true)][string]$AppRoot,[Parameter(Mandatory=$true)][string]$Address,[Parameter(Mandatory=$true)][string]$PeerAddress,[switch]$Apply,[string]$ExpectedPlan)
 $ErrorActionPreference='Stop'
 $script:VideoScriptPath=$PSCommandPath
 
@@ -28,7 +28,13 @@ function Get-VideoRule($Policy,[string]$Program,[string]$Owner){
  $rules=@($Policy.Rules|Where-Object {$_.Name -like 'PrismGlass iPad video *'})
  if($rules.Count -gt 1){throw '发现多条投屏规则，请先检查冲突；原规则未修改。'}
  if(!$rules.Count){return $null};$r=$rules[0]
- if(!$r.Enabled -or $r.Protocol -ne 17 -or $r.Profiles -ne 2 -or $r.Direction -ne 1 -or $r.Action -ne 1 -or $r.LocalPorts -ne '31890' -or $r.RemotePorts -ne '*' -or $r.ApplicationName -ne $Program -or @($r.Interfaces).Count -ne 1 -or [string]$r.Interfaces[0] -match '[*?\[\]]' -or $r.EdgeTraversal -or $r.ServiceName -or ($r.Description -and $r.Description -cne $Owner)){throw '现有投屏规则归属或范围不匹配，未修改。'}
+ if(!$r.Enabled -or $r.Protocol -ne 17 -or $r.Profiles -ne 2 -or $r.Direction -ne 1 -or $r.Action -ne 1 -or $r.LocalPorts -ne '31890' -or $r.RemotePorts -ne '*' -or @($r.Interfaces).Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$r.Interfaces[0]) -or [string]$r.Interfaces[0] -match '[*?\[\]]' -or $r.EdgeTraversal -or $r.ServiceName -or ($r.Description -and $r.Description -cne $Owner)){throw '现有投屏规则归属或范围不匹配，未修改。'}
+ if($r.ApplicationName -ine $Program){
+  if($r.Description -cne $Owner -or [IO.Path]::GetFileName((Resolve-VideoPath $r.ApplicationName)) -ine 'mediamtx.exe'){throw '现有投屏规则的程序归属无法确认，未修改。'}
+ }elseif(!$r.Description){
+  $native=Get-NetFirewallRule -Name 'PrismGlass-Screen-UDP-31890-iPad' -ErrorAction Stop
+  if($native.DisplayName -cne $r.Name){throw '旧投屏规则身份不匹配，未修改。'}
+ }
  [void](Get-VideoExactAddress $r.LocalAddresses);[void](Get-VideoExactAddress $r.RemoteAddresses)
  return $r
 }
@@ -46,37 +52,42 @@ function Get-VideoPlan([string]$Root,[string]$Local,[string]$Peer){
  if($profile.Count -ne 1 -or $profile[0].NetworkCategory -ne 'Private' -or [string]$ip[0].InterfaceAlias -match '[*?\[\]]'){throw '请在受信任的专用网络使用投屏。'}
  # Windows forbids pipe characters in firewall descriptions, including ownership markers.
  $policy=New-Object -ComObject HNetCfg.FwPolicy2;$owner='PrismGlass.Companion.Video.v1:'+$Root;$rule=Get-VideoRule $policy $program $owner
- $oldLocal='';$oldPeer='';$oldInterface='';if($rule){$oldLocal=Get-VideoExactAddress $rule.LocalAddresses;$oldPeer=Get-VideoExactAddress $rule.RemoteAddresses;$oldInterface=[string]$rule.Interfaces[0]}
- $configured=$null -ne $rule -and $oldLocal -ceq $Local -and $oldPeer -ceq $Peer -and $oldInterface -ceq [string]$ip[0].InterfaceAlias
- return [pscustomobject]@{ready=$true;configured=$configured;needsApproval=!$configured;issues=@();address=$Local;peer=$Peer;interfaceAlias=[string]$ip[0].InterfaceAlias;program=$program;oldAddress=$oldLocal;oldPeer=$oldPeer;oldInterface=$oldInterface;rule=$rule;policy=$policy;owner=$owner}
+ $oldLocal='';$oldPeer='';$oldInterface='';$oldProgram=''
+ if($rule){$oldLocal=Get-VideoExactAddress $rule.LocalAddresses;$oldPeer=Get-VideoExactAddress $rule.RemoteAddresses;$oldInterface=[string]$rule.Interfaces[0];$oldProgram=$rule.ApplicationName}
+ $interfaceAlias=[string]$ip[0].InterfaceAlias
+ $configured=$null -ne $rule -and $oldLocal -ceq $Local -and $oldPeer -ceq $Peer -and $oldInterface -ceq $interfaceAlias -and $oldProgram -ieq $program
+ $scope=ConvertTo-Json -Compress -InputObject @($owner,$Local,$Peer,$ip[0].InterfaceIndex,$interfaceAlias,$program,$rule.Name,$rule.Description,$oldLocal,$oldPeer,$oldInterface,$oldProgram)
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try{$approval=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($scope))).Replace('-','')}finally{$sha.Dispose()}
+ return [pscustomobject]@{ready=$true;configured=$configured;needsApproval=!$configured;issues=@();address=$Local;peer=$Peer;interfaceAlias=$interfaceAlias;program=$program;oldAddress=$oldLocal;oldPeer=$oldPeer;oldInterface=$oldInterface;oldProgram=$oldProgram;approval=$approval;rule=$rule;policy=$policy;owner=$owner}
 }
 function Assert-VideoApply([string]$Root){
  if(!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw '更新投屏连接需要 Windows 管理员确认。'}
  $expected=Join-Path (Split-Path (Resolve-VideoPath $Root)) 'RepairCompanionVideo.ps1'
  if((Resolve-VideoPath $script:VideoScriptPath) -ine $expected){throw '请使用已安装的投屏修复工具。'}
 }
-function Invoke-VideoRepair([string]$Root,[string]$Local,[string]$Peer,[bool]$Change){
+function Invoke-VideoRepair([string]$Root,[string]$Local,[string]$Peer,[bool]$Change,[string]$ApprovedScope){
  $plan=Get-VideoPlan $Root $Local $Peer
- if(!$Change -or $plan.configured){return $plan|Select-Object ready,configured,needsApproval,issues,address,peer,interfaceAlias,program,oldAddress,oldPeer,oldInterface}
+ if($Change -and $ApprovedScope -and $ApprovedScope -cne $plan.approval){throw '投屏配置在确认后已变化，请重新开始投屏。'}
+ $fields='ready','configured','needsApproval','issues','address','peer','interfaceAlias','program','oldAddress','oldPeer','oldInterface','oldProgram','approval'
+ if(!$Change -or $plan.configured){return $plan|Select-Object -Property $fields}
  Assert-VideoApply $Root
  $rule=$plan.rule;$old=$null;$added=$false
  if($rule){
-  # Adopt only the exact legacy rule previously installed for this video channel.
-  if(!$rule.Description){$native=Get-NetFirewallRule -Name 'PrismGlass-Screen-UDP-31890-iPad' -ErrorAction Stop;if($native.DisplayName -cne $rule.Name){throw '旧投屏规则身份不匹配，未修改。'}}
-  $old=@{LocalAddresses=$rule.LocalAddresses;RemoteAddresses=$rule.RemoteAddresses;Interfaces=@($rule.Interfaces);Description=$rule.Description}
+  $old=@{ApplicationName=$rule.ApplicationName;LocalAddresses=$rule.LocalAddresses;RemoteAddresses=$rule.RemoteAddresses;Interfaces=@($rule.Interfaces);Description=$rule.Description}
  }
  try{
   if(!$rule){$rule=New-Object -ComObject HNetCfg.FWRule;$rule.Name='PrismGlass iPad video managed';$rule.ApplicationName=$plan.program;$rule.Protocol=17;$rule.LocalPorts='31890';$rule.RemotePorts='*';$rule.Direction=1;$rule.Action=1;$rule.Profiles=2;$rule.Enabled=$false;$rule.EdgeTraversal=$false}
-  else{$rule.Enabled=$false}
+  else{$rule.Enabled=$false;if($rule.ApplicationName -ine $plan.program){$rule.ApplicationName=$plan.program}}
   $rule.LocalAddresses=$Local;$rule.RemoteAddresses=$Peer;$rule.Interfaces=@($plan.interfaceAlias);$rule.Description=$plan.owner
   if(!$old){$plan.policy.Rules.Add($rule);$added=$true}
   $rule.Enabled=$true
   $check=Get-VideoPlan $Root $Local $Peer
   if(!$check.configured){throw '投屏规则检查未通过。'}
-  return $check|Select-Object ready,configured,needsApproval,issues,address,peer,interfaceAlias,program,oldAddress,oldPeer,oldInterface
+  return $check|Select-Object -Property $fields
  }catch{
-  if($added){$plan.policy.Rules.Remove($rule.Name)}elseif($old){$rule.Enabled=$false;$rule.LocalAddresses=$old.LocalAddresses;$rule.RemoteAddresses=$old.RemoteAddresses;$rule.Interfaces=$old.Interfaces;$rule.Description=[string]$old.Description;$rule.Enabled=$true}
+  if($added){$plan.policy.Rules.Remove($rule.Name)}elseif($old){$rule.Enabled=$false;if($rule.ApplicationName -ine $old.ApplicationName){$rule.ApplicationName=$old.ApplicationName};$rule.LocalAddresses=$old.LocalAddresses;$rule.RemoteAddresses=$old.RemoteAddresses;$rule.Interfaces=$old.Interfaces;$rule.Description=[string]$old.Description;$rule.Enabled=$true}
   throw
  }
 }
-try{Invoke-VideoRepair $AppRoot $Address $PeerAddress ([bool]$Apply)|ConvertTo-Json -Depth 4}catch{[ordered]@{ready=$false;configured=$false;needsApproval=$false;issues=@($_.Exception.Message)}|ConvertTo-Json;exit 1}
+try{Invoke-VideoRepair $AppRoot $Address $PeerAddress ([bool]$Apply) $ExpectedPlan|ConvertTo-Json -Depth 4}catch{[ordered]@{ready=$false;configured=$false;needsApproval=$false;issues=@($_.Exception.Message)}|ConvertTo-Json;exit 1}

@@ -48,7 +48,7 @@ function Assert-SetupOwnership([string]$InstallRoot,[string]$SkinRoot,[bool]$Bef
 function Assert-SetupStopped([string]$InstallRoot) {
  $exe=Join-Path $InstallRoot 'LiquidDesktop/LiquidDesktop.exe'
  $running=@(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $exe})
- if($running.Count){throw 'Exit PrismGlass from its tray menu before installing or upgrading.'}
+ if($running.Count){throw 'Exit the PrismGlass desktop and stop the iPad companion from their tray menus before installing or upgrading.'}
 }
 function Write-SetupRecord([string]$Path,$Value) {
  $temp=$Path+'.new'
@@ -64,10 +64,11 @@ function Remove-SetupLegacyDesktopShortcuts([string]$InstallRoot,[string]$Deskto
   $folder=$shell.Namespace($DesktopRoot)
   if(!$folder){continue};$item=$folder.ParseName($name)
   if(!$item -or !$item.IsLink){continue};$shortcut=$item.GetLink()
-  if([IO.Path]::GetFileName($shortcut.Path) -in @('pwsh.exe','powershell.exe') -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0){Remove-Item -LiteralPath $path}
+  $launcher=Join-Path $InstallRoot 'LiquidDesktop/PrismGlass.exe'
+  if(($shortcut.Path -eq $launcher -and $shortcut.Arguments -in '','--exit') -or ([IO.Path]::GetFileName($shortcut.Path) -in @('pwsh.exe','powershell.exe') -and $shortcut.Arguments.IndexOf($command,[StringComparison]::OrdinalIgnoreCase) -ge 0)){Remove-Item -LiteralPath $path}
  }
 }
-function Remove-SetupLoginStartup([string]$InstallRoot,[string]$StartupRoot) {
+function Remove-SetupLoginStartup([string]$InstallRoot,[string]$StartupRoot,[switch]$Migrate) {
  $path=Join-Path $StartupRoot 'PrismGlass.lnk'
  if(!(Test-Path -LiteralPath $path -PathType Leaf)){return}
  $shell=New-Object -ComObject Shell.Application
@@ -77,7 +78,11 @@ function Remove-SetupLoginStartup([string]$InstallRoot,[string]$StartupRoot) {
  if(!$item -or !$item.IsLink){return};$link=$item.GetLink()
  $target=Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell/v1.0/powershell.exe'
  $arguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+(Join-Path $InstallRoot 'DesktopMode.ps1')+'" -Mode Beauty'
- if($link.Path -eq $target -and $link.Arguments -eq $arguments){Remove-Item -LiteralPath $path}
+ $launcher=Join-Path $InstallRoot 'LiquidDesktop/PrismGlass.exe'
+ $legacy=$link.Path -eq $target -and $link.Arguments -eq $arguments
+ if($Migrate){
+  if($legacy){$link.Path=$launcher;$link.Arguments='--login';$link.ShowCommand=1;$link.Save()}
+ }elseif($legacy -or ($link.Path -eq $launcher -and $link.Arguments -eq '--login')){Remove-Item -LiteralPath $path}
 }
 function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,[double]$Lat,[double]$Lon) {
  $source=Join-Path $InstallRoot 'rainmeter/PrismGlass'
@@ -86,7 +91,9 @@ function Install-SetupSkin([string]$InstallRoot,[string]$SkinRoot,[string]$Pwsh,
  $previous=Read-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json')
  $copied=[Collections.Generic.List[string]]::new()
  if($previous){foreach($relative in $previous.files){$copied.Add([string]$relative)}}
- foreach($retired in @('Topbar\Main.ini','Starlight\Main.ini','MoodNote\Main.ini','@Resources\AmbientArt\starlight-nebula.png','@Resources\AmbientArt\sunlit-garden.png')){
+ $retiredFiles=@('Topbar\Main.ini','Starlight\Main.ini','MoodNote\Main.ini','@Resources\AmbientArt\starlight-nebula.png','@Resources\AmbientArt\sunlit-garden.png','@Resources\DockIcons\README.md','@Resources\WidgetArt\hourglass-shell.png','@Resources\WidgetArt\bonsai.png')
+ foreach($name in @('workspace','trash-empty','trash-full')){foreach($frame in 0..11){$retiredFiles+='@Resources\DockIcons\{0}-{1:00}.png' -f $name,$frame}}
+ foreach($retired in $retiredFiles){
  if($previous -and $previous.product -eq 'PrismGlass.Desktop' -and (Resolve-SetupPath $previous.root) -eq $InstallRoot -and $copied.Contains($retired) -and !(Test-Path -LiteralPath (Join-Path $source $retired))){
   $old=Resolve-SetupPath (Join-Path $SkinRoot $retired)
   if(!$old.StartsWith($SkinRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Retired skin escaped its installation directory.'}
@@ -136,6 +143,35 @@ function Remove-SetupSkin([string]$InstallRoot,[string]$SkinRoot) {
  if(!@(Get-ChildItem -LiteralPath $SkinRoot -Force).Count){Remove-Item -LiteralPath $SkinRoot}
  else{$owner.files=@();Write-SetupRecord $ownerPath $owner}
 }
+function Stop-SetupRainmeterSkins([string]$InstallRoot,[string]$SkinRoot,[string]$Executable,[int]$TimeoutMilliseconds=3000) {
+ if(!(Test-Path -LiteralPath $SkinRoot)){return}
+ $processes=@(Get-Process Rainmeter -ErrorAction SilentlyContinue);$running=$false
+ try{foreach($process in $processes){
+  $path=$process.Path
+  if(!$path){throw 'Cannot verify the Rainmeter process path. Skin files were retained; check process permissions.'}
+  if($path -eq $Executable){$running=$true}
+ }}finally{foreach($process in $processes){$process.Dispose()}}
+ if(!$running){return}
+ $owner=Read-SetupRecord (Join-Path $SkinRoot '.prismglass-owner.json')
+ if(!$owner -or $owner.product -ne 'PrismGlass.Desktop' -or (Resolve-SetupPath $owner.root) -ne $InstallRoot){throw 'Skin ownership could not be verified; no deactivation commands were sent.'}
+ if(!('RainmeterCommands' -as [type])){Add-Type -Path (Join-Path $InstallRoot 'LiquidDesktop/RainmeterCommands.cs')}
+ if(![RainmeterCommands]::Probe($Executable,50)){throw 'Rainmeter did not respond. Skin files were retained; restore Rainmeter before uninstalling.'}
+ $pending=[Collections.Generic.List[string]]::new()
+ foreach($folder in Get-ChildItem -LiteralPath $SkinRoot -Directory){
+  $file=Join-Path $folder.FullName 'Main.ini'
+  $relative=$folder.Name+'\Main.ini'
+  $generated=$folder.Name -match '^Dock-monitor-[0-9]+$' -and (Test-Path -LiteralPath $file) -and (Get-Content -LiteralPath $file -TotalCount 1) -eq '; PrismGlass generated monitor instance'
+  if($relative -in $owner.files -or $generated){[RainmeterCommands]::Send($Executable,('!DeactivateConfig "PrismGlass\'+$folder.Name+'"'),250);$pending.Add($file)}
+ }
+ $wait=[Diagnostics.Stopwatch]::StartNew()
+ do{
+  $open=@($pending | Where-Object {[RainmeterCommands]::SkinOpen($_)})
+  if(!$open.Count){return}
+  if($wait.ElapsedMilliseconds -ge $TimeoutMilliseconds){break}
+  Start-Sleep -Milliseconds 100
+ }while($true)
+ throw 'Rainmeter has not closed the PrismGlass skins. Files were retained; restore Rainmeter before uninstalling.'
+}
 
 $Root=Resolve-SetupPath $Root
 $record=Read-SetupRecord (Join-Path $Root 'prismglass-install.json')
@@ -144,17 +180,14 @@ if($Mode -eq 'Uninstall'){
  $skin=Resolve-SetupPath $record.skin
  [void](Assert-SetupOwnership $Root $skin $false)
  $exe=Join-Path $Root 'LiquidDesktop/LiquidDesktop.exe'
- if(@(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $exe}).Count){& (Join-Path $Root 'DesktopMode.ps1') -Mode Game}
- Assert-SetupStopped $Root
- if((Test-Path -LiteralPath $skin) -and (Get-Process Rainmeter -ErrorAction SilentlyContinue)){
-  $owner=Read-SetupRecord (Join-Path $skin '.prismglass-owner.json')
-  foreach($folder in Get-ChildItem -LiteralPath $skin -Directory){
-   $file=Join-Path $folder.FullName 'Main.ini'
-   $relative=$folder.Name+'\Main.ini'
-   $generated=$folder.Name -match '^Dock-monitor-[0-9]+$' -and (Test-Path -LiteralPath $file) -and (Get-Content -LiteralPath $file -TotalCount 1) -eq '; PrismGlass generated monitor instance'
-   if($relative -in $owner.files -or $generated){& $record.rainmeter '!DeactivateConfig' ('PrismGlass\'+$folder.Name)}
-  }
+ if(@(Get-Process LiquidDesktop -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $exe}).Count){
+  $desktopMode=Join-Path $Root 'DesktopMode.ps1'
+  $argument=@{Mode='Game'}
+  if((Get-Command -Name $desktopMode).Parameters.ContainsKey('StopCompanion')){$argument.StopCompanion=$true}
+  & $desktopMode @argument
  }
+ Assert-SetupStopped $Root
+ Stop-SetupRainmeterSkins $Root $skin $record.rainmeter
  Remove-SetupLoginStartup $Root ([Environment]::GetFolderPath('Startup'))
  Remove-SetupSkin $Root $skin
  # User data and companion system configuration intentionally remain available.
@@ -173,6 +206,8 @@ $app=Join-Path $Root 'LiquidDesktop'
 if(!(Test-Path -LiteralPath (Join-Path $app 'LiquidDesktop.exe'))){throw 'The application executable is missing.'}
 if($record){$Latitude=$record.latitude;$Longitude=$record.longitude}
 $record=[ordered]@{product='PrismGlass.Desktop';version=1;root=$Root;skin=$skin;rainmeter=$RainmeterPath;powershell=$PowerShellPath;latitude=$Latitude;longitude=$Longitude}
+$buildInfo=Join-Path $Root 'build-info.json'
+if(Test-Path -LiteralPath $buildInfo){$record.buildId=([IO.File]::ReadAllText($buildInfo)|ConvertFrom-Json).buildId}
 Write-SetupRecord (Join-Path $Root 'prismglass-install.json') $record
 foreach($config in Get-ChildItem -LiteralPath (Join-Path $Root 'rainmeter/PrismGlass') -Directory){
  if((Test-Path -LiteralPath (Join-Path $config.FullName 'Main.ini')) -and !(Test-Path -LiteralPath (Join-Path $skin ($config.Name+'/Main.ini')))){
@@ -183,6 +218,7 @@ Install-SetupSkin $Root $skin $PowerShellPath $Latitude $Longitude
 [IO.File]::WriteAllText((Join-Path $app 'rainmeter-path.txt'),$RainmeterPath)
 [IO.File]::WriteAllText((Join-Path $app 'skin-path.txt'),$skin)
 Remove-SetupLegacyDesktopShortcuts $Root ([Environment]::GetFolderPath('Desktop'))
+Remove-SetupLoginStartup $Root ([Environment]::GetFolderPath('Startup')) -Migrate
 if(!(Test-Path -LiteralPath (Join-Path $app 'pins.json'))){
  @(@{id='explorer';name='文件';path=(Join-Path $env:WINDIR 'explorer.exe');arguments='';icon=''},@{id='notepad';name='记事本';path=(Join-Path $env:WINDIR 'System32/notepad.exe');arguments='';icon=''}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $app 'pins.json') -Encoding utf8
 }

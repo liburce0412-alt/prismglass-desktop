@@ -33,6 +33,20 @@ internal static partial class TestLiveGlassBackdrop {
  static Color CompositedPixel(string name){using(var bitmap=new Bitmap(form.ClientSize.Width,form.ClientSize.Height))using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(form.PointToScreen(Point.Empty),Point.Empty,bitmap.Size);bitmap.Save(Path.Combine(output,name+".png"));return bitmap.GetPixel(330,330);}}
  static Color ScreenPixel(int x,int y){using(var bitmap=new Bitmap(1,1))using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(form.PointToScreen(new Point(x,y)),Point.Empty,bitmap.Size);return bitmap.GetPixel(0,0);}}
  static double Linear(byte value){double channel=value/255.0;return channel<=.04045?channel/12.92:Math.Pow((channel+.055)/1.055,2.4);}
+ static async Task PointerMaterials(IntPtr source){
+  SendMessage(source,0x8001,new IntPtr(Color.FromArgb(40,55,70).ToArgb()),IntPtr.Zero);
+  await Eval("window.bodyLight=()=>{const g=document.querySelector('canvas').getContext('webgl'),p=new Uint8Array(4);g.readPixels(430,g.drawingBufferHeight-330,1,1,g.RGBA,g.UNSIGNED_BYTE,p);return p[0]+p[1]+p[2]};");
+  foreach(var theme in new[]{"Sky","Astro"}){
+   await Eval("receive({type:'layout',width:innerWidth,height:innerHeight,theme:'"+theme+"',paused:false,cards:[{name:'Test',x:60,y:60,w:innerWidth-120,h:innerHeight-120,r:32,fixedShape:true}]})");
+   foreach(char style in "ABCDEFGHIJ"){
+    await Eval("dispatchEvent(new CustomEvent('prism-preferences',{detail:{glassStyle:'"+style+"'}}));receive({type:'pointer',x:750,y:330,down:false})");await Task.Delay(250);
+    await Eval("window.bodyBefore=bodyLight();receive({type:'pointer',x:430,y:330,down:false})");
+    await Wait("bodyLight()>bodyBefore+18",theme+" material "+style+" keeps a local body highlight independently of its rim");
+    if(style=='J')await Save("body-highlight-"+theme+"-J");
+   }
+  }
+  await Eval("dispatchEvent(new CustomEvent('prism-preferences',{detail:{glassStyle:''}}));layout(false);receive({type:'pointer',x:-999,y:-999,down:false})");
+ }
  static void Clip(Region region){var old=form.Region;form.Region=region;if(old!=null)old.Dispose();}
  static async Task DockLayers(IntPtr front){
   using(var back=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--source"){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden}))using(var plate=new GlassCaptureHost{ClientSize=new Size(800,120),StartPosition=FormStartPosition.Manual,FormBorderStyle=FormBorderStyle.None,ShowInTaskbar=false,TopMost=true,Opacity=.01}){
@@ -67,6 +81,7 @@ internal static partial class TestLiveGlassBackdrop {
   await Eval("receive({type:'pointer',x:250,y:330,down:false})");await Task.Delay(400);CompositedPixel("body-pointer-left");
   await Eval("receive({type:'pointer',x:750,y:330,down:false})");await Task.Delay(400);CompositedPixel("body-pointer-right");
   using(var left=new Bitmap(Path.Combine(output,"body-pointer-left.png")))using(var right=new Bitmap(Path.Combine(output,"body-pointer-right.png"))){int a=450,b=450;for(int x=451;x<515;x++){if(left.GetPixel(x,330).G>left.GetPixel(a,330).G)a=x;if(right.GetPixel(x,330).G>right.GetPixel(b,330).G)b=x;}Check(Math.Abs(a-b)<=2,"fixed glass body keeps the real background grid anchored while the pointer crosses it");}
+  await PointerMaterials(source);
   await Eval("receive({type:'pointer',x:-999,y:-999,down:false})");
   SendMessage(source,0x8001,new IntPtr(Color.White.ToArgb()),IntPtr.Zero);await Task.Delay(650);var white=CompositedPixel("compositor-white");double contrast=1.05/(.2126*Linear(white.R)+.7152*Linear(white.G)+.0722*Linear(white.B)+.05);
   Check((white.R+white.G+white.B)/3.0>=180,"clear glass transmits a bright background without the former gray contrast veil");
@@ -122,7 +137,7 @@ internal static partial class TestLiveGlassBackdrop {
  }
  static async Task Run(){
   using(var bitmap=new Bitmap(1000,720))using(var graphics=Graphics.FromImage(bitmap)){graphics.Clear(Color.FromArgb(80,105,145));bitmap.Save(Path.Combine(root,"wallpaper.png"));}
-  File.WriteAllText(Path.Combine(root,"fixture.html"),"<!doctype html><meta charset='utf-8'><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}canvas{position:absolute;inset:0;width:100%;height:100%}p{position:absolute;left:100px;top:110px;color:white;font:24px 'Segoe UI'}</style><canvas id='glass'></canvas><p>PrismGlass · Live background fixture</p><script src='glass-renderer.js'></script><script>window.messages=[];window.errors=[];onerror=m=>errors.push(m);PrismGlassRenderer(document.querySelector('canvas'),m=>{messages.push(m);if(m==='painted'||m.startsWith('error:'))chrome.webview.postMessage(m)},r=>window.receive=r);window.layout=paused=>receive({type:'layout',width:innerWidth,height:innerHeight,sceneWidth:innerWidth,sceneHeight:innerHeight,originX:0,originY:0,theme:'Sky',paused,cards:[{name:'Test',x:60,y:60,w:innerWidth-120,h:innerHeight-120,r:32,fixedShape:true}]});window.enable=value=>dispatchEvent(new CustomEvent('prism-preferences',{detail:{liveGlassBackground:value}}));window.stats=()=>{receive({type:'stats'});return JSON.parse(messages.filter(m=>m.startsWith('stats:')).pop().slice(6))};layout(false);</script>");
+  File.WriteAllText(Path.Combine(root,"fixture.html"),"<!doctype html><meta charset='utf-8'><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}canvas{position:absolute;inset:0;width:100%;height:100%}p{position:absolute;left:100px;top:110px;color:white;font:24px 'Segoe UI'}</style><canvas id='glass'></canvas><p>PrismGlass · Live background fixture</p><script src='glass-materials.js'></script><script src='glass-renderer.js'></script><script>window.messages=[];window.errors=[];onerror=m=>errors.push(m);PrismGlassRenderer(document.querySelector('canvas'),m=>{messages.push(m);if(m==='painted'||m.startsWith('error:'))chrome.webview.postMessage(m)},r=>window.receive=r);window.layout=paused=>receive({type:'layout',width:innerWidth,height:innerHeight,sceneWidth:innerWidth,sceneHeight:innerHeight,originX:0,originY:0,theme:'Sky',paused,cards:[{name:'Test',x:60,y:60,w:innerWidth-120,h:innerHeight-120,r:32,fixedShape:true}]});window.enable=value=>dispatchEvent(new CustomEvent('prism-preferences',{detail:{liveGlassBackground:value}}));window.stats=()=>{receive({type:'stats'});return JSON.parse(messages.filter(m=>m.startsWith('stats:')).pop().slice(6))};layout(false);</script>");
   await view.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,"runtime")));view.ZoomFactor=96.0/GetDpiForWindow(form.Handle);
   view.CoreWebView2.SetVirtualHostNameToFolderMapping("prism-test.local",root,CoreWebView2HostResourceAccessKind.DenyCors);
   view.CoreWebView2.WebResourceRequested+=(s,e)=>{if(e.Request.Uri.StartsWith("https://prism-backdrop.invalid/"))requests++;};
@@ -132,6 +147,8 @@ internal static partial class TestLiveGlassBackdrop {
   IntPtr source=IntPtr.Zero;for(int i=0;i<50;i++){source=FindWindow(null,"PrismGlass material test source "+sourceProcess.Id);if(source!=IntPtr.Zero)break;await Task.Delay(100);}Check(source!=IntPtr.Zero,"isolated native source window is available");ShowWindow(source,4);
   if(dockOnly){await DockLayers(source);return;}
   if(multiHostOnly){await MultiHost(source);return;}
+  // Let the synthetic source paint on a real monitor before validating native pixels.
+  SendMessage(source,0x8003,new IntPtr(180),new IntPtr(140));await Task.Delay(150);
   RECT rect;GetWindowRect(source,out rect);var item=new LiveGlassBackdrop.Source{handle=source,pid=(uint)sourceProcess.Id,bounds=rect.Rectangle,visible=rect.Rectangle};
   using(var captured=await Task.Run(()=>LiveGlassBackdrop.CaptureWindow(item)))Check(captured!=null&&captured.GetPixel(110,110).G>captured.GetPixel(110,110).R,"native capture reads the fixture's actual green window content");
   item.pid++;Check(LiveGlassBackdrop.CaptureWindow(item)==null,"reused or mismatched window identity is rejected");item.pid--;

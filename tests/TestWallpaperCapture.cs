@@ -12,7 +12,7 @@ internal static class TestWallpaperCapture {
   Check(LiveGlassBackdrop.MatchesMpv(@"D:\Lively\plugins\mpv\mpv.exe",@"D:\Lively\Lively.exe"),"Lively bundled MP4 player is recognized");
   Check(!LiveGlassBackdrop.MatchesMpv(@"D:\Other\mpv.exe",@"D:\Lively\Lively.exe"),"unrelated mpv does not authorize desktop capture");
   Check(!LiveGlassBackdrop.MatchesMpv(@"D:\LivelyFake\plugins\mpv\mpv.exe",@"D:\Lively\Lively.exe"),"similar installation prefix is rejected");
-  Check(SharedWindowCapture.FrameWait(0)==17&&SharedWindowCapture.FrameWait(10)==7&&SharedWindowCapture.FrameWait(40)==1,"60 Hz pacing includes work time without a catch-up backlog");
+  Check(SharedWindowCapture.FrameWait(0)==9&&SharedWindowCapture.FrameWait(5)==4&&SharedWindowCapture.FrameWait(40)==1,"120 Hz ceiling charges work time without a catch-up backlog");
   var desktop=new Rectangle(-400,0,800,400);
   using(var right=WallpaperCapture.ToMonitor(pixels,8,4,desktop,new Rectangle(0,0,400,400))){Check(right.Width==400&&right.Height==400,"broker thumbnail expands to actual monitor pixels");Check(right.GetPixel(200,200).B==220&&right.GetPixel(200,200).R==0,"monitor crop uses source visible bounds instead of the full desktop image");Check(right.GetPixel(399,399).B==220,"upscaled far edge does not acquire a black sampling border");}
   using(var left=WallpaperCapture.ToMonitor(pixels,8,4,desktop,new Rectangle(-400,0,400,400)))Check(left.GetPixel(200,200).R==210&&left.GetPixel(200,200).B==0,"negative desktop origin maps to the correct monitor pixels");

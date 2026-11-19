@@ -82,11 +82,12 @@ internal static class CompanionConnection {
   var start=new ProcessStartInfo(PowerShell(root),arguments){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden};
   using(var process=Process.Start(start)){await Task.Run(()=>process.WaitForExit());if(process.ExitCode!=0)throw new InvalidOperationException("系统配置未完成，管理员进程未返回具体原因。请在电脑重新检查连接后重试。");}
  }
- internal static string VideoArguments(string root,string address,string peer,bool apply){
+ internal static string VideoArguments(string root,string address,string peer,string approvedPlan=null){
   CompanionServer.Endpoint(address,31890);CompanionServer.Endpoint(peer,31890);
   root=Path.GetFullPath(root).TrimEnd('\\','/');string script=Path.Combine(Path.GetDirectoryName(root),"RepairCompanionVideo.ps1");if(!File.Exists(script))throw new InvalidOperationException("投屏连接修复工具尚未安装，请更新 PrismGlass。");
-  return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)+" -AppRoot "+Quote(root)+" -Address "+Quote(address)+" -PeerAddress "+Quote(peer)+(apply?" -Apply":"");
+  if(approvedPlan!=null&&(approvedPlan.Length!=64||!approvedPlan.All(Uri.IsHexDigit)))throw new InvalidOperationException("无法确认本次投屏配置，请更新 PrismGlass 后重试。");
+  return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)+" -AppRoot "+Quote(root)+" -Address "+Quote(address)+" -PeerAddress "+Quote(peer)+(approvedPlan==null?"":" -Apply -ExpectedPlan "+Quote(approvedPlan));
  }
- public static Task<Dictionary<string,object>> CheckVideo(string root,string address,string peer){return CheckArguments(root,VideoArguments(root,address,peer,false));}
- public static Task ApplyVideo(string root,string address,string peer){return ApplyArguments(root,VideoArguments(root,address,peer,true));}
+ public static Task<Dictionary<string,object>> CheckVideo(string root,string address,string peer){return CheckArguments(root,VideoArguments(root,address,peer));}
+ public static Task ApplyVideo(string root,string address,string peer,string approvedPlan){return ApplyArguments(root,VideoArguments(root,address,peer,approvedPlan??""));}
 }

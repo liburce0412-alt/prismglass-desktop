@@ -16,7 +16,7 @@ internal static class CompanionAudioProgram {
   try{
    using(var devices=new MMDeviceEnumerator())using(var device=devices.GetDefaultAudioEndpoint(DataFlow.Render,Role.Multimedia))using(var capture=new LoopbackCapture(device)){
     capture.WaveFormat=WaveFormat.CreateIeeeFloatWaveFormat(48000,2);
-    var buffer=new BufferedWaveProvider(capture.WaveFormat){BufferDuration=TimeSpan.FromMilliseconds(80),DiscardOnBufferOverflow=true,ReadFully=true};
+    var buffer=new BufferedWaveProvider(capture.WaveFormat,TimeSpan.FromMilliseconds(80)){DiscardOnBufferOverflow=true,ReadFully=true};
     Exception failure=null;capture.DataAvailable+=(s,e)=>buffer.AddSamples(e.Buffer,0,e.BytesRecorded);capture.RecordingStopped+=(s,e)=>failure=e.Exception??new IOException("Audio capture stopped");
     capture.StartRecording();using(var output=Console.OpenStandardOutput()){
      var block=new byte[480*2*4];var clock=Stopwatch.StartNew();long frames=0;

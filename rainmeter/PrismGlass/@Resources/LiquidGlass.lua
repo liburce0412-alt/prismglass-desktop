@@ -1,6 +1,6 @@
 function Initialize()
  heartbeat=SKIN:GetVariable('LiquidRoot')..'heartbeat.txt'
- lastMode=''; lastTheme=''
+ lastMode=''; lastTheme='';lastMotion=nil
 end
 function Update()
  local f=io.open(heartbeat,'r'); local stamp,theme
@@ -8,12 +8,17 @@ function Update()
  local active=stamp and math.abs(os.time()-tonumber(stamp))<7
  local mode=active and 'live' or 'legacy'
  local modeChanged=mode~=lastMode
+ local dirty=modeChanged
  if modeChanged then
   SKIN:Bang(active and '!HideMeterGroup' or '!ShowMeterGroup','LegacyGlass')
+  for _,name in ipairs({'Input','OrbInput'}) do
+   if SKIN:GetMeter(name) then SKIN:Bang('!SetOption',name,'ToolTipHidden',active and '1' or '0') end
+  end
   lastMode=mode
  end
  theme=active and theme or 'Sky'
  if theme~=lastTheme or modeChanged then
+  dirty=true
   SKIN:Bang('!SetVariable','Ink',active and '255,255,255' or '27,42,66')
   SKIN:Bang('!SetVariable','Muted',active and '227,237,249' or '60,79,110')
   SKIN:Bang('!SetVariable','Blue',theme=='Astro' and '119,184,255' or '32,108,236')
@@ -27,9 +32,14 @@ function Update()
   local p=io.open(SKIN:GetVariable('LiquidRoot')..'paused.txt','r')
   local stopped=false
   if p then stopped=p:read('*a'):match('true')~=nil;p:close() end
-  SKIN:Bang('!SetOption','MotionToggle','Text',stopped and '' or '')
-  SKIN:Bang('!SetOption','MotionToggle','ToolTipText',stopped and '动效已暂停，点击继续' or '动效已开启，点击暂停')
+  if stopped~=lastMotion then
+   SKIN:Bang('!SetOption','MotionToggle','Text',stopped and '' or '')
+   SKIN:Bang('!SetOption','MotionToggle','ToolTipText',stopped and '动效已暂停，点击继续' or '动效已开启，点击暂停')
+   lastMotion=stopped;dirty=true
+  end
  end
- SKIN:Bang('!UpdateMeter','*');SKIN:Bang('!Redraw')
+ -- Native data meters keep their own update cadence. Static vector cards do not
+ -- need a full repaint just because the host heartbeat is still healthy.
+ if dirty then SKIN:Bang('!UpdateMeter','*');SKIN:Bang('!Redraw') end
  return active and 1 or 0
 end

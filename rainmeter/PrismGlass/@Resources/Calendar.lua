@@ -1,9 +1,12 @@
 offset=0
+local lastKey
 function Change(n) offset=offset+n Update() SKIN:Bang('!Redraw') end
 function Update()
  local now=os.date('*t')
  local t=os.time{year=now.year,month=now.month+offset,day=1,hour=12}
  local d=os.date('*t',t)
+ local key=d.year..':'..d.month..':'..now.day..':'..SKIN:GetVariable('Ink')
+ if key==lastKey then return offset end;lastKey=key
  local first=(d.wday+5)%7
  local days=os.date('*t',os.time{year=d.year,month=d.month+1,day=0,hour=12}).day
  SKIN:Bang('!SetOption','MonthTitle','Text',d.year..'年'..d.month..'月')

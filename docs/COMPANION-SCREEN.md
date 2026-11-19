@@ -1,6 +1,6 @@
 # Safari 内投屏与独立副屏
 
-本文说明 1.1.1 的使用方式与限制；后半部分按日期保留历史验收记录，不能把旧记录中的“未发布”或“待验收”当作当前全部功能的状态。
+本文说明 2.0.0 的使用方式与限制。后半部分按日期保留历史验收记录。
 在 PrismGlass 伴随屏的「投屏 / 触控」页选择用途：
 
 - **投屏**：选择电脑主屏或其他有线屏幕，以及 720p / 1080p，再点击「开始投屏」。列表不包含 iPad 虚拟屏和无线显示器；处于复制模式的实体屏共享同一画面，只列出一个来源。
@@ -32,7 +32,7 @@ pwsh -NoProfile -File .\ConfigureCompanionVirtualDevice.ps1 -AppRoot .\LiquidDes
 | 组件 | 官方入口与操作 | 建议文件位置 |
 |---|---|---|
 | FFmpeg | [FFmpeg 下载页](https://ffmpeg.org/download.html) → Windows → gyan.dev 的 Windows full build，解压整个目录并保留配套文件 | `D:\Tools\PrismGlass\ffmpeg\bin\ffmpeg.exe` |
-| MediaMTX 1.21.3 | [Windows amd64 ZIP](https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_windows_amd64.zip)，按 [官方校验文件](https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/checksums.sha256) 核对后解压 | `D:\Tools\PrismGlass\mediamtx\mediamtx.exe` |
+| MediaMTX 1.21.4 | [Windows amd64 ZIP](https://github.com/bluenviron/mediamtx/releases/download/v1.21.4/mediamtx_v1.21.4_windows_amd64.zip)，按 [官方校验文件](https://github.com/bluenviron/mediamtx/releases/download/v1.21.4/checksums.sha256) 核对后解压 | `D:\Tools\PrismGlass\mediamtx\mediamtx.exe` |
 | NVIDIA NVENC | 是兼容 NVIDIA GPU 的硬件编码能力，不是单独可安装的程序；安装适用显卡驱动，并检查 FFmpeg 的 `h264_nvenc`。参见 [NVIDIA 官方说明](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/ffmpeg-with-nvidia-gpu/index.html) | 不需要填写单独的编码器路径 |
 
 不需要把这些目录加入系统 PATH，也不要手动启动 MediaMTX。PrismGlass 在开始投屏后启动它们，并在停止时清理所属进程。源码与安装包不附带这些工具或驱动。
@@ -54,7 +54,7 @@ pwsh -NoProfile -File .\ConfigureCompanionVirtualDevice.ps1 -AppRoot .\LiquidDes
 
 - 复用现有 HTTPS 9443、设备配对、Origin/CSRF 校验。
 - FFmpeg 需要 `h264_nvenc`，电脑需要兼容 NVIDIA 编码器。当前实现没有软件编码或其他 GPU 的回退。
-- MediaMTX 1.21.3；从官方发布页取得 Windows amd64 包并核对官方 SHA256。二进制不随仓库分发。
+- MediaMTX 1.21.4；从官方发布页取得 Windows amd64 包并核对官方 SHA256。二进制不随仓库分发。
 - 本地安装的 `runtime-data/companion/screen-stream.json` 使用下列结构，填入工具的绝对路径：
 
 ```json
@@ -67,7 +67,7 @@ pwsh -NoProfile -File .\ConfigureCompanionVirtualDevice.ps1 -AppRoot .\LiquidDes
 
 视频使用当前连接地址的 **UDP 31890**。0.9.2 起，换网后电脑点「检查并连接」，iPad 打开页面并点「开始投屏 / 打开副屏」。程序只从通过配对、屏幕权限和会话校验的实际请求读取 iPad 地址；需要建立或更新规则时，电脑显示新旧地址及范围，由你确认并通过 Windows 管理员提示。修复完成后 iPad 自动继续连接，无需编辑 IP 或运行命令；等待最多两分钟，可随时停止。已有规则正确时不提示修改。电脑管理页显示检查、等待确认、等待管理员和验证结果；取消或失败后可重新开始投屏，新尝试不会复用上一轮失败结果。管理员进程没有返回具体失败原因时，界面会如实说明。
 
-修复只允许配置中的 MediaMTX、当前专用网卡、电脑地址、同网段的这一台 iPad 和 UDP 31890；不会改为整个局域网或公共网络。只更新归属和范围匹配的规则，冲突或未知规则会停止并提示，失败时恢复旧范围。现有投屏未结束时，其他设备不能抢改它的规则。命令行 `RepairCompanionVideo.ps1 -AppRoot <安装目录\LiquidDesktop> -Address <电脑地址> -PeerAddress <iPad地址>` 默认只读检查，只有显式 `-Apply` 才请求应用；普通用户使用软件内流程即可。RTSP/WHEP 诊断工具仍可使用配置中的回环地址，正式伴随屏不选择其他网卡作为回退。
+修复限定为配置中的 MediaMTX、当前专用网卡、电脑地址、同网段的这一台 iPad 和 UDP 31890。升级 MediaMTX 改变路径时，电脑确认窗口会显示新旧程序路径。只有归属当前安装且范围符合要求的规则才可迁移，验证失败会恢复原规则。现有投屏未结束时，其他设备不能抢改它的规则。命令行 `RepairCompanionVideo.ps1 -AppRoot <安装目录\LiquidDesktop> -Address <电脑地址> -PeerAddress <iPad地址>` 默认只读检查，普通用户可沿用软件内确认流程。RTSP/WHEP 诊断工具仍可使用配置中的回环地址，正式伴随屏沿用当前选定的网卡。
 
 2026-11-03 本地修复：视频规则的归属说明曾使用 `|` 分隔符，违反 [Windows 防火墙规则的 Description 字段约束](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nn-netfw-inetfwrule)，导致换网更新时报“值不在预期的范围内”并回滚。改用允许的分隔符后，本机 Windows PowerShell 5.1 已实际完成旧单设备规则迁移，复查确认无需再次申请更新；26 项隔离回归通过。用户从 iPad 重新开始投屏后确认画面恢复。修复脚本已原位更新，并纳入 1.1.1 安装包。
 
@@ -82,7 +82,7 @@ RTSP 31854 与 WHEP 31889 只绑定 `127.0.0.1`，不用开放防火墙。没有
 - H.264 Baseline、30 fps 目标，720p 约 6 Mbps、1080p 约 10 Mbps；电脑系统声音使用另行授权的 Opus / WebRTC 通道，包含其他应用和通知声音，不采集麦克风。
 - 捕获所选**整块显示器**，包含其通知和其他窗口；不提供单软件隔离。
 - 仅点击开始后启动采集与路由进程；一个观看者。停止、权限撤销、Windows 锁定、网页离开或隐藏都会停止；失联心跳最多 15 秒过期。
-- 子进程归入带关闭清理的 Windows Job；电脑端退出时终止，不安装自启动服务，不录制视频。
+- 子进程归入带关闭清理的 Windows Job。伴随屏维持运行时，单独退出 PrismGlass 桌面可以继续已有投屏。主动停止、撤权、锁定、失联或宿主进程退出仍会结束采集。
 - 仅共享获准内容；网页与浏览器资源清理不会清除用户配对和小组件偏好。
 
 ## 1.1.0 验证范围
@@ -105,7 +105,7 @@ Virtual Display Driver 已安装并独立扩展为 1440×1080 / 30Hz，保留主
 
 连接恢复后曾残留旧的「连接超时」提示，现仅在确认同步成功后清除只读连接错误；不清除写入结果未知的警告。真实 iPad 的受控单次只读超时测试已验证提示出现及重连后消失。未测长期功耗、持续数小时的串流稳定性和端到端触摸延迟。
 
-参考：[MediaMTX 浏览器读取](https://mediamtx.org/docs/read/web-browsers)、[WebRTC](https://mediamtx.org/docs/read/webrtc)、[官方发布](https://github.com/bluenviron/mediamtx/releases/tag/v1.21.3)。
+参考：[MediaMTX 浏览器读取](https://mediamtx.org/docs/read/web-browsers)、[WebRTC](https://mediamtx.org/docs/read/webrtc)、[官方发布](https://github.com/bluenviron/mediamtx/releases/tag/v1.21.4)。
 
 ## 本地体验打磨增量（2026-10-31，已安装本机预览，未发布）
 

@@ -25,7 +25,7 @@ body #shelf #triggers button[aria-expanded=true]:before{background:#c5e4ff}
 body :is(button,input,textarea,select):focus-visible{outline-color:#d2eaff}
 body #shelf{width:512px}body #shelf #triggers{left:428px}body #shelf #manage-trigger{left:438px}
 body #dock .rail-item,body #shelf #triggers button{width:72px;height:66px;border-radius:18px;padding:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
-body #dock .rail-icon,body #shelf #triggers .utility-icon{width:26px;height:26px;line-height:26px;font-size:26px;stroke-width:1.7}
+body #dock .rail-icon,body #dock .rail-icon svg,body #shelf #triggers .utility-icon{width:26px;height:26px;line-height:26px;font-size:26px;stroke-width:1.7}
 body #dock .rail-label,body #shelf #triggers span{font-size:10px;line-height:16px;letter-spacing:.5px}
 body #dock .rail-item small,body #shelf #triggers .rail-summary{font-size:10px;line-height:14px;opacity:.7}
 body[data-glass-ready=true] #dock .rail-item,body[data-glass-ready=true] #shelf #triggers button{background:transparent}

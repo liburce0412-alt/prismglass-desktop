@@ -9,7 +9,7 @@ using System.Web.Script.Serialization;
 // Network DTOs are deliberately projected here; desktop messages never cross this boundary.
 internal sealed class CompanionBridge {
  readonly string root;readonly AppLibrary library;readonly DesktopPreferences preferences;readonly SharedDesktopData shared;readonly DockLyrics lyrics;readonly CompanionContent content;readonly LyricsStyleStore lyricsStyle;
- static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","glassStyle","glassOverrides","glassPresets","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","hiddenCards","hiddenLeftCards"};
+ static readonly string[] SettingFields={"theme","manualPaused","glassOpacity","glassStyle","glassOverrides","glassPresets","textScale","reducedMotion","dockIconSize","dockAutoHide","showLabels","gridColumns","pauseOnBattery","pauseOnPowerSaver","pauseOnRemote","windowAnimations","stageManager","stageHideCovered","stageGroupLayout","stageSingleSize","stageMaxWidth","stageMaxHeight","hiddenCards","hiddenLeftCards"};
  static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"},LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
  readonly Func<Func<object>,object> onDesktop;readonly Func<bool> locked;readonly Func<string> streamAddress;readonly object gate=new object();readonly CompanionContext context;readonly CompanionControls controls;
  sealed class Assets {public Dictionary<string,byte[]> icons=new Dictionary<string,byte[]>();public string coverId="";public byte[] cover;}
@@ -34,9 +34,14 @@ internal sealed class CompanionBridge {
  static object Value(Dictionary<string,object> data,string key){object v;return data.TryGetValue(key,out v)?v:null;}
  static object Pick(Dictionary<string,object> data,params string[] fields){var result=new Dictionary<string,object>();foreach(var field in fields)if(data.ContainsKey(field))result[field]=data[field];return result;}
  bool Permitted(AppLibraryEntry entry){string signature;return entry!=null&&entry.kind!="action"&&allowed.TryGetValue(entry.id,out signature)&&signature==EntrySignature(entry);}
- object Desktop(CompanionGrant grant,Func<object> operation){return onDesktop(()=>{if(!grant.Active||locked())throw new UnauthorizedAccessException();return operation();});}
+ object Desktop(CompanionGrant grant,Func<object> operation){
+  // Handle owns gate, but the desktop thread also needs it during shutdown.
+  System.Threading.Monitor.Exit(gate);
+  try{return onDesktop(()=>{lock(gate){if(disposed||!grant.Active||locked())throw new UnauthorizedAccessException();return operation();}});}
+  finally{System.Threading.Monitor.Enter(gate);}
+ }
  public CompanionReply Handle(string path,Dictionary<string,object> request,CompanionGrant grant){
-  if(path=="/api/screen"||path.StartsWith("/api/screen/",StringComparison.Ordinal)){CompanionStream stream;lock(gate){if(screenStream==null){screenStream=new CompanionStream(root,locked,streamAddress);screenStream.Stopped=controls.EndScreen;}stream=screenStream;}return stream.Handle(path,request,grant);}
+  if(path=="/api/screen"||path.StartsWith("/api/screen/",StringComparison.Ordinal)){CompanionStream stream;lock(gate){if(disposed)return CompanionReply.Error(409,"closed","服务已关闭。");if(screenStream==null){screenStream=new CompanionStream(root,locked,streamAddress);screenStream.Stopped=controls.EndScreen;}stream=screenStream;}return stream.Handle(path,request,grant);}
   if(path=="/api/pointer"&&(Text(request,"kind")=="point"||Text(request,"kind")=="touch")){
    CompanionStream stream;lock(gate)stream=screenStream;
    if(stream==null)return CompanionReply.Error(409,"screen_expired","请先开始投屏。");
@@ -46,7 +51,7 @@ internal sealed class CompanionBridge {
   if(path.StartsWith("/api/power/",StringComparison.Ordinal))return controls.Power(path,request,grant);
   if(path.StartsWith("/api/assets/",StringComparison.Ordinal)){if(!grant.Active||locked())return CompanionReply.Json(423,new{error="locked"});string id=path.Substring(12);byte[] bytes;var snapshot=assetSnapshot;if(grant.apps&&snapshot.icons.TryGetValue(id,out bytes))return CompanionReply.Asset(bytes,"image/png");if(grant.music&&id==snapshot.coverId&&snapshot.cover!=null)return CompanionReply.Asset(snapshot.cover,"image/jpeg");return CompanionReply.Json(404,new{error="not_found"});}
   lock(gate){
-  if(!grant.Active||locked())return CompanionReply.Json(423,new{error="locked",message="电脑已锁定，请解锁后重连。"});
+  if(disposed||!grant.Active||locked())return CompanionReply.Json(423,new{error="locked",message="电脑已锁定，请解锁后重连。"});
   try {
    if(path=="/api/state")return CompanionReply.Json(200,State(grant));
    if(path=="/api/apps"){if(!grant.apps)throw new UnauthorizedAccessException();return CompanionReply.Json(200,Apps());}
@@ -79,7 +84,7 @@ internal sealed class CompanionBridge {
   object music=new{available=false};if(grant.music){var state=Map(Desktop(grant,()=>lyrics.CompanionSnapshot(DateTime.UtcNow)));state["cover"]=Cover(state);music=state;}
   var focus=Value(widgets,"focus") as Dictionary<string,object>;if(focus==null||!Object.Equals(Value(focus,"available"),true)||!FocusAvailable())focus=new Dictionary<string,object>{{"available",false},{"reason",focus==null||Text(focus,"reason")==""?"专注采集尚未运行，请在电脑端重新开启伴随屏。":Text(focus,"reason")}};
   return new{protocol=1,serverTime=Now(),locked=false,theme=Value(settings,"theme"),settings=settings,lyricsSettings=grant.music?ReadContent(()=>lyricsStyle.Read(grant.control)):new{available=false},permissions=new{apps=grant.apps,tasks=grant.tasks,notes=grant.notes,music=grant.music,control=grant.control,pointer=grant.pointer,power=grant.power,screen=grant.screen,keyboard=grant.keyboard,audio=grant.audio},controls=controls.Snapshot(grant),
-   weather=Section(widgets,"weather","widget-Weather.json",true,"temp","feelsLike","code","high","low","sunrise","sunset","location","source","kind","stale","reason","updatedAt","fetchedAt","timezone","utcOffsetSeconds"),system=Section(widgets,"system","widget-System.json",false,"cpu","ram","down","up"),volume=Section(widgets,"volume","widget-Music.json",false,"value"),music=music,
+   weather=Section(widgets,"weather","widget-Weather.json",true,"temp","feelsLike","code","high","low","sunrise","sunset","location","source","kind","stale","reason","updatedAt","fetchedAt","timezone","utcOffsetSeconds"),system=Section(widgets,"system","widget-System.json",false,"cpu","ram","down","up"),volume=Section(widgets,"volume","widget-Music.json",false,"value"),audioOutput=grant.control?Pick(Map(Value(widgets,"audioOutput")),"available","muted","name","value","reason"):new{available=false},brightness=grant.control?Pick(Map(Value(widgets,"brightness")),"available","busy","value","targetId","reason","displays"):new{available=false},music=music,
    disk=Pick(Map(Value(widgets,"disk")),"available","free","total","usedPercent","updatedAt","reason"),context=grant.control?context.Snapshot():new{available=false},focus=focus,tasks=grant.tasks?ReadContent(content.ReadTasks):new{available=false},notes=grant.notes?ReadContent(content.ReadNotes):new{available=false}};
  }
  object Apps(){
@@ -109,6 +114,11 @@ internal sealed class CompanionBridge {
   }
   if(name=="media.previous"||name=="media.toggle"||name=="media.next"){if(!grant.music)throw new UnauthorizedAccessException();return Desktop(grant,()=>{TopIsland.Media(name=="media.previous"?(byte)0xB1:name=="media.next"?(byte)0xB0:(byte)0xB3,root);return new{message="已提交媒体控制，请以播放器读回状态为准。"};});}
   if(!grant.control)throw new UnauthorizedAccessException();if(name=="context.execute")return Desktop(grant,()=>context.Execute(Text(request,"contextId"),Text(request,"command")));if(name=="desktop.execute")return Desktop(grant,()=>context.ExecuteGlobal(Text(request,"contextId"),Text(request,"command")));
+  if(name=="brightness.target"||name=="brightness.set"){
+   string target=Text(request,"targetId");if(String.IsNullOrEmpty(target)||target.Length>512)throw new ArgumentException();object raw=Value(request,"value");if(name=="brightness.set"&&(!(raw is int)||(int)raw<0||(int)raw>100))throw new ArgumentException();
+   string brightnessCommand=name=="brightness.target"?"brightness-target:"+Uri.EscapeDataString(target):"brightness-set:"+(int)raw+":"+Uri.EscapeDataString(target);
+   return Desktop(grant,()=>{shared.Widgets.Action(brightnessCommand,()=>grant.Active&&grant.control&&!locked());shared.Invalidate();return new{message="已提交目标屏幕亮度请求，请以硬件读回值为准。"};});
+  }
   if(name=="volume.set"){object raw=Value(request,"value");if(!(raw is int)||(int)raw<0||(int)raw>100)throw new ArgumentException();return Desktop(grant,()=>{var current=Map(shared.ReadWidgets());var statuses=Value(current,"sourceStatus") as Dictionary<string,object>;var audio=statuses==null?null:Value(statuses,"volume") as Dictionary<string,object>;if(Value(current,"volume")==null||audio!=null&&!Object.Equals(Value(audio,"available"),true))throw new InvalidOperationException();shared.Widgets.Action("volume-set:"+((int)raw).ToString(System.Globalization.CultureInfo.InvariantCulture));shared.Invalidate();return new{message="已提交音量，请以最新读回状态为准。"};});}string command;
   switch(name){case "volume.up":command="volume-up";break;case "volume.down":command="volume-down";break;case "volume.mute":command="mute";break;case "focus.toggle":command="focus-toggle";break;case "focus.reset":command="focus-reset";break;case "focus.25":command="focus-25";break;case "focus.5":command="focus-5";break;default:throw new ArgumentException();}
   var widgets=Map(shared.ReadWidgets());if(name.StartsWith("focus.",StringComparison.Ordinal)){var focus=Value(widgets,"focus") as Dictionary<string,object>;if(focus==null||!Object.Equals(Value(focus,"available"),true)||!FocusAvailable())throw new InvalidOperationException();}else if(name!="volume.mute"&&Value(widgets,"volume")==null)throw new InvalidOperationException();
@@ -119,7 +129,7 @@ internal sealed class CompanionBridge {
 internal static class CompanionAppLaunch {
  public static void Open(AppLibraryEntry entry){
   if(entry==null||!entry.exists||entry.kind=="action")throw new ArgumentException();
-  if(entry.kind=="uwp"){if(entry.path==null||!entry.path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)||entry.path.Length<=17||entry.path.IndexOfAny(new[]{'"','\r','\n','\0'})>=0)throw new ArgumentException();DockBackend.OpenApplication(entry.path,"",entry.name);}
-  else {if(!File.Exists(entry.path)&&!Directory.Exists(entry.path))throw new FileNotFoundException();DockBackend.OpenApplication(entry.path,entry.arguments??"",entry.name);}
+  if(entry.kind=="uwp"){if(entry.path==null||!entry.path.StartsWith("shell:AppsFolder\\",StringComparison.OrdinalIgnoreCase)||entry.path.Length<=17||entry.path.IndexOfAny(new[]{'"','\r','\n','\0'})>=0)throw new ArgumentException();DockBackend.OpenApplication(entry.path,"",entry.name,entry.icon);}
+  else {if(!File.Exists(entry.path)&&!Directory.Exists(entry.path))throw new FileNotFoundException();DockBackend.OpenApplication(entry.path,entry.arguments??"",entry.name,entry.icon);}
  }
 }

@@ -1,9 +1,11 @@
 param([string]$AppAssembly=(Join-Path $PSScriptRoot '../artifacts/tests/runtime-host/RuntimeCompile.dll'))
 $ErrorActionPreference='Stop'
+$script:desktopFixtureRoot=$PSScriptRoot
 $passed=0
 function Check([string]$Name,[bool]$Condition){if(!$Condition){throw "FAIL: $Name"};$script:passed++;"PASS: $Name"}
 $assembly=[Reflection.Assembly]::LoadFrom([IO.Path]::GetFullPath($AppAssembly))
-$displayReady=$assembly.GetType('DesktopStartupReadiness',$true).GetMethod('DisplayReady')
+$readinessType=$assembly.GetType('DesktopStartupReadiness',$true)
+$displayReady=$readinessType.GetMethod('DisplayReady')
 function Display-Ready([bool[]]$Values){return [bool]$displayReady.Invoke($null,[object[]]$Values)}
 $allReady=[bool[]]@($true,$true,$true,$true,$true,$true,$true,$true,$true,$true)
 Check 'Enabled display waits for all components' (Display-Ready $allReady)
@@ -19,15 +21,25 @@ $secondaryMissing=[bool[]]$allReady.Clone();$secondaryMissing[1]=$false
 Check 'Missing enabled secondary prevents aggregate readiness' (!((Display-Ready $primaryDisabled) -and (Display-Ready $secondaryMissing)))
 Check 'Enabled display still requires its renderer with all features disabled' (!(Display-Ready ([bool[]]@($true,$false,$false,$false,$false,$false,$false,$false,$false,$false))))
 Check 'All features disabled accepts painted renderer' (Display-Ready ([bool[]]@($true,$true,$false,$false,$false,$false,$false,$false,$false,$false)))
+$publishDue=$readinessType.GetMethod('PublishDue')
+Check 'Startup readiness refresh is throttled until 250 ms' (!$publishDue.Invoke($null,@($false,$false,[TimeSpan]::FromMilliseconds(249))))
+Check 'Startup readiness can publish before the two-second heartbeat' ($publishDue.Invoke($null,@($false,$false,[TimeSpan]::FromMilliseconds(250))))
+Check 'Once initial readiness has published, stable state only uses the heartbeat' (!$publishDue.Invoke($null,@($true,$false,[TimeSpan]::FromMilliseconds(250))) -and $publishDue.Invoke($null,@($true,$true,[TimeSpan]::Zero)))
+
+$handoff=$readinessType.GetMethod('CanHandoff')
+Check 'Ready host windows cannot reveal a desktop with unready widgets' (!$handoff.Invoke($null,@($true,$false,$true)))
+Check 'Enabled Stage gets its first configuration pass before handoff' (!$handoff.Invoke($null,@($true,$true,$false)))
+Check 'The configured usable desktop can hand off immediately' ($handoff.Invoke($null,@($true,$true,$true)))
 
 # Load only pure checks and the cleanup function; never execute desktop mode actions.
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'runtime/DesktopMode.ps1'),[ref]$tokens,[ref]$parseErrors)
 Check 'DesktopMode parses' ($parseErrors.Count -eq 0)
-foreach($name in @('Test-StartupReadiness','Stop-PrismGlassSkins')){
+if(!('StartupRainmeterProbe' -as [type])){Add-Type 'public static class StartupRainmeterProbe { public static System.IntPtr Find(string executable){return new System.IntPtr(1);} public static bool SkinOpen(string file){return false;} }'}
+foreach($name in @('Test-StartupSnapshot','Test-StartupReadiness','Test-StartupPanelProgress','Stop-PrismGlassSkins')){
  $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
  if(!$function){throw "Missing function: $name"}
- Invoke-Expression $function.Extent.Text
+ Invoke-Expression ($function.Extent.Text.Replace('[RainmeterCommands]','[StartupRainmeterProbe]').Replace('$PSScriptRoot','$script:desktopFixtureRoot'))
 }
 $now=[datetime]::UtcNow;$started=$now.AddSeconds(-20);$written=$now.AddSeconds(-1)
 $state=[pscustomobject]@{version=1;pid=12345;ready=$true}
@@ -38,6 +50,12 @@ Check 'Stalled renderer cannot commit Beauty' (!(Test-StartupReadiness $state 12
 Check 'Future timestamp cannot commit Beauty' (!(Test-StartupReadiness $state 12345 $started $now.AddSeconds(1) $now))
 $state.ready=$false
 Check 'Incomplete components keep ordinary desktop' (!(Test-StartupReadiness $state 12345 $started $written $now))
+Check 'A fresh incomplete snapshot can report startup progress' (Test-StartupSnapshot $state 12345 $started $written $now)
+Check 'A different renderer cannot report startup progress' (!(Test-StartupSnapshot $state 67890 $started $written $now))
+$state | Add-Member -NotePropertyName monitors -NotePropertyValue @([pscustomobject]@{enabled=$false;rendererReady=$true;leftReady=$true},[pscustomobject]@{enabled=$true;leftReady='true';topReady=$false})
+Check 'A disabled display and a string flag cannot advance startup' (!(Test-StartupPanelProgress $state))
+$state.monitors[1].topReady=$true
+Check 'A painted component on another display is real progress' (Test-StartupPanelProgress $state)
 $state.ready='true'
 Check 'Invalid readiness type cannot commit Beauty' (!(Test-StartupReadiness $state 12345 $started $written $now))
 $state.ready=$true;$state.version=2
@@ -46,12 +64,12 @@ Check 'Unknown readiness schema cannot commit Beauty' (!(Test-StartupReadiness $
 # Mock process, skin directory and Rainmeter commands so failure/exit cleanup is inert.
 & {
  $script:stoppedSkins=[Collections.Generic.List[string]]::new()
- function Get-Process {param($Name,$ErrorAction) return [pscustomobject]@{Name='Rainmeter'}}
+ $script:rainmeterCommandFailure=$null
  function Test-Path {param($LiteralPath) return $true}
- function Get-ChildItem {param($LiteralPath,[switch]$Directory,$Filter) foreach($name in @('Dock-monitor-2','Dock-monitor-3','Dock-monitor-unsafe')){[pscustomobject]@{Name=$name;FullName=(Join-Path $PSScriptRoot $name)}}}
+ function Get-ChildItem {param($LiteralPath,[switch]$Directory,$Filter) foreach($name in @('Dock-monitor-2','Dock-monitor-3','Dock-monitor-unsafe')){[pscustomobject]@{Name=$name;FullName=(Join-Path $script:desktopFixtureRoot $name)}}}
  function Get-Content {param($LiteralPath,$TotalCount) if($LiteralPath -match 'Dock-monitor-3'){return '; user skin'};return '; PrismGlass generated monitor instance'}
- function Invoke-TestRainmeter {param($Command,$Config) if($Command -ne '!DeactivateConfig'){throw 'Unexpected Rainmeter command'};$script:stoppedSkins.Add($Config)}
- Stop-PrismGlassSkins 'Invoke-TestRainmeter'
+ function Invoke-PrismGlassRainmeter {param($Executable,$Command) if($Command -notmatch '^!DeactivateConfig "([^"]+)"$'){throw 'Unexpected Rainmeter command'};$script:stoppedSkins.Add($Matches[1])}
+ Stop-PrismGlassSkins 'fixture.exe'
  Check 'Recovery deactivates all six original skins including Topbar' ((@('Dock','Focus','Music','System','Weather','Topbar') | Where-Object {-not $script:stoppedSkins.Contains('PrismGlass\'+$_)}).Count -eq 0)
  Check 'Recovery deactivates marked secondary Dock' ($script:stoppedSkins.Contains('PrismGlass\Dock-monitor-2'))
  Check 'Recovery preserves unmarked same-name skin' (!$script:stoppedSkins.Contains('PrismGlass\Dock-monitor-3'))

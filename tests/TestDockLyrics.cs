@@ -136,6 +136,10 @@ internal static class TestDockLyrics {
    Step(service,s);service.CompanionActive=false;Step(service,s);
    companion=json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)));
    Check(!(bool)companion["available"]&&!Showing()&&http.calls==0,"closing companion restores the disabled media source without network calls");
+   service.CompanionActive=true;Step(service,s);service.CompanionActive=false;service.StopSampling();
+   Check(!(bool)json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)))["available"],"detached companion stop immediately drops sampled media");
+   service.CompanionActive=true;Step(service,s);
+   Check((bool)json.Deserialize<Dictionary<string,object>>(json.Serialize(service.CompanionSnapshot(now)))["available"],"media sampling can resume when the companion is enabled again");
   }
   http=new FakeHttp();
   using(var service=new DockLyrics(root,http,false)){

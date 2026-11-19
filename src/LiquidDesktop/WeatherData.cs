@@ -13,13 +13,12 @@ internal sealed class WeatherData {
  const int Limit=65536;
  static readonly object instancesGate=new object();
  static readonly Dictionary<string,WeatherData> instances=new Dictionary<string,WeatherData>(StringComparer.OrdinalIgnoreCase);
- static readonly HttpClient client=CreateClient();
+ static readonly HttpClient client=WeatherLocation.CreateClient(Limit);
  readonly object gate=new object();readonly string root;readonly Func<string> collectorFile;readonly Func<string,Task<string>> fetch;readonly Func<DateTime> clock;
  WeatherPlace place;string placeKey="",failure="";Dictionary<string,object> sample;DateTime locationAt=DateTime.MinValue,locationWrite=DateTime.MinValue,nextAttempt=DateTime.MinValue;Task pending;
  public static WeatherData ForRoot(string root,Func<string> collectorFile){string full=Path.GetFullPath(root),volume=Path.GetPathRoot(full);root=full.TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);if(root.Length<volume.Length)root=volume;lock(instancesGate){WeatherData value;if(!instances.TryGetValue(root,out value))instances[root]=value=new WeatherData(root,collectorFile,Fetch,()=>DateTime.UtcNow);return value;}}
  internal WeatherData(string root,Func<string> collectorFile,Func<string,Task<string>> fetch,Func<DateTime> clock){this.root=root;this.collectorFile=collectorFile;this.fetch=fetch;this.clock=clock;}
- static HttpClient CreateClient(){var value=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false,SslProtocols=System.Security.Authentication.SslProtocols.Tls12});value.Timeout=TimeSpan.FromSeconds(8);value.MaxResponseContentBufferSize=Limit;return value;}
- internal static async Task<string> Fetch(string url){using(var response=await client.GetAsync(url,HttpCompletionOption.ResponseContentRead).ConfigureAwait(false)){response.EnsureSuccessStatusCode();return await response.Content.ReadAsStringAsync().ConfigureAwait(false);}}
+ internal static Task<string> Fetch(string url){return WeatherLocation.GetString(client,url,Limit,System.Threading.CancellationToken.None);}
  static long Milliseconds(DateTime value){return (long)(value.ToUniversalTime()-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalMilliseconds;}
  static string Key(WeatherPlace value){return value.latitude.ToString("R",CultureInfo.InvariantCulture)+"\n"+value.longitude.ToString("R",CultureInfo.InvariantCulture)+"\n"+value.name;}
  internal static string Url(WeatherPlace value,bool cma){return "https://api.open-meteo.com/v1/forecast?latitude="+value.latitude.ToString("R",CultureInfo.InvariantCulture)+"&longitude="+value.longitude.ToString("R",CultureInfo.InvariantCulture)+"&current=temperature_2m,apparent_temperature,weather_code&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=1&timeformat=unixtime"+(cma?"&models=cma_grapes_global":"");}
@@ -46,12 +45,13 @@ internal sealed class WeatherData {
    if(place!=null&&(pending==null||pending.IsCompleted)&&now>=nextAttempt){WeatherPlace requested=place;string key=placeKey;nextAttempt=now.AddMinutes(15);pending=Task.Run(()=>Refresh(requested,key));}
    var result=sample==null?new Dictionary<string,object>{{"temp",null},{"code",null},{"high",null},{"low",null},{"feelsLike",null},{"updatedAt",0L},{"fetchedAt",0L},{"source",""},{"kind","model"}}:new Dictionary<string,object>(sample);
    long stamp=Convert.ToInt64(result["updatedAt"]);double age=Milliseconds(now)-stamp;bool available=sample!=null&&age>=-60000&&age<=7200000;bool stale=sample!=null&&(failure.Length>0||age>1800000);
-   result["ready"]=available;result["stale"]=stale;result["location"]=place==null?"":place.name;result["reason"]=failure.Length>0?failure:place==null?"请在设置中选择天气城市。":sample==null?"正在获取天气…":!available?"天气数据已过期，正在等待更新。":stale?"显示上次天气，正在等待更新。":Convert.ToString(result["reason"]);return result;
+   result["ready"]=available;result["stale"]=stale;result["location"]=place==null?"":place.name;result["reason"]=failure.Length>0?failure+(place==null?"":(available?" 当前显示上次更新。":"")+(pending!=null&&!pending.IsCompleted?" 正在重新获取。":" 将在一分钟内自动重试。")):place==null?"请在设置中选择天气城市。":sample==null?"正在获取天气…":!available?"天气数据已过期，正在等待更新。":stale?"显示上次天气，正在等待更新。":Convert.ToString(result["reason"]);return result;
   }}
  internal Task Pending {get{lock(gate)return pending??Task.FromResult(0);}}
- async Task Refresh(WeatherPlace requested,string key){Dictionary<string,object> next=null;string body="",error="";bool cma=true;DateTime fetched=clock();
-  try{body=await fetch(Url(requested,true)).ConfigureAwait(false);fetched=clock();next=Parse(body,requested,fetched,true);}catch{cma=false;}
-  if(next==null)try{body=await fetch(Url(requested,false)).ConfigureAwait(false);fetched=clock();next=Parse(body,requested,fetched,false);next["reason"]="CMA 数据暂不可用，已切换到 Open-Meteo 综合预报。";}catch{error="天气更新失败，请检查网络；已有天气会保留并标记为上次数据。";}
+ async Task Refresh(WeatherPlace requested,string key){Dictionary<string,object> next=null;string body="",error="";bool cma=true,retry=false;DateTime fetched=clock();
+  try{body=await fetch(Url(requested,true)).ConfigureAwait(false);fetched=clock();next=Parse(body,requested,fetched,true);}catch(Exception ex){cma=false;retry=WeatherLocation.RetryModel(ex);error="天气更新失败："+WeatherLocation.Failure(ex);}
+  // A different model on the same host cannot repair DNS, TLS or proxy failures.
+  if(next==null&&retry)try{body=await fetch(Url(requested,false)).ConfigureAwait(false);fetched=clock();next=Parse(body,requested,fetched,false);next["reason"]="CMA 数据暂不可用，已切换到 Open-Meteo 综合预报。";error="";}catch(Exception ex){error="天气更新失败："+WeatherLocation.Failure(ex);}
   lock(gate){if(key!=placeKey)return;failure=error;nextAttempt=clock().AddSeconds(next==null?60:900);if(next==null)return;sample=next;try{DesktopSettingsFiles.Write(Path.Combine(root,"weather-cache.json"),new JavaScriptSerializer{MaxJsonLength=Limit*2}.Serialize(new{locationKey=key,fetchedAt=Milliseconds(fetched),cma=cma,body=body}));}catch{}}
  }
 }

@@ -1,0 +1,85 @@
+<!doctype html><meta charset="utf-8"><title>PrismGlass capsule optical check</title>
+<canvas id="glass"></canvas><pre id="result">pending</pre>
+<script src="../src/LiquidDesktop/glass-materials.js"></script><script src="../src/LiquidDesktop/glass-renderer.js"></script><script>
+'use strict';
+(async()=>{
+ const canvas=document.querySelector('canvas'),out=document.querySelector('pre');
+ const gl=canvas.getContext('webgl',{alpha:true,premultipliedAlpha:true,antialias:false,preserveDrawingBuffer:true});
+ if(!gl)throw Error('WebGL unavailable');
+ const shape=window.PrismCapsule,NativeImage=window.Image,bg=document.createElement('canvas');bg.width=bg.height=2;
+ const context=bg.getContext('2d');let receive,outline,resolve,errors=[],raf=[],time=0;
+ window.Image=class extends NativeImage {set src(value){super.src=bg.toDataURL();}};
+ window.requestAnimationFrame=cb=>{raf.push(cb);return raf.length;};
+ function step(n=1){while(n--){time+=16;let now=raf;raf=[];now.forEach(cb=>cb(time));}}
+ const events={},ack=[];window.chrome=window.chrome||{};window.chrome.webview={addEventListener:(k,f)=>events[k]=f,postMessage:m=>ack.push(m),releaseBuffer:()=>{}};
+ const loaded=new Promise(r=>resolve=r);
+ window.PrismGlassRenderer(canvas,m=>{if(m.startsWith('wallpaper-loaded:'))resolve();if(m.startsWith('widget-shapes:'))outline=JSON.parse(m.slice(14))[0];if(m.startsWith('error:'))errors.push(m);},fn=>receive=fn);
+ await loaded;
+ const metrics=[],nativeCases=[];
+ const check=(v,m)=>{if(!v)throw Error(m);};
+ function frame(){const p=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,p);return p;}
+ function pixel(p,x,y){return ((canvas.height-1-y)*canvas.width+x)*4;}
+ for(const scale of [1,1.25,1.5,2]){
+  const w=Math.round(176*scale),h=Math.round(42*scale),r=h/2,c={name:'TopIsland',continuous:true,fixedShape:true,x:4,y:4,w,h,r};
+  receive({type:'layout',width:w+8,height:h+8,cards:[c],theme:'Sky',paused:false});step(4);
+  const img=frame(),bx=w/2-2,by=h/2-2;let rasterError=0,nativeError=0,insetError=0;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+   const dist=shape.distance(x+.5-w/2,y+.5-h/2,bx,by,r);
+   if((img[pixel(img,x+4,y+4)+3]>=128)!==(dist<=0))rasterError=Math.max(rasterError,Math.abs(dist));
+  }
+  for(const [x,y] of outline){const dx=Math.round(x*4)/4-4-w/2,dy=Math.round(y*4)/4-4-h/2;nativeError=Math.max(nativeError,Math.abs(shape.distance(dx,dy,bx,by,r)));}
+  for(const inset of [scale,4*scale,8*scale])for(const [x,y] of shape.points(w,h,r,inset))insetError=Math.max(insetError,Math.abs(shape.distance(x-w/2,y-h/2,bx,by,r)+inset));
+  check(rasterError<.15&&nativeError<.18&&insetError<.00001,'contour mismatch '+JSON.stringify({scale,rasterError,nativeError,insetError}));
+  check(!shape.points(32,12,6,6).length,'degenerate inset');
+  const rows=[];
+  for(let y=0;y<canvas.height;y++){let left=canvas.width,right=-1;for(let x=0;x<canvas.width;x++)if(img[pixel(img,x,y)+3]>=128){left=Math.min(left,x);right=x;}rows.push([left,right]);}
+  nativeCases.push({w:canvas.width,h:canvas.height,outline,rows});metrics.push({scale,rasterError,nativeError,insetError});
+ }
+ const edge=[];
+ for(const color of ['#232936','#e6e8ec']){
+  context.fillStyle=color;context.fillRect(0,0,2,2);const wait=new Promise(r=>resolve=r);receive({type:'wallpaper',version:color});await wait;
+  const w=440,h=78,c={name:'TopIsland',continuous:true,fixedShape:true,x:4,y:4,w,h,r:h/2};
+  const layout={type:'layout',width:w+8,height:h+8,cards:[c],theme:'Sky',paused:false};
+  receive(layout);receive({type:'pointer',x:-1,y:-1});step(120);const idle=frame();
+  function delta(p,x,y){const i=pixel(p,x,y);return Math.max(...[0,1,2].map(k=>Math.abs(p[i+k]-idle[i+k])));}
+  receive({type:'pointer',x:110,y:12});step(75);const left=frame();
+  receive({type:'pointer',x:335,y:12});step(75);const right=frame();
+  receive({type:'pointer',x:-10,y:-10});step(120);const exit=frame();
+  receive({type:'pointer',x:110,y:12});step(75);const again=frame();
+  receive({...layout,paused:true});step(120);const reduced=frame();
+  const a=delta(left,110,7),b=delta(right,335,7),far=delta(left,335,7),off=delta(exit,110,7),reentry=delta(again,110,7),quiet=delta(reduced,110,7);
+  check(a>8&&b>8&&far<a&&off<3&&reentry>8&&quiet<3,'edge '+JSON.stringify({color,a,b,far,off,reentry,quiet}));edge.push({color,a,b,far,off,reentry,quiet});
+ }
+ const pref=detail=>window.dispatchEvent(new CustomEvent('prism-preferences',{detail}));
+ const host=data=>events.message({data});
+ receive({type:'layout',width:320,height:180,cards:[],theme:'Sky',paused:false});pref({liveGlassBackground:true});
+ host({type:'optical-layout',active:true,width:320,height:180,sources:[{id:'fake',x:0,y:0,w:320,h:180}]});
+ const image=gl.texImage2D.bind(gl),sub=gl.texSubImage2D.bind(gl);let initialUploads=0,updates=0;
+ gl.texImage2D=(...args)=>{if(args.at(-1) instanceof Uint8Array)initialUploads++;return image(...args);};
+ gl.texSubImage2D=(...args)=>{updates++;return sub(...args);};
+ const data={type:'optical-frame',id:'fake',width:320,height:180,serial:1};
+ events.sharedbufferreceived({additionalData:data,getBuffer:()=>new ArrayBuffer(320*180*4)});
+ for(let i=2;i<=33;i++){host({...data,serial:i});step();}
+ gl.finish();const beforeIdle=updates;step(120);
+ const upload={initialUploads,updates,idleUploads:updates-beforeIdle,acknowledgments:ack.filter(m=>m.startsWith('optical-ack:')).length};
+ check(initialUploads===1&&updates===32&&upload.idleUploads===0&&upload.acknowledgments===33,'upload '+JSON.stringify(upload));
+ host({type:'optical-layout',active:false,sources:[]});pref({liveGlassBackground:false});
+ bg.width=320;bg.height=180;const gradient=context.createLinearGradient(0,0,320,180);gradient.addColorStop(0,'#467179');gradient.addColorStop(1,'#ddac85');context.fillStyle=gradient;context.fillRect(0,0,320,180);
+ for(let x=0;x<320;x+=30){context.fillStyle='rgba(26,52,130,.55)';context.fillRect(x,0,7,180);}
+ const complete=new Promise(r=>resolve=r);receive({type:'wallpaper',version:'comparison'});await complete;
+ const style=document.createElement('style');style.textContent='#optical-scene{position:fixed;left:0;top:0;width:320px;height:180px}#comparison-surface{position:fixed;left:26px;top:36px;width:268px;height:108px;border-radius:24px}';document.head.append(style);
+ const surface=document.createElement('div');surface.id='comparison-surface';surface.setAttribute('data-optical','');document.body.append(surface);
+ await new Promise((ok,bad)=>{let script=document.createElement('script');script.src='../src/LiquidDesktop/companion-web/companion-glass.js';script.onload=ok;script.onerror=bad;document.body.append(script);});
+ const companion=window.PrismGlassOptics;companion.setActive(true);step(2);await new Promise(r=>setTimeout(r,60));step(4);
+ const contact=document.createElement('canvas');contact.width=640;contact.height=400;const ctx=contact.getContext('2d');ctx.fillStyle='#13191e';ctx.fillRect(0,0,640,400);
+ const samples=[];
+ for(const [row,id] of ['G','J'].entries()){
+  pref({glassStyle:id});receive({type:'layout',width:320,height:180,cards:[{name:'test',fixedShape:true,x:26,y:36,w:268,h:108,r:24}],theme:'Sky',paused:false});step(4);
+  companion.setStyle(id,{},[],100);companion.invalidate();step(4);const info=companion.inspect();check(info.regions===1&&info.fallback==='','companion '+JSON.stringify(info));
+  ctx.drawImage(bg,0,row*200);ctx.drawImage(canvas,0,row*200,320,180);ctx.drawImage(document.querySelector('#optical-scene'),320,row*200,320,180);
+  ctx.fillStyle='white';ctx.font='14px sans-serif';ctx.fillText('Desktop / '+id,10,row*200+196);ctx.fillText('Companion / '+id,330,row*200+196);
+  samples.push({id,desktop:[...ctx.getImageData(160,row*200+90,1,1).data],companion:[...ctx.getImageData(480,row*200+90,1,1).data]});
+ }
+ check(!errors.length,errors.join());out.textContent='PASS '+JSON.stringify({metrics,edge,nativeCases,upload,samples,comparison:contact.toDataURL('image/png').split(',')[1],renderer:gl.getParameter(gl.RENDERER)});
+})().catch(e=>document.querySelector('pre').textContent='FAIL '+e.stack);
+</script>

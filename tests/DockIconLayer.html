@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Dock 图标显示层对照</title>
+<style>
+html,body { margin:0; background:#22314b; }
+main { position:relative; height:96px; background:linear-gradient(#526887,#384862); border-radius:28px }
+img { position:absolute; left:0; top:0; width:256px; height:256px; transform-origin:0 0; pointer-events:none; }
+</style>
+<main aria-label="Dock 图标显示层"></main>
+<script>
+// The native fixture supplies only the geometry a replacement display layer needs.
+async function compare(trace, artwork) {
+ const rail=document.querySelector('main');
+ rail.style.width=trace.width+'px';
+ const icons=trace.frames[0].map((box,i)=>{
+  const icon=new Image();icon.src=artwork[i%artwork.length];icon.alt='';rail.append(icon);return icon;
+ });
+ await Promise.all(icons.map(icon=>icon.decode()));
+ const deltas=[],submissions=[];
+ let last, writes=0, maxError=0;
+ for(const frame of trace.frames){
+  const tick=await new Promise(requestAnimationFrame);
+  if(last!==undefined)deltas.push(tick-last);
+  last=tick;
+  const start=performance.now();
+  frame.forEach(([x,y,size],i)=>{
+   const transform='translate('+x+'px,'+y+'px) scale('+(size/256)+')';
+   if(icons[i].dataset.transform===transform)return;
+   icons[i].style.transform=transform;icons[i].dataset.transform=transform;writes++;
+  });
+  submissions.push(performance.now()-start);
+  frame.forEach(([x,y,size],i)=>{
+   const rect=icons[i].getBoundingClientRect();
+   maxError=Math.max(maxError,Math.abs(rect.x-x),Math.abs(rect.y-y),Math.abs(rect.width-size),Math.abs(rect.bottom-84));
+  });
+ }
+ function distribution(values){
+  values.sort((a,b)=>a-b);
+  return Object.fromEntries([50,95,99].map(p=>['p'+p,values[Math.ceil(values.length*p/100)-1]]));
+ }
+ const peak=trace.frames[34].map(box=>box[2]), rest=trace.frames.at(-1).map(box=>box[2]);
+ const result={frames:trace.frames.length,slots:icons.length,meterUpdates:trace.meterUpdates,transformWrites:writes,
+  maxGeometryErrorPx:maxError,peak,rest,styleSubmissionMs:distribution(submissions),rafIntervalMs:distribution(deltas)};
+ if(maxError>.01||peak.filter((v,i)=>v>rest[i]).length!==5||peak[3]!==peak[5]||peak[2]!==peak[6]||!rest.every(v=>v===48))
+  throw new Error('显示层几何未通过 '+JSON.stringify(result));
+ return result;
+}
+</script></html>

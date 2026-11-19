@@ -15,9 +15,10 @@
   var gl = null, sourceProgram = null, glassProgram = null, quad = null, sceneTexture = null, sourceTexture = null, framebuffer = null;
   var active = false, destroyed = false, lost = false, failed = false, initialized = false, raf = 0, lastFrame = -Infinity, frameTime = 0;
   var image = null, sourceReady = testGrid, sourceUploaded = false, width = 0, height = 0, scale = 1, sceneWidth = 0, sceneHeight = 0, dirty = true, regions = [];
-  var pointer = { x: -9999, y: -9999, down: false }, quality = 1, slowFrames = 0, generation = 0, sceneTheme = -1, interactiveUntil = 0, material = null, materialSignature = '';
+  var pointer = { x: -9999, y: -9999, down: false, changedAt: -Infinity }, quality = 1, slowFrames = 0, generation = 0, sceneTheme = -1, material = null, materialSignature = '', glassOpacity = 1;
   var reduced = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  var stats = { frames: 0, regions: 0, scenePasses: 0, contextCreations: 0, fallback: 'inactive', width: 0, height: 0, sceneWidth: 0, sceneHeight: 0, maxRegions: 3, maxFps: 60, targetFps: 60 };
+  var surfaceSelector = '[data-optical],.glass,.companion-widget', observedSurfaces = [];
+  var stats = { frames: 0, regions: 0, regionIds: [], nestedRegions: 0, scenePasses: 0, contextCreations: 0, fallback: 'inactive', width: 0, height: 0, sceneWidth: 0, sceneHeight: 0, targetFps: null, cadence: 'display', presentationMeasured: false };
   var vertex = 'attribute vec2 a; varying vec2 uv; void main(){uv=a*.5+.5;gl_Position=vec4(a,0.,1.);}';
   var sourceFragment = [
     'precision highp float; varying vec2 uv; uniform sampler2D picture;',
@@ -38,14 +39,30 @@
   var glassFragment = [
     'precision highp float; varying vec2 uv; uniform sampler2D scene;',
     'uniform vec2 resolution; uniform vec2 center; uniform vec2 halfSize; uniform vec2 point;',
-    'uniform float radius; uniform float backgroundOnly; uniform float time; uniform float press; uniform float night; uniform float orb;',
+    'uniform float radius; uniform float backgroundOnly; uniform float time; uniform float press; uniform float hover; uniform float night; uniform float orb;',
     'uniform float materialOn; uniform float materialBevel; uniform float materialRefraction; uniform float materialIor; uniform float materialDispersion;',
     'uniform float materialBlur; uniform float materialDiffusion; uniform float materialSaturation; uniform vec4 materialTint;',
     'uniform float materialReflection; uniform float materialHighlight; uniform float materialShadow; uniform float materialGrain;',
     'uniform float materialBrightness; uniform float materialContrast; uniform float materialEdge; uniform float materialPower; uniform float materialGlasswork;',
-    'uniform float materialOpacity; uniform float materialAdaptive; uniform float materialDensity; uniform float materialTintMin; uniform float materialTintMax;',
+    'uniform float materialOpacity; uniform float materialAdaptive; uniform float materialDensity; uniform float materialTintMin; uniform float materialTintMax; uniform float glassOpacity;',
     'float sdf(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}',
     'vec3 sampleSplit(vec2 red,vec2 green,vec2 blue){return vec3(texture2D(scene,clamp(red,vec2(0.),vec2(1.))).r,texture2D(scene,clamp(green,vec2(0.),vec2(1.))).g,texture2D(scene,clamp(blue,vec2(0.),vec2(1.))).b);}',
+    // Same selected-material equations as the desktop renderer; only uniforms
+    // and the fixed companion geometry differ. The catalog already owns defaults.
+    'vec3 materialSample(vec2 at){return texture2D(scene,clamp(at,vec2(0.),vec2(1.))).rgb;}',
+    'vec3 selectedMaterial(vec2 d,vec2 gradient,float depth){',
+    ' bool glasswork=materialGlasswork>.5;float bevel=min(materialBevel,max(2.,min(halfSize.x,halfSize.y)*(glasswork?2./3.5:.76)));',
+    ' float t=clamp(depth/bevel,0.,1.),arc=sqrt(max(1.-(1.-t)*(1.-t),0.)),edge=1.-smoothstep(0.,bevel,depth);',
+    ' vec3 normal=normalize(vec3(-gradient*.74*(1.-t)/max(arc,.17),1.));vec2 axis=vec2(1.,-1.)/resolution;vec2 drift=point*edge*edge*hover*1.4;vec2 red,green,blue;',
+    ' if(glasswork){float amount=materialEdge*bevel*pow(1.-t,materialPower)*materialRefraction*(materialIor-1.)/.46;vec2 inward=-gradient*amount*(1.+hover*.10-press*.12);red=uv+(inward*(1.+materialDispersion)+drift)*axis;green=uv+(inward+drift)*axis;blue=uv+(inward*(1.-materialDispersion)+drift)*axis;}',
+    ' else{float path=bevel*(.72+1.18*arc)*materialRefraction*(1.+hover*.10-press*.12)*materialEdge*pow(max(1.-t,.001),materialPower/2.6-1.);vec3 rayR=refract(vec3(0.,0.,-1.),normal,1./max(1.05,materialIor-materialDispersion));vec3 rayG=refract(vec3(0.,0.,-1.),normal,1./materialIor);vec3 rayB=refract(vec3(0.,0.,-1.),normal,1./(materialIor+materialDispersion));red=uv+(rayR.xy/max(-rayR.z,.3)*path+drift)*axis;green=uv+(rayG.xy/max(-rayG.z,.3)*path+drift)*axis;blue=uv+(rayB.xy/max(-rayB.z,.3)*path+drift)*axis;}',
+    ' vec3 c=sampleSplit(red,green,blue);if(materialBlur>.01&&materialDiffusion>.001){vec2 step=axis*materialBlur;',
+    ' if(glasswork){vec2 x=vec2(step.x,0.),y=vec2(0.,step.y);vec3 soft=c*4.+(sampleSplit(red+x,green+x,blue+x)+sampleSplit(red-x,green-x,blue-x)+sampleSplit(red+y,green+y,blue+y)+sampleSplit(red-y,green-y,blue-y))*2.;c=mix(c,soft/12.,materialDiffusion);}',
+    ' else{step*=mix(1.,.22,edge);vec3 soft=materialSample(green)*4.;soft+=(materialSample(green+vec2(step.x,0.))+materialSample(green-vec2(step.x,0.))+materialSample(green+vec2(0.,step.y))+materialSample(green-vec2(0.,step.y)))*2.;soft+=materialSample(green+step)+materialSample(green-step)+materialSample(green+vec2(step.x,-step.y))+materialSample(green+vec2(-step.x,step.y));c=mix(c,soft/16.,materialDiffusion*mix(1.,.25,edge));}}',
+    ' vec3 luma=vec3(.2126,.7152,.0722);float luminance=dot(c,luma);c=mix(vec3(luminance),c,materialSaturation);c=((c-.5)*materialContrast+.5)*materialBrightness;float tint=materialTint.a;',
+    ' if(materialDensity>.001){float target=.5;if(materialAdaptive>.001){float l=dot(materialSample(uv),luma),a=dot(materialSample(uv+axis*vec2(12.,8.)),luma),b=dot(materialSample(uv-axis*vec2(12.,8.)),luma);float activity=clamp(abs(a-b)*2.4+abs(l-(a+b)*.5)*1.3+(1.-l)*.12,0.,1.);target=mix(.5,activity,materialAdaptive);}tint+=mix(materialTintMin,materialTintMax,target)*materialDensity;}c=mix(c,materialTint.rgb,clamp(tint,0.,1.));',
+    ' float fresnel=.04+.96*pow(1.-normal.z,5.);c=mix(c,materialSample(uv+gradient*axis*bevel*1.6),fresnel*materialReflection*edge);float key=pow(max(dot(gradient,normalize(vec2(-.65,-.85)+point*hover*.16)),0.),3.);float fineRim=exp(-pow((depth-.65)/.65,2.));c+=max(vec3(0.),vec3(1.)-c)*fineRim*materialHighlight*(.15+.85*key);c-=edge*edge*(1.-key)*materialShadow*.11;c*=1.-press*edge*.025;',
+    ' if(materialGrain>.001)c+=(fract(sin(dot(floor(d+center),vec2(127.1,311.7)))*43758.5453)-.5)*materialGrain*(1.-edge*.8);return clamp(c,0.,1.);}',
     'void main(){',
     ' vec3 original=texture2D(scene,uv).rgb; if(backgroundOnly>.5){gl_FragColor=vec4(original,1.);return;}',
     ' vec2 p=vec2(uv.x,1.-uv.y)*resolution; vec2 d=p-center;',
@@ -57,6 +74,7 @@
     ' if(materialGlasswork>.5)bevel=min(materialBevel,min(halfSize.x,halfSize.y)*2./3.5);',
     ' float t=clamp(depth/bevel,0.,1.); float arc=sqrt(max(1.-(1.-t)*(1.-t),0.));',
     ' float slope=.79*(1.-t)/max(arc,.14); vec3 normal=normalize(vec3(-gradient*slope,1.));',
+    ' vec3 c;if(materialOn>.5)c=selectedMaterial(d,gradient,depth);else{',
     ' float path=bevel*(.65+1.2*arc)*mix(1.4,materialRefraction,materialOn)*mix(1.,materialEdge*pow(max(1.-t,.001),materialPower/2.6-1.),materialOn); vec2 axis=vec2(1.,-1.)/resolution;',
     ' vec2 lensCenter=mix(vec2(0.),vec2(-halfSize.x+halfSize.y,0.),orb);',
     ' float lens=orb>.5?exp(-dot(d-lensCenter,d-lensCenter)/max(halfSize.y*halfSize.y*2.,1.)):.5;',
@@ -67,7 +85,7 @@
     ' vec2 bendR=rayR.xy/max(-rayR.z,.25)*path+drift; vec2 bendG=rayG.xy/max(-rayG.z,.25)*path+drift; vec2 bendB=rayB.xy/max(-rayB.z,.25)*path+drift;',
     // Glasswork's powered rim displacement, in the same CSS-pixel coordinates as its refract.js.
     ' if(materialGlasswork>.5){float amount=materialEdge*bevel*pow(1.-t,materialPower)*materialRefraction*(materialIor-1.)/.46;vec2 inward=-gradient*amount;bendR=inward*(1.+materialDispersion);bendG=inward;bendB=inward*(1.-materialDispersion);}',
-    ' vec2 red=uv+bendR*axis,green=uv+bendG*axis,blue=uv+bendB*axis;vec3 c=sampleSplit(red,green,blue);',
+    ' vec2 red=uv+bendR*axis,green=uv+bendG*axis,blue=uv+bendB*axis;c=sampleSplit(red,green,blue);',
     // Five fixed taps share the same registered center; no second scene or animated grain.
     ' if(materialOn>.5 && materialBlur>.01 && materialDiffusion>.001){vec2 q=clamp(green,vec2(0.),vec2(1.));vec2 b=materialBlur/resolution;vec3 soft;',
     ' if(materialGlasswork>.5){vec2 x=vec2(b.x,0.),y=vec2(0.,b.y);soft=(c*4.+(sampleSplit(red+x,green+x,blue+x)+sampleSplit(red-x,green-x,blue-x)+sampleSplit(red+y,green+y,blue+y)+sampleSplit(red-y,green-y,blue-y))*2.)/12.;}',
@@ -85,9 +103,12 @@
     ' float glow=mix(1.,materialHighlight,materialOn); c+=exp(-pow((depth-1.3)/.82,2.))*(.16+key*.78+opposite*.32)*glow;',
     ' c+=exp(-pow((depth-bevel*.68)/2.1,2.))*key*.16*glow;',
     ' c+=specular*rim*vec3(.40,.43,.48)*glow; c-=rim*(1.-key)*mix(.085,materialShadow,materialOn);',
-    ' c+=(fract(sin(dot(floor(p),vec2(127.1,311.7)))*43758.5453)-.5)*materialGrain*materialOn*(1.-edge*.8);',
-    ' float touch=exp(-dot(d-point*halfSize,d-point*halfSize)/max(halfSize.y*halfSize.y*.75,1.)); c+=touch*press*.055;',
-    ' c=mix(original,c,mix(1.,materialOpacity,materialOn));',
+    ' c+=(fract(sin(dot(floor(p),vec2(127.1,311.7)))*43758.5453)-.5)*materialGrain*materialOn*(1.-edge*.8);}',
+    ' vec2 cursorDelta=p-center-point*halfSize;float focus=exp(-dot(cursorDelta,cursorDelta)/4800.);c+=focus*hover*mix(.13,.075,night);',
+    ' float following=exp(-dot(cursorDelta,cursorDelta)/20000.);',
+    ' float flow=.5+.5*sin((d.x+d.y)*.021);vec3 flowColor=mix(mix(vec3(.20,.88,1.),vec3(.80,.43,1.),flow),vec3(1.),night);',
+    ' c+=flowColor*following*hover*(exp(-pow((depth-1.2)/.95,2.))*.65+exp(-depth/4.)*.09);',
+    ' c=mix(original,c,glassOpacity*mix(1.,materialOpacity,materialOn));',
     ' result=mix(original,c,1.-smoothstep(-.75,.75,distance)); }',
     ' gl_FragColor=vec4(result,1.);',
     '}'
@@ -115,18 +136,19 @@
   function location(value, key) { if (!(key in value.uniforms)) value.uniforms[key] = gl.getUniformLocation(value.handle, key); return value.uniforms[key]; }
   function one(value, key, x) { gl.uniform1f(location(value, key), x); }
   function two(value, key, x, y) { gl.uniform2f(location(value, key), x, y); }
-  function setStyle(value, overrides, presets) {
+  function setStyle(value, overrides, presets, opacity) {
     var catalog = window.PrismGlassMaterials, requested = typeof value === 'string' && (/^[A-J]$/.test(value) || /^user-[a-f0-9]{32}$/.test(value)) ? value : '';
     var resolved = catalog && typeof catalog.resolve === 'function' ? catalog.resolve(requested, overrides, presets) : requested && catalog && Object.prototype.hasOwnProperty.call(catalog, requested) ? catalog[requested] : null;
     var key = requested && resolved ? resolved.key || requested : '';
-    var signature = key + ':' + JSON.stringify(resolved);
+    var strength = typeof opacity === 'number' && isFinite(opacity) ? Math.max(.6, Math.min(1, opacity / 100)) : 1;
+    var signature = key + ':' + JSON.stringify(resolved) + ':' + strength;
     if (signature === materialSignature) return;
-    materialSignature = signature; material = resolved && !resolved.legacy ? resolved : null; stats.glassStyle = key; document.body.dataset.glassStyle = key;
+    materialSignature = signature; glassOpacity = strength; material = resolved && !resolved.legacy ? resolved : null; stats.glassStyle = key; stats.glassOpacity = strength; document.body.dataset.glassStyle = key;
     document.body.dataset.materialCustom = material ? 'true' : 'false';
     var style = document.body.style;
     if (material) {
       // CSS fallback uses a quiet midpoint tint; no private DOM pixels or extra images are sampled.
-      var tint = material.tint, opacity = material.opacity == null ? 1 : material.opacity;
+      var tint = material.tint, opacity = glassOpacity * (material.opacity == null ? 1 : material.opacity);
       var tintWeight = Math.min(1, tint[3] + ((material.tintMin || 0) + (material.tintMax || 0)) * .5 * (material.density || 0)) * opacity;
       style.setProperty('--material-tint', 'rgba(' + Math.round(tint[0] * 255) + ',' + Math.round(tint[1] * 255) + ',' + Math.round(tint[2] * 255) + ',' + tintWeight + ')');
       style.setProperty('--material-blur', material.blur * opacity + 'px'); style.setProperty('--material-saturation', String(1 + (material.saturation - 1) * opacity));
@@ -137,6 +159,7 @@
     invalidate();
   }
   function materialUniforms() {
+    one(glassProgram, 'glassOpacity', glassOpacity);
     one(glassProgram, 'materialOn', material ? 1 : 0);
     one(glassProgram, 'materialGlasswork', material && material.model === 'glasswork' ? 1 : 0);
     if (!material) { gl.uniform4f(location(glassProgram, 'materialTint'), 0, 0, 0, 0); one(glassProgram, 'materialGrain', 0); return; }
@@ -185,16 +208,27 @@
   }
   function collectRegions() {
     var bounds = canvas.getBoundingClientRect(), main = document.getElementById('main-content'), mainRect = main ? main.getBoundingClientRect() : null;
-    regions = Array.prototype.slice.call(document.querySelectorAll('[data-optical]')).map(function (node) {
+    var candidates = Array.prototype.slice.call(document.querySelectorAll(surfaceSelector));
+    observedSurfaces.forEach(function (node) { if (candidates.indexOf(node) < 0) { if (resizeObserver) resizeObserver.unobserve(node); node.removeAttribute('data-optical-surface'); } });
+    if (resizeObserver) candidates.forEach(function (node) { if (observedSurfaces.indexOf(node) < 0) resizeObserver.observe(node); });
+    observedSurfaces = candidates;
+    var visible = candidates.map(function (node) {
       if (!node.getClientRects().length) return null;
+      if (document.body.dataset.presentation === 'true' && node.matches('.clock-panel')) return null;
+      // The fullscreen remote-video page owns an opaque video plane above this
+      // shared scene. Keep its controls on their existing CSS/video material.
+      if (document.body.dataset.screenLayout === 'true' && node.closest('#pointer-page')) return null;
       var style = window.getComputedStyle(node); if (style.visibility === 'hidden' || style.display === 'none') return null;
       var rect = node.getBoundingClientRect(), clip = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
       if (main && main.contains(node)) { clip.left = Math.max(clip.left, mainRect.left); clip.top = Math.max(clip.top, mainRect.top); clip.right = Math.min(clip.right, mainRect.right); clip.bottom = Math.min(clip.bottom, mainRect.bottom); }
       var left = Math.max(rect.left - 11, clip.left), top = Math.max(rect.top - 11, clip.top), right = Math.min(rect.right + 11, clip.right), bottom = Math.min(rect.bottom + 11, clip.bottom);
       if (right <= left || bottom <= top || rect.width < 2 || rect.height < 2) return null;
-      return { id: node.id, x: rect.left - bounds.left, y: rect.top - bounds.top, w: rect.width, h: rect.height, radius: Math.min(parseFloat(style.borderTopLeftRadius) || 24, rect.width / 2, rect.height / 2), clip: [left - bounds.left, top - bounds.top, right - bounds.left, bottom - bounds.top], priority: node.id === 'touch-bar' ? 0 : node.id === 'music-card' ? 1 : node.id === 'home-focus' ? 2 : 3 };
-    }).filter(function (region) { return !!region; }).sort(function (a, b) { return a.priority - b.priority; }).slice(0, 3);
-    stats.regions = regions.length; dirty = false;
+      return { node: node, id: node.id || node.className, x: rect.left - bounds.left, y: rect.top - bounds.top, w: rect.width, h: rect.height, radius: Math.min(parseFloat(style.borderTopLeftRadius) || 24, rect.width / 2, rect.height / 2), clip: [left - bounds.left, top - bounds.top, right - bounds.left, bottom - bounds.top], priority: node.id === 'touch-bar' ? 0 : node.id === 'music-card' ? 1 : node.id === 'home-focus' ? 2 : 3 };
+    }).filter(function (region) { return !!region; });
+    regions = visible.filter(function (region) { return !visible.some(function (parent) { return parent !== region && parent.node.contains(region.node) && region.x >= parent.x && region.y >= parent.y && region.x + region.w <= parent.x + parent.w && region.y + region.h <= parent.y + parent.h; }); }).sort(function (a, b) { return a.priority - b.priority; });
+    // A nested card inherits its outer glass instead of painting the same scene twice.
+    candidates.forEach(function (node) { var included = visible.some(function (region) { return region.node === node; }); if (included) { if (node.getAttribute('data-optical-surface') !== 'true') node.setAttribute('data-optical-surface', 'true'); } else if (node.hasAttribute('data-optical-surface')) node.removeAttribute('data-optical-surface'); });
+    stats.regions = regions.length; stats.regionIds = regions.map(function (region) { return region.id; }); stats.nestedRegions = visible.length - regions.length; dirty = false;
   }
   function draw(now) {
     // Restore layout before measuring a canvas hidden by the CSS fallback.
@@ -208,24 +242,26 @@
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height); use(glassProgram); bind(glassProgram, 'scene', sceneTexture); materialUniforms(); two(glassProgram, 'resolution', width, height); one(glassProgram, 'night', night); one(glassProgram, 'time', seconds); one(glassProgram, 'backgroundOnly', 1); gl.drawArrays(gl.TRIANGLES, 0, 6);
     one(glassProgram, 'backgroundOnly', 0); gl.enable(gl.SCISSOR_TEST);
     regions.forEach(function (region) {
-      var cx = region.x + region.w / 2, cy = region.y + region.h / 2, inside = pointer.x >= region.x && pointer.x <= region.x + region.w && pointer.y >= region.y && pointer.y <= region.y + region.h;
-      two(glassProgram, 'center', cx, cy); two(glassProgram, 'halfSize', region.w / 2, region.h / 2); one(glassProgram, 'radius', region.radius); one(glassProgram, 'orb', region.id === 'home-focus' ? 1 : 0); two(glassProgram, 'point', inside ? (pointer.x - cx) / (region.w / 2) : 0, inside ? (pointer.y - cy) / (region.h / 2) : 0); one(glassProgram, 'press', inside && pointer.down ? 1 : 0);
+      var cx = region.x + region.w / 2, cy = region.y + region.h / 2, inside = pointer.x >= Math.max(region.x,region.clip[0]) && pointer.x <= Math.min(region.x + region.w,region.clip[2]) && pointer.y >= Math.max(region.y,region.clip[1]) && pointer.y <= Math.min(region.y + region.h,region.clip[3]);
+      two(glassProgram, 'center', cx, cy); two(glassProgram, 'halfSize', region.w / 2, region.h / 2); one(glassProgram, 'radius', region.radius); one(glassProgram, 'orb', region.id === 'home-focus' ? 1 : 0); two(glassProgram, 'point', inside ? (pointer.x - cx) / (region.w / 2) : 0, inside ? (pointer.y - cy) / (region.h / 2) : 0); one(glassProgram, 'press', inside && pointer.down ? 1 : 0); one(glassProgram, 'hover', inside ? 1 : 0);
       var c = region.clip, left = Math.max(0, Math.floor(c[0] * scale)), top = Math.max(0, Math.floor(c[1] * scale)), right = Math.min(canvas.width, Math.ceil(c[2] * scale)), bottom = Math.min(canvas.height, Math.ceil(c[3] * scale));
       gl.scissor(left, canvas.height - bottom, Math.max(0, right - left), Math.max(0, bottom - top)); gl.drawArrays(gl.TRIANGLES, 0, 6);
     });
     gl.disable(gl.SCISSOR_TEST); stats.frames++; stats.fallback = ''; if (document.body.dataset.optics !== 'ready') document.body.dataset.optics = 'ready';
+    if (window.PrismHint) window.PrismHint.paintOptics(canvas);
   }
   function frame(now) {
     raf = 0; if (!canRun()) { stop('paused'); return; }
     if (!sourceReady) return;
-    var fps = quality > .76 ? 60 : 30; stats.targetFps = fps;
-    if (now - lastFrame >= 1000 / fps - .5) {
-      var start = performance.now(); frameTime += Math.min(100, isFinite(lastFrame) ? now - lastFrame : 0); lastFrame = now;
+    // rAF follows the display's available cadence; only the existing slow-device fallback is capped.
+    var fps = quality > .76 ? 0 : 30; stats.targetFps = fps || null; stats.cadence = fps ? 'limited' : 'display';
+    if (!fps || now - lastFrame >= 1000 / fps - .5) {
+      var frameGap = now - lastFrame, start = performance.now(); frameTime += Math.min(100, isFinite(lastFrame) ? now - lastFrame : 0); lastFrame = now;
       try { draw(now); } catch (error) { failure(error); return; }
-      if (performance.now() - start > 28) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
+      if (performance.now() - start > 28 || (frameGap > 45 && frameGap < 100 && !fps)) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
       if (slowFrames > 12 && quality > .76) { quality = .75; width = 0; dirty = true; }
     }
-    if (regions.length) raf = requestAnimationFrame(frame);
+    if (regions.length && (!material || now - pointer.changedAt < 180 || dirty || lastFrame !== now)) raf = requestAnimationFrame(frame);
   }
   function wake() {
     if (!canRun()) { stop(forcedOff ? 'forced-off' : document.hidden ? 'hidden' : 'inactive-or-reduced'); return; }
@@ -233,9 +269,11 @@
     if (sourceReady && !raf) raf = requestAnimationFrame(frame);
   }
   function invalidate() { dirty = true; wake(); }
-  function onPointer(event) { pointer.x = event.clientX; pointer.y = event.clientY; interactiveUntil = performance.now() + 250; if (event.type === 'pointerdown') pointer.down = true; if (event.type === 'pointerup' || event.type === 'pointercancel') pointer.down = false; wake(); }
-  function visibility() { if (document.hidden) { pointer.down = false; stop('hidden'); } else { lastFrame = -Infinity; invalidate(); } }
-  function pageHide() { pointer.down = false; stop('page-hidden'); }
+  function onPointer(event) { pointer.changedAt = performance.now(); pointer.x = event.clientX; pointer.y = event.clientY; if (event.type === 'pointerdown') pointer.down = true; if (event.type === 'pointerup' || event.type === 'pointercancel') { pointer.down = false; if (event.pointerType === 'touch' || event.type === 'pointercancel') pointer.x = pointer.y = -9999; } wake(); }
+  function clearPointer() { pointer.x = pointer.y = -9999; pointer.down = false; }
+  function leavePointer(event) { if (event.type === 'pointerout' && event.relatedTarget) return; clearPointer(); wake(); }
+  function visibility() { if (document.hidden) { clearPointer(); stop('hidden'); } else { lastFrame = -Infinity; invalidate(); } }
+  function pageHide() { clearPointer(); stop('page-hidden'); }
   function pageShow() { lastFrame = -Infinity; invalidate(); }
   function contextLost(event) { event.preventDefault(); lost = true; initialized = false; sourceUploaded = false; stop('context-lost'); }
   function contextRestored() { lost = false; failed = false; sourceProgram = glassProgram = quad = sceneTexture = sourceTexture = framebuffer = null; initialized = false; sourceUploaded = false; lastFrame = -Infinity; invalidate(); }
@@ -244,19 +282,23 @@
     if (sourceTexture) gl.deleteTexture(sourceTexture); if (sceneTexture) gl.deleteTexture(sceneTexture); if (framebuffer) gl.deleteFramebuffer(framebuffer); if (quad) gl.deleteBuffer(quad); if (sourceProgram) gl.deleteProgram(sourceProgram.handle); if (glassProgram) gl.deleteProgram(glassProgram.handle);
     sourceProgram = glassProgram = quad = sceneTexture = sourceTexture = framebuffer = null; initialized = false;
   }
-  var observer = new MutationObserver(function () { invalidate(); }); observer.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'data-reduced', 'data-page', 'data-music', 'data-presentation'] });
+  var observer = new MutationObserver(function () { invalidate(); }); observer.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'data-reduced', 'data-page', 'data-music', 'data-presentation', 'data-screen-layout'] });
+  function hasSurface(node) { return node.nodeType === 1 && (node.matches(surfaceSelector) || node.querySelector(surfaceSelector)); }
+  var surfacesObserver = new MutationObserver(function (changes) { if (changes.some(function (change) { return change.type === 'attributes' ? hasSurface(change.target) : Array.prototype.some.call(change.addedNodes, hasSurface) || Array.prototype.some.call(change.removedNodes, hasSurface); })) invalidate(); });
+  surfacesObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'class'] });
   var resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(invalidate) : null;
-  if (resizeObserver) { resizeObserver.observe(document.body); Array.prototype.forEach.call(document.querySelectorAll('[data-optical]'), function (node) { resizeObserver.observe(node); }); }
+  if (resizeObserver) resizeObserver.observe(document.body);
   document.addEventListener('visibilitychange', visibility); window.addEventListener('resize', invalidate); window.addEventListener('pagehide', pageHide); window.addEventListener('pageshow', pageShow);
   var main = document.getElementById('main-content'); if (main) main.addEventListener('scroll', invalidate, { passive: true });
   ['pointermove', 'pointerdown', 'pointerup', 'pointercancel'].forEach(function (type) { document.addEventListener(type, onPointer, { passive: true }); });
+  document.addEventListener('pointerout', leavePointer, { passive: true }); window.addEventListener('blur', leavePointer);
   canvas.addEventListener('webglcontextlost', contextLost); canvas.addEventListener('webglcontextrestored', contextRestored);
   if (reduced) { if (reduced.addEventListener) reduced.addEventListener('change', invalidate); else if (reduced.addListener) reduced.addListener(invalidate); }
   window.PrismGlassOptics = {
     setStyle: setStyle,
-    setActive: function (value) { var next = value === true; if (next === active) { if (active) wake(); return; } lastFrame = -Infinity; active = next; if (active) invalidate(); else stop('inactive'); },
+    setActive: function (value) { var next = value === true; if (next === active) { if (active) wake(); return; } lastFrame = -Infinity; active = next; if (active) invalidate(); else { clearPointer(); stop('inactive'); } },
     invalidate: invalidate,
     inspect: function () { return Object.assign({}, stats); },
-    destroy: function () { if (destroyed) return; destroyed = true; generation++; stop('destroyed'); observer.disconnect(); if (resizeObserver) resizeObserver.disconnect(); release(); canvas.remove(); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('resize', invalidate); window.removeEventListener('pagehide', pageHide); window.removeEventListener('pageshow', pageShow); if (main) main.removeEventListener('scroll', invalidate); ['pointermove', 'pointerdown', 'pointerup', 'pointercancel'].forEach(function (type) { document.removeEventListener(type, onPointer); }); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); if (reduced && reduced.removeEventListener) reduced.removeEventListener('change', invalidate); else if (reduced && reduced.removeListener) reduced.removeListener(invalidate); if (image) { image.onload = image.onerror = null; } }
+    destroy: function () { if (destroyed) return; destroyed = true; generation++; stop('destroyed'); observer.disconnect(); surfacesObserver.disconnect(); if (resizeObserver) resizeObserver.disconnect(); observedSurfaces.forEach(function (node) { node.removeAttribute('data-optical-surface'); }); release(); canvas.remove(); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('resize', invalidate); window.removeEventListener('pagehide', pageHide); window.removeEventListener('pageshow', pageShow); document.removeEventListener('pointerout', leavePointer); window.removeEventListener('blur', leavePointer); if (main) main.removeEventListener('scroll', invalidate); ['pointermove', 'pointerdown', 'pointerup', 'pointercancel'].forEach(function (type) { document.removeEventListener(type, onPointer); }); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); if (reduced && reduced.removeEventListener) reduced.removeEventListener('change', invalidate); else if (reduced && reduced.removeListener) reduced.removeListener(invalidate); if (image) { image.onload = image.onerror = null; } }
   };
 }());

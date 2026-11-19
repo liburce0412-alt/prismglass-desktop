@@ -4,6 +4,14 @@ $repo=Split-Path $PSScriptRoot
 $version=(Get-Content -LiteralPath (Join-Path $repo 'VERSION') -Raw).Trim()
 if($version -notmatch '^(\d+\.\d+\.\d+)(?:-[A-Za-z0-9.-]+)?$'){throw 'Invalid VERSION'}
 $fileVersion=$Matches[1]+'.0'
+# Include uncommitted production inputs so local installs of the same release are distinguishable.
+$inputs=@('src/LiquidDesktop','rainmeter','scripts/runtime','tools/Startup','tools/CompanionAudio','tools/PrismNpu/main.py','assets/Cursors','assets/Brand/prismglass-icon-refined.ico','assets/Brand/prismglass-logo-refined.png','packaging/PrismGlass.iss','VERSION','licenses','LICENSE','THIRD-PARTY-NOTICES.md','README.md','docs/COMPANION.md','docs/COMPANION-SCREEN.md','docs/NPU-TOOLS.md','docs/REMOTE-DESKTOP-COMPARISON.md','docs/PRIVACY.md')
+$inputs+=@(Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object Name -Match '^(Build|Package|Install|SetupIntegration|GetNAudio|GetQrCoder|ConfigureCompanion.*|RepairCompanion.*)\.ps1$' | ForEach-Object FullName)
+$sourceFiles=@(foreach($entry in $inputs){$path=if([IO.Path]::IsPathRooted($entry)){$entry}else{Join-Path $repo $entry};Get-ChildItem -LiteralPath $path -Recurse -File})
+$fingerprints=@($sourceFiles | ForEach-Object {([IO.Path]::GetRelativePath($repo,$_.FullName).Replace('\','/'))+' '+(Get-FileHash -LiteralPath $_.FullName).Hash})
+[Array]::Sort($fingerprints,[StringComparer]::Ordinal)
+$sourceDigest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($fingerprints -join "`n")))).ToLowerInvariant()
+$buildId=$version+'+'+$sourceDigest.Substring(0,16)
 $deps=if($CacheRoot){[IO.Path]::GetFullPath($CacheRoot)}else{Join-Path $repo '.deps'}
 $qrAssembly=& (Join-Path $PSScriptRoot 'GetQrCoder.ps1') -CacheRoot $deps
 $package=Join-Path $deps "webview2-$WebViewVersion"
@@ -19,7 +27,8 @@ if((Test-Path -LiteralPath (Join-Path $out 'prismglass-install.json')) -or (Test
 New-Item -ItemType Directory -Path $app -Force | Out-Null
 Get-ChildItem "$repo/src/LiquidDesktop" -File | Where-Object {$_.Extension -in '.cs','.ps1','.js','.html','.css','.svg','.png' -or $_.Name -in 'app-center-pinyin.txt','app-center-pinyin-LICENSE.txt'} | Copy-Item -Destination $app
 Copy-Item "$repo/assets/Brand/prismglass-icon-refined.ico" "$app/PrismGlass.ico"
-[IO.File]::WriteAllText((Join-Path $app 'AssemblyInfo.cs'),("using System.Reflection;`n[assembly: AssemblyTitle(""PrismGlass Desktop"")]`n[assembly: AssemblyProduct(""PrismGlass Desktop"")]`n[assembly: AssemblyVersion(""$fileVersion"")]`n[assembly: AssemblyFileVersion(""$fileVersion"")]`n[assembly: AssemblyInformationalVersion(""$version"")]`n"))
+[IO.File]::WriteAllText((Join-Path $app 'AssemblyInfo.cs'),("using System.Reflection;`n[assembly: AssemblyTitle(""PrismGlass Desktop"")]`n[assembly: AssemblyProduct(""PrismGlass Desktop"")]`n[assembly: AssemblyVersion(""$fileVersion"")]`n[assembly: AssemblyFileVersion(""$fileVersion"")]`n[assembly: AssemblyInformationalVersion(""$buildId"")]`n"))
+[IO.File]::WriteAllText((Join-Path $out 'build-info.json'),([ordered]@{version=$version;buildId=$buildId;sourceSha256=$sourceDigest} | ConvertTo-Json))
 Copy-Item "$repo/src/LiquidDesktop/companion-web" $app -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $app 'PrismNpu') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'tools/PrismNpu/main.py') -Destination (Join-Path $app 'PrismNpu/main.py')
@@ -34,9 +43,11 @@ $audioAssemblies | ForEach-Object {Copy-Item -LiteralPath $_ -Destination $app -
 if($LASTEXITCODE -ne 0){throw 'Audio capture helper compilation failed'}
 Push-Location $app
 try{
- $sources=@(Get-ChildItem "$repo/src/LiquidDesktop" -Filter '*.cs' | ForEach-Object {$_.FullName})+@(Join-Path $app 'AssemblyInfo.cs')
- & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:PrismGlass.ico /out:LiquidDesktop.exe /r:System.dll /r:System.Core.dll /r:System.Security.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Numerics.dll /r:System.Numerics.Vectors.dll /r:System.Runtime.dll /r:System.Runtime.WindowsRuntime.dll /r:System.Runtime.InteropServices.WindowsRuntime.dll "/r:$env:WINDIR/System32/WinMetadata/Windows.Foundation.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Graphics.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Storage.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Security.winmd" /r:System.Xaml.dll "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/WindowsFormsIntegration.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationCore.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationFramework.dll" /r:System.Web.Extensions.dll /r:System.Management.dll /r:System.Net.Http.dll /r:QRCoder.dll /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll "/r:$uia/UIAutomationClient.dll" "/r:$uia/UIAutomationTypes.dll" "/r:$uia/WindowsBase.dll" @sources
+ $sources=@(Get-ChildItem "$repo/src/LiquidDesktop" -Filter '*.cs' | ForEach-Object {Join-Path $app $_.Name})+@(Join-Path $app 'AssemblyInfo.cs')
+ & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:PrismGlass.ico /out:LiquidDesktop.exe "/resource:$repo/assets/Brand/prismglass-logo-refined.png,PrismGlass.Startup.png" /r:System.dll /r:System.Core.dll /r:System.Security.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Numerics.dll /r:System.Numerics.Vectors.dll /r:System.Runtime.dll /r:System.Runtime.WindowsRuntime.dll /r:System.Runtime.InteropServices.WindowsRuntime.dll "/r:$env:WINDIR/System32/WinMetadata/Windows.Foundation.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Graphics.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Storage.winmd" "/r:$env:WINDIR/System32/WinMetadata/Windows.Security.winmd" /r:System.Xaml.dll "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/WindowsFormsIntegration.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationCore.dll" "/r:$env:WINDIR/Microsoft.NET/Framework64/v4.0.30319/WPF/PresentationFramework.dll" /r:System.Web.Extensions.dll /r:System.Management.dll /r:System.Net.Http.dll /r:QRCoder.dll /r:NAudio.Core.dll /r:NAudio.Wasapi.dll "/r:$(Split-Path $csc)/netstandard.dll" /r:Microsoft.Web.WebView2.Core.dll /r:Microsoft.Web.WebView2.WinForms.dll "/r:$uia/UIAutomationClient.dll" "/r:$uia/UIAutomationTypes.dll" "/r:$uia/WindowsBase.dll" @sources
  if($LASTEXITCODE -ne 0){throw 'Compilation failed'}
+ & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:PrismGlass.ico /out:PrismGlass.exe /r:System.Windows.Forms.dll /r:LiquidDesktop.exe AssemblyInfo.cs (Join-Path $repo 'tools/Startup/Program.cs')
+ if($LASTEXITCODE -ne 0){throw 'Startup launcher compilation failed'}
 }finally{Pop-Location}
 Copy-Item "$repo/scripts/runtime/*" $out
 Copy-Item "$repo/scripts/Install.ps1" $out

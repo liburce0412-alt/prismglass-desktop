@@ -21,6 +21,9 @@ internal sealed class DesktopPreferenceState {
  public int glassOpacity=100,textScale=100,gridColumns=6,dockIconSize=48;
  public bool liveGlassBackground,manualPaused,reducedMotion,pauseOnBattery,pauseOnPowerSaver=true,pauseOnRemote=true,showLabels=true,dockAutoHide=true,welcomeShown;
  public bool topAutoHide=true,leftAutoHide=true,rightAutoHide=true,windowAnimations=true,stageManager,layoutLocked;
+ public bool stageHideCovered=true;
+ public string stageGroupLayout="auto",stageSingleSize="fit";
+ public int stageMaxWidth=85,stageMaxHeight=85;
  public List<string> autoHideWidgets=new List<string>();
  public List<MonitorPreferences> monitors=new List<MonitorPreferences>();
  public List<string> desktopWidgets=new List<string>();
@@ -43,7 +46,7 @@ internal sealed class DesktopPreferences {
  readonly string root,file;readonly JavaScriptSerializer json=new JavaScriptSerializer();string observed="",loadError="";
  static readonly string[] RightCards={"quota","notes","tasks","countdown","links","calculator"};
  static readonly string[] LeftCards={"network","Weather","Music","Focus","Folders","System","Tools","Life"};
- static readonly string[] DesktopCards={"Weather","System","Clock","Calendar","Battery","Folders","Music","Focus","Tools","BreathingOrb","DigitalClock","Moon","Photo","Photo2","Photo3","Photo4","Photo5","Photo6"};
+ static readonly string[] DesktopCards={"Weather","System","Clock","Calendar","Battery","Folders","Music","Focus","Tools","BreathingOrb","DigitalClock","Moon","Hourglass","SunPath","YearDots","Tide","Orrery","Bonsai","Photo","Photo2","Photo3","Photo4","Photo5","Photo6"};
  static readonly Dictionary<string,double[]> GlassRanges=new Dictionary<string,double[]>{
   {"refraction",new[]{0.0,2.5}},{"bevel",new[]{2.0,50.0}},{"ior",new[]{1.05,2.0}},{"dispersion",new[]{0.0,.3}},
   {"blur",new[]{0.0,30.0}},{"diffusion",new[]{0.0,1.0}},{"saturation",new[]{0.0,4.0}},{"brightness",new[]{.25,2.5}},{"contrast",new[]{.25,2.5}},
@@ -89,6 +92,7 @@ internal sealed class DesktopPreferences {
   }catch(Exception ex){loadError=ex.Message;if(Revision==0)Revision=1;}
  }
  static void Validate(DesktopPreferenceState value){
+  if(Array.IndexOf(new[]{"auto","columns","grid","preserve"},value.stageGroupLayout)<0||Array.IndexOf(new[]{"fit","remember"},value.stageSingleSize)<0)throw new ArgumentException("未知台前调度布局。");Number(value.stageMaxWidth,50,100);Number(value.stageMaxHeight,50,100);
   // Retired decorative cards are ignored on read without rewriting saved user files.
   foreach(var cards in new[]{value.desktopWidgets,value.autoHideWidgets})if(cards!=null)cards.RemoveAll(name=>name=="Starlight"||name=="MoodNote");
   value.desktopWidgets=Cards(value.desktopWidgets??new List<string>(),DesktopCards);
@@ -125,6 +129,9 @@ internal sealed class DesktopPreferences {
     case "liveGlassBackground":next.liveGlassBackground=Flag(pair.Value);break;
     case "topAutoHide":next.topAutoHide=Flag(pair.Value);break;case "leftAutoHide":next.leftAutoHide=Flag(pair.Value);break;case "rightAutoHide":next.rightAutoHide=Flag(pair.Value);break;
     case "windowAnimations":next.windowAnimations=Flag(pair.Value);break;case "stageManager":next.stageManager=Flag(pair.Value);break;
+    case "stageHideCovered":next.stageHideCovered=Flag(pair.Value);break;
+    case "stageGroupLayout":next.stageGroupLayout=pair.Value as string;break;case "stageSingleSize":next.stageSingleSize=pair.Value as string;break;
+    case "stageMaxWidth":next.stageMaxWidth=Number(pair.Value,50,100);break;case "stageMaxHeight":next.stageMaxHeight=Number(pair.Value,50,100);break;
     case "autoHideWidgets":next.autoHideWidgets=Cards(pair.Value,DesktopCards);break;
     case "glassOpacity":next.glassOpacity=Number(pair.Value,60,100);break;case "textScale":next.textScale=Number(pair.Value,90,130);break;case "gridColumns":next.gridColumns=Number(pair.Value,4,10);break;case "dockIconSize":next.dockIconSize=Number(pair.Value,32,72);break;
     case "manualPaused":next.manualPaused=Flag(pair.Value);break;case "reducedMotion":next.reducedMotion=Flag(pair.Value);break;case "pauseOnBattery":next.pauseOnBattery=Flag(pair.Value);break;case "pauseOnPowerSaver":next.pauseOnPowerSaver=Flag(pair.Value);break;case "pauseOnRemote":next.pauseOnRemote=Flag(pair.Value);break;case "showLabels":next.showLabels=Flag(pair.Value);break;case "dockAutoHide":next.dockAutoHide=Flag(pair.Value);break;

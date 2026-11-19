@@ -7,7 +7,7 @@ class TestLoginStartup {
  static void Reject(Action action,string label){bool failed=false;try{action();}catch{failed=true;}Check(failed,label);}
  [STAThread]static int Main(){string fixture=Path.Combine(Path.GetTempPath(),"PrismGlass-startup-test-"+Guid.NewGuid().ToString("N"));try{
   string root=Path.Combine(fixture,"安装 空格🙂","LiquidDesktop"),folder=Path.Combine(fixture,"启动目录🙂"),file=Path.Combine(folder,"PrismGlass.lnk");Directory.CreateDirectory(root);Directory.CreateDirectory(folder);
-  File.WriteAllText(Path.Combine(root,"LiquidDesktop.exe"),"inert fixture");File.WriteAllText(Path.Combine(Path.GetDirectoryName(root),"DesktopMode.ps1"),"throw 'test must never launch'");
+  File.WriteAllText(Path.Combine(root,"PrismGlass.exe"),"inert launcher");File.WriteAllText(Path.Combine(root,"LiquidDesktop.exe"),"inert fixture");File.WriteAllText(Path.Combine(Path.GetDirectoryName(root),"DesktopMode.ps1"),"throw 'test must never launch'");
   Check(!LoginStartup.ReadFrom(root,folder,false).enabled,"No startup item means disabled by default");
   Check(!File.Exists(file),"Reading does not create a startup item");
   Check(!LoginStartup.ReadFrom(root,folder,true).registered,"A stale Windows approval record cannot register a missing item");

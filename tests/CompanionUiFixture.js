@@ -25,7 +25,15 @@ window.__fixture = {
 };
 window.fetch = async function (url, request) {
   var f = window.__fixture, status = 200, data;
-  if (request && request.method === 'POST') { f.writes.push({ url: url, body: request.body }); if (f.stubPointer && url === '/api/pointer/begin') data = { leaseId: 'fixture-control', expiresAt: Date.now() + 60000 }; else if (f.stubPointer && (url === '/api/pointer' || url === '/api/pointer/end')) data = { ok: true, expiresAt: Date.now() + 60000 }; else { status = 403; data = { error: 'fixture_read_only', message: '界面验收不会执行电脑操作。' }; } }
+  if (request && request.method === 'POST') {
+    f.writes.push({ url: url, body: request.body }); var body = JSON.parse(request.body || '{}');
+    if (f.stubWork && url === '/api/action' && ['focus.toggle','focus.reset'].indexOf(body.action) >= 0) { var focus = f.state.focus; if (body.action === 'focus.reset') { focus.deadline = 0; focus.remaining = focus.total; } else if (focus.deadline > 0) { focus.remaining = Math.max(0, focus.deadline - Math.floor(Date.now() / 1000)); focus.deadline = 0; } else focus.deadline = Math.floor(Date.now() / 1000) + focus.remaining; data = { ok: true }; } else if (f.stubLevels && url === '/api/action' && ['volume.set','brightness.set'].indexOf(body.action) >= 0) {
+      if (f.levelError) { status = 503; data = { error: 'fixture_device_unavailable', message: '测试显示器暂不可用，请重试。' }; }
+      else { if (body.action === 'volume.set') { f.state.volume.data.value = body.value; f.state.audioOutput.muted = false; } else f.state.brightness.value = body.value; data = { ok: true, message: '已提交' }; }
+    } else if (f.stubPointer && url === '/api/pointer/begin') data = { leaseId: 'fixture-control', expiresAt: Date.now() + 60000 };
+    else if (f.stubPointer && (url === '/api/pointer' || url === '/api/pointer/end')) data = { ok: true, expiresAt: Date.now() + 60000 };
+    else { status = 403; data = { error: 'fixture_read_only', message: '界面验收不会执行电脑操作。' }; }
+  }
   else if (f.mode === 'offline') throw new TypeError('Fixture disconnected');
   else if (f.mode === 'unpaired') { status = 401; data = { error: 'unpaired', message: '尚未配对。' }; }
   else if (f.mode === 'locked') { status = 423; data = { error: 'locked', message: '电脑已锁定，个人内容已隐藏。' }; }

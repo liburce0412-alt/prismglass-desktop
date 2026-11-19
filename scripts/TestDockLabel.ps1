@@ -1,13 +1,13 @@
-param([string]$AppRoot='artifacts/experience-build/LiquidDesktop',[switch]$TopButtons)
+param([string]$AppRoot='artifacts/experience-build/LiquidDesktop',[switch]$TopButtons,[string]$OutputRoot='artifacts/dock-polish-20261101')
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $fixture=Join-Path $repo ('artifacts/dock-visual-'+[guid]::NewGuid().ToString('N'))
-$output=Join-Path $repo 'artifacts/dock-polish-20261101'
-$app=[IO.Path]::GetFullPath((Join-Path $repo $AppRoot))
+$output=Join-Path $repo $OutputRoot
+$app=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($AppRoot)){$AppRoot}else{Join-Path $repo $AppRoot}))
 $process=$null
 try{
  New-Item -ItemType Directory -Path $fixture,$output -Force|Out-Null
- foreach($name in @('control-icons.svg','index.html','island.html','island.js','island.css','glass-typography.css','glass-tooltip.css','desktop.js','glass-renderer.js','lyrics-style.js','dock-lyrics.css','desktop-preferences.js','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll')){Copy-Item -LiteralPath (Join-Path $app $name) -Destination $fixture}
+ foreach($name in @('prism-hint.js','prism-hint.css','functional-icons.js','control-icons.svg','index.html','island.html','island.js','island.css','glass-typography.css','glass-tooltip.css','desktop.js','glass-materials.js','glass-renderer.js','lyrics-style.js','dock-lyrics.css','desktop-preferences.js','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll')){Copy-Item -LiteralPath (Join-Path $app $name) -Destination $fixture}
  Add-Type -AssemblyName System.Drawing
  $bitmap=[Drawing.Bitmap]::new(1000,700);$g=[Drawing.Graphics]::FromImage($bitmap);$brush=[Drawing.Drawing2D.LinearGradientBrush]::new([Drawing.Point]::new(0,0),[Drawing.Point]::new(1000,700),[Drawing.Color]::FromArgb(25,74,145),[Drawing.Color]::FromArgb(140,64,180));$g.FillRectangle($brush,0,0,1000,700)
  $g.FillEllipse([Drawing.Brushes]::LightSkyBlue,430,400,380,190);$bitmap.Save((Join-Path $fixture 'wallpaper.png'));$brush.Dispose();$g.Dispose();$bitmap.Dispose()

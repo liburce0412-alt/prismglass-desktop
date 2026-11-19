@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -8,20 +9,24 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-// Explicit refresh-button snapshot only. Continuous glass never writes frames.
+// Startup/manual snapshots only. Continuous glass never writes frames.
 internal static class WallpaperCapture {
  internal static async Task<Bitmap> CaptureDynamic(CancellationToken cancellation){
+  return await CaptureDynamic(Screen.PrimaryScreen.Bounds,cancellation).ConfigureAwait(false);
+ }
+ internal static async Task<Bitmap> CaptureDynamic(Rectangle area,CancellationToken cancellation){
   cancellation.ThrowIfCancellationRequested();
-  var area=Screen.PrimaryScreen.Bounds;var source=LiveGlassBackdrop.WallpaperSource(area);
+  var source=LiveGlassBackdrop.WallpaperSource(area);
   if(source==null)return null;
   if(!await WindowCapture.Borderless().ConfigureAwait(false))throw new InvalidOperationException("Windows 未允许动态壁纸捕获，请允许本机玻璃取样后重试。");
   cancellation.ThrowIfCancellationRequested();
+  long notBefore=(long)(Stopwatch.GetTimestamp()*(10000000.0/Stopwatch.Frequency));
   using(var capture=SharedWindowCapture.Acquire(source.handle,source.pid)){
    while(true){
     cancellation.ThrowIfCancellationRequested();
     if(!String.IsNullOrEmpty(capture.Error))throw new IOException("动态壁纸取样失败："+capture.Error);
     if(!capture.Valid)throw new IOException("动态壁纸窗口已关闭或改变，请重试。");
-    using(var frame=capture.Latest(-1)){
+    using(var frame=capture.Latest(-1,notBefore)){
      if(frame!=null){
       cancellation.ThrowIfCancellationRequested();
       var current=LiveGlassBackdrop.WallpaperSource(area);
@@ -35,7 +40,7 @@ internal static class WallpaperCapture {
  }
  internal static Bitmap ToMonitor(byte[] pixels,int width,int height,Rectangle visible,Rectangle area){
   if(width<1||height<1||(long)width*height>16777216||pixels==null||pixels.LongLength<(long)width*height*4)throw new IOException("动态壁纸返回了不完整的画面。");
-  if(area.Width<1||area.Height<1||(long)area.Width*area.Height>16777216||!visible.Contains(area))throw new IOException("动态壁纸画面没有完整覆盖主显示器。");
+  if(area.Width<1||area.Height<1||(long)area.Width*area.Height>16777216||!visible.Contains(area))throw new IOException("动态壁纸画面没有完整覆盖目标显示器。");
   using(var frame=new Bitmap(width,height,PixelFormat.Format32bppPArgb)){
    var bits=frame.LockBits(new Rectangle(0,0,width,height),ImageLockMode.WriteOnly,PixelFormat.Format32bppPArgb);
    try{int row=checked(width*4);for(int y=0;y<height;y++)Marshal.Copy(pixels,y*row,IntPtr.Add(bits.Scan0,y*bits.Stride),row);}

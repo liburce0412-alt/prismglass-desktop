@@ -7,10 +7,10 @@ function check(name,action){action();checks++;console.log('PASS '+name);}
 const lyric={type:'lyrics',show:true,current:'切换时仍然连续',next:'保留既有样式',motionPaused:false};
 function fixture(width=1070){
  let now=0,receiver,nextId=0,nativeAlpha=255,auto=true;
- const frames=new Map(),timers=new Map(),glass=[],commands=[],pending=[];
+ const frames=new Map(),timers=new Map(),glass=[],commands=[],pending=[],pointerAcks=[];
  function element(){const classes=new Set();return{style:{setProperty(){}},parentElement:{hidden:false,classList:{toggle(){}}},scrollWidth:240,textContent:'',classList:{toggle(n,on){if(on)classes.add(n);else classes.delete(n);},contains:n=>classes.has(n)},setAttribute(){},animate:()=>({cancel(){}})};}
  const elements=new Map(['lyrics-layer','dock-lyrics','lyric-current','lyric-next','scene'].map(id=>[id,element()]));
- const window={addEventListener(){},chrome:{webview:{addEventListener:(_,fn)=>receiver=m=>fn({data:m}),postMessage(message){if(!message.startsWith('dock-icons:'))return;const [,sequence,alpha]=message.split(':').map(Number);const value={sequence,alpha,time:now};commands.push(value);pending.push(value);}}}};
+ const window={addEventListener(){},chrome:{webview:{addEventListener:(_,fn)=>receiver=m=>fn({data:m}),postMessage(message){if(message.startsWith('pointer-ack:'))pointerAcks.push(Number(message.slice(12)));if(!message.startsWith('dock-icons:'))return;const [,sequence,alpha]=message.split(':').map(Number);const value={sequence,alpha,time:now};commands.push(value);pending.push(value);}}}};
  const context=vm.createContext({window,document:{getElementById:id=>elements.get(id),createElement:()=>element(),body:{appendChild(e){elements.set(e.id,e);}}},innerWidth:1200,innerHeight:800,performance:{now:()=>now},matchMedia:()=>({matches:false,addEventListener(){}}),
   PrismLyrics:{normalize:v=>({layout:'duo',width:900,widthMode:'adaptive',fontSize:26,...v}),apply(){},cancel(){},animate(){},background(){}},PrismGlassRenderer:(_,post,subscribe)=>subscribe(m=>glass.push(m)),
   requestAnimationFrame:fn=>{const id=++nextId;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout:(fn,delay)=>{const id=++nextId;timers.set(id,{fn,due:now+delay});return id;},clearTimeout:id=>timers.delete(id)});
@@ -22,7 +22,7 @@ function fixture(width=1070){
  function frame(count=1){for(let i=0;i<count;i++){now+=16;for(const [id,t] of [...timers])if(t.due<=now){timers.delete(id);t.fn();}const work=[...frames.values()];frames.clear();for(const fn of work){fn(now);invariant();}flush();}}
  const dock={name:'Dock',x:65,y:620,w:width,h:100,r:28,insetY:16};
  send({type:'layout',width:1200,height:800,theme:'Sky',paused:false,cards:[dock]});frame();
- return{send,frame,ack,commands,pending,glass,elements,auto(value){auto=value;flush();},get state(){return window.dockLyricsState;},get nativeAlpha(){return nativeAlpha;},get card(){return glass.filter(m=>m.type==='geometry').pop().cards.find(c=>c.name==='Dock');}};
+ return{send,frame,ack,commands,pending,glass,elements,pointerAcks,auto(value){auto=value;flush();},get state(){return window.dockLyricsState;},get nativeAlpha(){return nativeAlpha;},get card(){return glass.filter(m=>m.type==='geometry').pop().cards.find(c=>c.name==='Dock');}};
 }
 const f=fixture();f.send(lyric);f.frame(10);
 check('entry progressively contracts with the native fade on the same frame clock',()=>{assert.ok(f.state.width<1070&&f.state.width>f.state.targetWidth);assert.equal(f.card.fixedShape,true);assert.ok(f.commands.some(c=>c.alpha>0&&c.alpha<255));});
@@ -76,4 +76,9 @@ check('name capsule shares the actual Dock glass scene',()=>assert.ok(labelFixtu
 check('only one text label is rendered as plain text',()=>assert.equal(labelFixture.elements.get('dock-name').textContent,'文件资源管理器'));
 labelFixture.send({type:'dock-label',text:''});check('hiding removes both the capsule and its text',()=>{assert.equal(labelFixture.elements.get('dock-name').style.display,'none');assert.ok(!labelFixture.glass.at(-1).cards.some(c=>c.name==='DockLabel'));});
 
+const pointer=fixture();pointer.send({type:'pointer',x:10,y:20,down:false,sequence:101});
+check('pointer enters renderer and acknowledges receipt without waiting for RAF',()=>{assert.equal(pointer.glass.at(-1).type,'pointer');assert.deepEqual(pointer.pointerAcks,[101]);});pointer.frame();
+check('paint does not issue a second acknowledgement',()=>assert.deepEqual(pointer.pointerAcks,[101]));
+pointer.send({type:'pointer',x:20,y:20,down:false,sequence:102});pointer.send({type:'pointer',x:30,y:20,down:false,sequence:103});pointer.frame();
+check('each bounded pointer packet acknowledges its exact sequence',()=>assert.deepEqual(pointer.pointerAcks,[101,102,103]));
 console.log(checks+' Dock transition checks passed.');

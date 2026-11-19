@@ -61,10 +61,11 @@ function fixture(options = {}) {
   let optics; Object.defineProperty(body.dataset, 'optics', { get() { return optics; }, set(value) { measurements.opticsWrites++; optics = value; } });
   const main = Object.assign(target(), { id: 'main-content', bounds: rect(20, 80, 984, 490), getBoundingClientRect() { return this.bounds; }, contains(node) { return node.inMain; } });
   function region(id, bounds, inMain = true) {
-    return { id, bounds, inMain, hidden: false, style: { visibility: 'visible', display: 'block', borderTopLeftRadius: '35px' }, getClientRects() { return this.hidden ? [] : [this.bounds]; }, getBoundingClientRect() { return this.bounds; } };
+    return { id, nodeType:1, bounds, inMain, hidden: false, attributes:{}, children:[], style: { visibility: 'visible', display: 'block', borderTopLeftRadius: '35px' }, contains(node){return this.children.includes(node);}, closest(){return null;},matches(){return true;},querySelector(){return null;},getAttribute(key){return this.attributes[key];},hasAttribute(key){return key in this.attributes;},setAttribute(key,value){this.attributes[key]=value;},removeAttribute(key){delete this.attributes[key];},getClientRects() { return this.hidden ? [] : [this.bounds]; }, getBoundingClientRect() { return this.bounds; } };
   }
   // Deliberately reverse document priority and include a fourth candidate.
   const nodes = [region('decorative-extra', rect(30, 90, 100, 100)), region('home-focus', rect(60, 460, 240, 80)), region('music-card', rect(530, 70, 400, 290)), region('touch-bar', rect(20, 600, 984, 148), false)];
+  nodes[0].hidden=!options.extra;
   let canvas;
   const document = Object.assign(target(), {
     body, hidden: !!options.hidden,
@@ -74,7 +75,7 @@ function fixture(options = {}) {
       let hidden = false; Object.defineProperty(canvas, 'hidden', { get() { return hidden; }, set(value) { measurements.hiddenWrites++; hidden = value; } });
       return canvas;
     },
-    querySelectorAll(selector) { assert.equal(selector, '[data-optical]'); return nodes; },
+    querySelectorAll(selector) { assert.equal(selector, '[data-optical],.glass,.companion-widget'); return nodes; },
     getElementById(id) { return id === 'main-content' ? main : nodes.find(node => node.id === id); }
   });
   const media = Object.assign(target(), { matches: !!options.osReduced });
@@ -84,7 +85,7 @@ function fixture(options = {}) {
     set src(value) { this.url = value; }
   }
   class MutationObserver { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } }
-  class ResizeObserver { constructor(fn) { this.fn = fn; this.nodes = []; resizeObservers.push(this); } observe(node) { this.nodes.push(node); } disconnect() { this.disconnected = true; } }
+  class ResizeObserver { constructor(fn) { this.fn = fn; this.nodes = []; resizeObservers.push(this); } observe(node) { this.nodes.push(node); } unobserve(node){this.nodes=this.nodes.filter(n=>n!==node);} disconnect() { this.disconnected = true; } }
   if(!options.missingMaterials)vm.runInNewContext(materialSource,{window},{filename:'glass-materials.js'});
   vm.runInNewContext(source, { window, document, URLSearchParams, URL, Image, MutationObserver, ResizeObserver, Float32Array, Uint8Array, performance: { now: () => time + (performanceCalls++ % 2) * (options.frameCost || 0) }, requestAnimationFrame(fn) { const id = nextFrame++; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); } }, { filename: 'companion-glass.js' });
   return { gl, images, body, document, window, media, canvas, nodes, main, viewport, observers, resizeObservers, measurements, api: window.PrismGlassOptics, pending: () => frames.size, contextCalls: () => contextCalls, contextOptions: () => contextOptions, step(ms) { time = ms; const batch = [...frames.values()]; frames.clear(); batch.forEach(fn => fn(ms)); }, mutation() { observers[0].fn(); } };
@@ -119,10 +120,10 @@ test('one shared scene, three priority regions, real clipped bounds and bounded 
   assert.equal(f.gl.creates.filter(x => x.kind === 'Framebuffer').length, 1);
 });
 
-test('60 fps cap survives repeated active updates and theme uses same scene path', () => {
+test('display cadence accepts high-refresh callbacks and theme uses same scene path', () => {
   const f = fixture(); f.api.setActive(true); f.step(0);
-  f.api.setActive(true); f.step(5); f.step(10); assert.equal(f.api.inspect().frames, 1);
-  f.step(34); assert.equal(f.api.inspect().frames, 2);
+  f.api.setActive(true); f.step(8.333); f.step(16.667); assert.equal(f.api.inspect().frames, 3);
+  f.step(25); assert.equal(f.api.inspect().frames, 4);
   f.body.dataset.theme = 'Astro'; f.mutation(); f.step(68);
   const draws = f.gl.draws.slice(-5); assert.equal(draws[0].uniforms.night, 1); assert.equal(draws[1].texture, draws[2].texture);
   assert.equal(f.contextCalls(), 1); assert.equal(f.gl.creates.filter(x => x.kind === 'Texture').length, 2);
@@ -201,10 +202,10 @@ test('destroy releases owned resources, observers and listeners without touching
   assert.equal(f.observers[0].disconnected, true); assert.equal(f.resizeObservers[0].disconnected, true);
   assert.equal(f.gl.creates.length, f.gl.deletes.length);
 });
-test('touch and visible ambience keep 60 Hz',()=>{
+test('touch and visible ambience follow display cadence without claiming presentation',()=>{
   const f=fixture();f.api.setActive(true);f.step(0);f.document.emit('pointerdown',{clientX:730,clientY:215});f.step(17);f.step(34);
-  assert.equal(f.api.inspect().frames,3);assert.equal(f.api.inspect().targetFps,60);assert.equal(f.api.inspect().scenePasses,1);
-  f.document.emit('pointerup',{clientX:730,clientY:215});f.step(340);assert.equal(f.api.inspect().targetFps,60);
+  assert.equal(f.api.inspect().frames,3);assert.equal(f.api.inspect().targetFps,null);assert.equal(f.api.inspect().scenePasses,1);assert.equal(f.api.inspect().cadence,'display');assert.equal(f.api.inspect().presentationMeasured,false);
+  f.document.emit('pointerup',{clientX:730,clientY:215});f.step(340);assert.equal(f.api.inspect().targetFps,null);
 });
 test('all ten materials use shared resolution without new contexts or scene passes',()=>{
   const f=fixture();f.api.setActive(true);f.step(0);let time=34;
@@ -245,11 +246,27 @@ test('saved custom material is independent of its base overrides and remains liv
 });
 test('material changes preserve Astro and pointer feedback',()=>{
   const f=fixture();f.body.dataset.theme='Astro';f.api.setActive(true);f.api.setStyle('H');f.step(0);f.document.emit('pointerdown',{clientX:730,clientY:215});f.step(17);const values=f.gl.draws.at(-2).uniforms;
-  assert.equal(values.night,1);assert.equal(values.press,1);assert.equal(values.materialOn,1);assert.equal(f.api.inspect().targetFps,60);
+  assert.equal(values.night,1);assert.equal(values.press,1);assert.equal(values.materialOn,1);assert.equal(f.api.inspect().targetFps,null);
+});
+test('mouse hover lights the body without pressing and released touch clears it',()=>{
+ const f=fixture();f.api.setActive(true);f.step(0);f.document.emit('pointermove',{clientX:830,clientY:215,pointerType:'mouse'});f.step(8.333);
+ assert.equal(f.gl.draws.at(-2).uniforms.hover,1);assert.equal(f.gl.draws.at(-2).uniforms.press,0);assert.deepEqual(f.gl.draws.at(-2).uniforms.point,[.5,0]);
+ f.document.emit('pointerup',{clientX:830,clientY:215,pointerType:'touch'});f.step(16.667);assert.equal(f.gl.draws.at(-2).uniforms.hover,0);
+ f.document.emit('pointerdown',{clientX:830,clientY:215,pointerType:'touch'});f.step(25);assert.equal(f.gl.draws.at(-2).uniforms.press,1);
+ f.document.emit('pointercancel',{clientX:830,clientY:215,pointerType:'touch'});f.step(33.333);assert.equal(f.gl.draws.at(-2).uniforms.hover,0);assert.equal(f.gl.draws.at(-2).uniforms.press,0);
 });
 test('reduced mode applies static material without waking the GPU',()=>{
   const f=fixture({reduced:true});f.api.setStyle('G');f.api.setActive(true);assert.equal(f.contextCalls(),0);assert.equal(f.pending(),0);assert.equal(f.body.style.values['--material-blur'],'18px');assert.equal(f.body.dataset.glassStyle,'G');
   f.api.setStyle('J',{J:{brightness:1.3,contrast:.8,opacity:0}});assert.equal(f.body.style.values['--material-blur'],'0px');assert.equal(f.body.style.values['--material-brightness'],'1');assert.equal(f.body.style.values['--material-edge'],'0');assert.equal(f.body.style.values['--material-inset'],'0');assert.equal(f.contextCalls(),0);
+});
+test('leaving the page, hiding or losing focus cannot leave a detached pointer highlight',()=>{
+ const f=fixture();f.api.setActive(true);f.step(0);let now=1;
+ function point(){f.document.emit('pointermove',{clientX:830,clientY:215,pointerType:'mouse'});f.step(now++);assert.equal(f.gl.draws.at(-2).uniforms.hover,1);}
+ point();f.document.emit('pointerout',{relatedTarget:{}});f.step(now++);assert.equal(f.gl.draws.at(-2).uniforms.hover,1,'moving between child controls keeps the same light');
+ f.document.emit('pointerout',{relatedTarget:null});f.step(now++);assert.equal(f.gl.draws.at(-2).uniforms.hover,0);
+ point();f.window.emit('blur');f.step(now++);assert.equal(f.gl.draws.at(-2).uniforms.hover,0);
+ point();f.document.hidden=true;f.document.emit('visibilitychange');f.document.hidden=false;f.document.emit('visibilitychange');f.step(now++);assert.equal(f.gl.draws.at(-2).uniforms.hover,0);
+ f.api.destroy();assert.equal(f.document.listenerCount(),0);assert.equal(f.window.listenerCount(),0);
 });
 test('a missing material table safely retains the original renderer',()=>{
   const f=fixture({missingMaterials:true});f.api.setStyle('A');f.api.setActive(true);f.step(0);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);assert.equal(f.body.dataset.optics,'ready');
@@ -265,4 +282,34 @@ test('Glasswork uses its powered inward displacement and bounded adaptive tint i
   assert.match(source,/materialDensity>\.001/);assert.match(source,/abs\(a-b\)\*2\.4\+abs\(l-\(a\+b\)\*\.5\)\*1\.3/);
   assert.doesNotMatch(source,/fetch\(|XMLHttpRequest|html2canvas|drawImage\(document/);
 });
+test('desktop glass concentration reaches actual uniforms and static material without context churn',()=>{
+  const f=fixture();f.api.setActive(true);f.api.setStyle('G',{G:{opacity:.8}},[],60);f.step(0);
+  assert.equal(f.gl.draws.at(-1).uniforms.glassOpacity,.6);assert.equal(f.gl.draws.at(-1).uniforms.materialOpacity,.8);
+  assert.equal(f.body.style.values['--material-blur'],String(18*.8*.6)+'px');
+  f.api.setStyle('G',{G:{opacity:.8}},[],100);f.step(17);assert.equal(f.gl.draws.at(-1).uniforms.glassOpacity,1);
+  f.api.setStyle('I',{},[],60);f.step(34);assert.equal(f.gl.draws.at(-1).uniforms.materialOn,0);assert.equal(f.gl.draws.at(-1).uniforms.glassOpacity,.6);assert.equal(f.contextCalls(),1);assert.equal(f.api.inspect().scenePasses,1);
+});
+test('all visible surfaces render once, including a fourth card, with nested and hidden panels excluded',()=>{
+ const f=fixture({extra:true});f.api.setActive(true);f.step(0);assert.equal(f.api.inspect().regions,4);assert.equal(f.gl.draws.length,6);assert.equal(f.contextCalls(),1);assert.equal(f.nodes[0].attributes['data-optical-surface'],'true');
+ f.nodes[0].bounds=rect(550,100,100,100);f.nodes[2].children.push(f.nodes[0]);f.api.invalidate();f.step(17);assert.equal(f.api.inspect().regions,3);assert.equal(f.api.inspect().nestedRegions,1);assert.equal(f.nodes[0].attributes['data-optical-surface'],'true','nested panel inherits its enclosing optical surface');
+ f.nodes[0].hidden=true;f.nodes[2].hidden=true;f.api.invalidate();f.step(34);assert.equal(f.api.inspect().regions,2);assert.equal(f.nodes[0].attributes['data-optical-surface'],undefined);assert.equal(f.nodes[2].attributes['data-optical-surface'],undefined);
+ f.nodes[2].hidden=false;f.nodes[2].bounds=rect(530,800,400,200);f.api.invalidate();f.step(51);assert.equal(f.api.inspect().regions,2,'offscreen panels do no glass draw');assert.equal(f.contextCalls(),1);assert.ok(f.canvas.width*f.canvas.height<1803000);
+ f.api.destroy();assert(f.nodes.every(n=>!n.hasAttribute('data-optical-surface')));assert(f.observers.every(o=>o.disconnected));
+});
+test('dynamic surface changes invalidate geometry while ordinary clock and artwork updates do not',()=>{
+ const f=fixture({extra:true});f.api.setActive(true);f.step(0);const reads=f.measurements.boundsReads;
+ f.observers[1].fn([{type:'childList',addedNodes:[{nodeType:3}],removedNodes:[]}]);f.step(17);assert.equal(f.measurements.boundsReads,reads);
+ f.observers[1].fn([{type:'attributes',target:f.nodes[0]}]);f.step(34);assert(f.measurements.boundsReads>reads);assert.equal(f.contextCalls(),1);
+});
+test('expanded coverage retains bounded low-performance rendering and zero draws while hidden',()=>{
+ const f=fixture({extra:true,frameCost:40});f.api.setActive(true);f.step(0);const width=f.canvas.width;
+ for(let i=1;i<=16;i++)f.step(i*34);assert.equal(f.api.inspect().targetFps,30);assert(f.canvas.width<width);assert.equal(f.api.inspect().regions,4);assert.equal(f.contextCalls(),1);
+ f.document.hidden=true;f.document.emit('visibilitychange');const draws=f.gl.draws.length;f.step(1000);assert.equal(f.gl.draws.length,draws);assert.equal(f.pending(),0);
+});
 console.log(`Companion glass: ${groups} test groups passed.`);
+test('selected material sleeps until an input changes', () => {
+  const f = fixture(); f.api.setActive(true); f.api.setStyle('G'); f.step(0);
+  assert.equal(f.pending(), 0);
+  f.document.emit('pointerdown', {clientX:730,clientY:215}); f.step(34);
+  assert.ok(f.api.inspect().frames > 1);
+});

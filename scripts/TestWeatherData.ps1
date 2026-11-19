@@ -1,4 +1,4 @@
-param([switch]$Live,[string]$LocationFile)
+param([switch]$Live,[string]$LocationFile,[switch]$DirectProxy,[switch]$DnsRecovery)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot
 $out=Join-Path $repo 'artifacts/release-1.0.0'
@@ -11,6 +11,8 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Weather data test compilation failed'}
  $arguments=@($fixture)
  if($Live){if(!(Test-Path -LiteralPath $LocationFile -PathType Leaf)){throw 'Live verification requires the existing weather-location.txt path.'};$arguments+=@('--live',$LocationFile,(Join-Path $out 'weather-live.json'))}
+ if($DirectProxy){if($Live){throw 'Choose one live weather probe mode'};$arguments+='--direct-proxy'}
+ if($DnsRecovery){if($Live -or $DirectProxy){throw 'Choose one live weather probe mode'};$arguments+='--dns-recovery'}
  & $exe @arguments | Tee-Object -FilePath (Join-Path $out $(if($Live){'weather-live.log'}else{'weather-data.log'}))
  if($LASTEXITCODE -ne 0){throw 'Weather data checks failed'}
 }finally{

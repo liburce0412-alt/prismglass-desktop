@@ -13,6 +13,10 @@ internal sealed class TopIsland : Form {
  readonly string root;readonly bool preview;readonly WebView2 view=new WebView2();readonly WebViewPixelScale pixels;readonly WidgetBackend widgets;readonly SharedDesktopData shared;readonly string instance;readonly JavaScriptSerializer json=new JavaScriptSerializer();readonly Timer timer=new Timer();
  bool ready,painted,closed,dragging,paused,outlineReady,readyNotified,refreshingWallpaper;string theme="Sky",layout="",mode="bar",widgetState="",outlineKey="",companionState="";Rectangle screen;float scale=1;int ticks,regionUpdates;object pendingPreferences,pendingCompanion;
  public event Action Ready;public event Action<string> Failed;
+ void OnIslandEvent(IslandEvents.Notice notice){
+  if(closed||!IsHandleCreated)return;
+  try{BeginInvoke((Action)(()=>{if(closed)return;string icon="";if(notice.icon!=null&&notice.icon.Length<=524288&&notice.icon.StartsWith("data:image/png;base64,iVBORw0KGgo",StringComparison.Ordinal))icon=notice.icon;else try{var folder=Path.GetFullPath(Path.Combine(root,"dock-icons"))+Path.DirectorySeparatorChar;if(Path.GetFullPath(notice.icon).StartsWith(folder,StringComparison.OrdinalIgnoreCase))icon="https://prism-island.local/dock-icons/"+Uri.EscapeDataString(Path.GetFileName(notice.icon));}catch{}Send(new{type="island-event",sequence=notice.sequence,source=notice.key,kind=notice.kind,name=notice.name,icon=icon,expiresAt=notice.expiresAt});}));}catch(InvalidOperationException){}
+ }
  public event Action CompanionStopRequested;
  public bool IsPainted {get{return painted;}}
  readonly ComponentPosition position;Rectangle defaultBounds;
@@ -31,6 +35,7 @@ internal sealed class TopIsland : Form {
   pixels=new WebViewPixelScale(view,()=>{Place();outlineKey="";Publish();});
   root=directory;preview=isPreview;shared=data;instance=screenInstance;widgets=shared==null?new WidgetBackend(root):shared.Widgets;Text=preview?"PrismGlass TopIsland · 验证":"PrismGlass TopIsland · "+instance;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=preview;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;BackColor=Color.FromArgb(35,44,57);screen=Screen.PrimaryScreen.Bounds;
   position=new ComponentPosition(root,preview?"top-preview":"top",()=>Bounds,next=>{Bounds=next;layout="";Publish();},message=>Send(new{type="feedback",message=message}));Place();view.Dock=DockStyle.Fill;Controls.Add(view);GlassWindow.Configure(this,view);WebViewVisibility.Track(view);SetInitialShape();
+  if(!preview)IslandEvents.Changed+=OnIslandEvent;
   Shown+=async(sender,args)=>{try{
    var environment=await CoreWebView2Environment.CreateAsync(null,Path.Combine(root,preview?"island-preview-runtime":"runtime-data"));await view.EnsureCoreWebView2Async(environment);SyncPixelScale();
    var settings=view.CoreWebView2.Settings;settings.IsZoomControlEnabled=false;settings.AreDefaultContextMenusEnabled=false;settings.AreDevToolsEnabled=false;settings.IsStatusBarEnabled=false;
@@ -42,16 +47,16 @@ internal sealed class TopIsland : Form {
   }catch(Exception ex){Fail(ex.ToString());}};
   VisibleChanged+=(s,e)=>{if(Visible&&ready)Tick(true);};
   Deactivate+=(s,e)=>{if(!dragging&&!IsRepositioning)Send(new{type="dismiss"});};
-  FormClosed+=(s,e)=>{closed=true;position.Dispose();timer.Stop();timer.Dispose();view.Dispose();};
+  FormClosed+=(s,e)=>{closed=true;IslandEvents.Changed-=OnIslandEvent;position.Dispose();timer.Stop();timer.Dispose();view.Dispose();};
  }
  void Place(){scale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));defaultBounds=new Rectangle(screen.Left+24,screen.Top+2,Math.Max(320,screen.Width-48),Math.Min(screen.Height-90,(int)Math.Ceiling(328*scale)));int width=mode=="bar"?defaultBounds.Width-8:(int)Math.Min(defaultBounds.Width-8,(mode=="open"?540:272)*scale);position.Arrange(defaultBounds,screen,new Point(defaultBounds.Width/2,12),new Rectangle((defaultBounds.Width-width)/2,12,width,(int)((mode=="open"?312:mode=="bar"?42:48)*scale)));layout="";}
  void SyncPixelScale(){pixels.Sync();}
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
-  if(closed)return;float nextScale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));if(bounds!=screen||Math.Abs(nextScale-scale)>.01){screen=bounds;Place();outlineKey="";}SyncPixelScale();
+  if(closed)return;float nextScale=Math.Max(.8f,Math.Min(1.25f,(float)pixels.RasterizationScale));if(bounds!=screen||Math.Abs(nextScale-scale)>.01||position.DisplayChanged){screen=bounds;Place();outlineKey="";}SyncPixelScale();
   if(theme!=nextTheme||paused!=motionPaused){theme=nextTheme=="Astro"?"Astro":"Sky";paused=motionPaused;layout="";}Publish();
   if(!preview)LiquidDesktop.PlaceComponent(this,anchor);
  }
- void Publish(){if(!ready)return;string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();string key=theme+Bounds.ToString()+screen.ToString()+paused+stamp;if(key==layout)return;layout=key;var scene=Screen.FromRectangle(screen).Bounds;Send(new{type="layout",theme=theme,paused=paused,scale=scale,x=Left-scene.Left,y=Top-scene.Top,width=scene.Width,height=scene.Height,wallpaper=stamp});}
+ void Publish(){if(!ready)return;var scene=Screen.FromRectangle(screen).Bounds;var sample=MonitorWallpaper.For(root,scene);string stamp=sample.Version;string key=theme+Bounds.ToString()+screen.ToString()+paused+stamp;if(key==layout)return;layout=key;Send(new{type="layout",theme=theme,paused=paused,scale=scale,x=Left-scene.Left,y=Top-scene.Top,width=scene.Width,height=scene.Height,wallpaper=stamp,wallpaperFile=sample.File});}
  void Send(object value){if(ready&&!closed&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  public void ApplyPreferences(object snapshot){pendingPreferences=snapshot;Send(new{type="preferences",snapshot=snapshot});}
  public void ApplyCompanionState(object snapshot){pendingCompanion=snapshot;string next=json.Serialize(snapshot);if(!ready||next==companionState)return;companionState=next;Send(new{type="companion",state=snapshot});}
@@ -81,6 +86,7 @@ internal sealed class TopIsland : Form {
  void Tick(){Tick(false);}
  void Tick(bool force){
   if(!ready||closed)return;bool read=Visible||force;
+  if(read&&(force||ticks%5==0)){var power=SystemInformation.PowerStatus;bool battery=power.BatteryChargeStatus!=BatteryChargeStatus.Unknown&&(power.BatteryChargeStatus&BatteryChargeStatus.NoSystemBattery)==0;Send(new{type="power",available=battery&&power.BatteryLifePercent>=0&&power.BatteryLifePercent<=1,percent=(int)Math.Round(power.BatteryLifePercent*100),plugged=power.PowerLineStatus==PowerLineStatus.Online});}
   if(read&&(force||ticks%(paused?15:2)==0)){var data=shared==null?widgets.Read():shared.ReadWidgets();string snapshot=json.Serialize(data);if(force||snapshot!=widgetState){widgetState=snapshot;Send(data);}}
   if(ticks++%15==0&&read){try{var drive=new DriveInfo("C");Send(new{type="status",disk="C: "+(drive.AvailableFreeSpace/1073741824.0).ToString("0.0")+" GB 可用"});}catch{}}
   if(!preview&&painted&&ticks%5==0)try{File.WriteAllText(Diagnostic("island-heartbeat.txt"),DateTime.UtcNow.ToString("o"));}catch{}
@@ -90,12 +96,14 @@ internal sealed class TopIsland : Form {
  static void Launch(string path,string args){Process.Start(new ProcessStartInfo(path,args){UseShellExecute=true});}
  async void RefreshWallpaper(){
   if(refreshingWallpaper)return;refreshingWallpaper=true;Send(new{type="wallpaper-refresh",busy=true,failed=false,message="正在更新玻璃…"});
-  try{await System.Threading.Tasks.Task.Yield();if(closed)return;string result=await WallpaperRefresh.Run(root,WallpaperCapture.CaptureDynamic);Publish();Send(new{type="wallpaper-refresh",busy=false,failed=false,message=result});}
+  try{await System.Threading.Tasks.Task.Yield();if(closed)return;string result=await WallpaperRefresh.RunMonitors(root,WallpaperCapture.CaptureDynamic);Publish();Send(new{type="wallpaper-refresh",busy=false,failed=false,message=result});}
   catch(Exception ex){try{File.WriteAllText(Path.Combine(root,"wallpaper-refresh-error.txt"),ex.ToString());}catch{}string reason=ex.Message.Replace('\r',' ').Replace('\n',' ');if(reason.Length>160)reason=reason.Substring(0,160)+"…";Send(new{type="wallpaper-refresh",busy=false,failed=true,message="更新失败："+reason});}
   finally{refreshingWallpaper=false;}
  }
  public async void OpenTray(){if(preview||closed)return;bool opened=await SystemTray.OpenAsync();Send(new{type="feedback",message=opened?"系统托盘已打开":"系统任务栏已显示，可点击隐藏图标箭头"});}
- void Action(string id){switch(id){
+ void Action(string id){
+  if(id.StartsWith("island-open:",StringComparison.Ordinal)){long sequence;if(Int64.TryParse(id.Substring(12),out sequence))IslandEvents.Open(sequence);return;}
+  switch(id){
   case "theme":File.WriteAllText(Path.Combine(root,"theme.txt"),theme=="Astro"?"Sky":"Astro");break;
   case "motion":var motion=Path.Combine(root,"paused.txt");File.WriteAllText(motion,File.Exists(motion)&&File.ReadAllText(motion).Trim()=="true"?"false":"true");break;
   case "refresh":RefreshWallpaper();break;

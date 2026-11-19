@@ -13,7 +13,7 @@ using Microsoft.Web.WebView2.WinForms;
 internal static class LiveGlassBackdrop {
  static volatile bool enabled,suspended;
  static readonly List<OpticalBackdrop> nativeSurfaces=new List<OpticalBackdrop>();
- internal sealed class Source {public IntPtr handle;public uint pid;public Rectangle bounds,visible;}
+ internal sealed class Source {public IntPtr handle;public uint pid;public Rectangle bounds,visible;public bool wallpaper;public string player;}
  [StructLayout(LayoutKind.Sequential)]struct RECT {public int left,top,right,bottom;public Rectangle Rectangle {get{return Rectangle.FromLTRB(left,top,right,bottom);}}}
  [DllImport("user32.dll")]static extern IntPtr GetWindow(IntPtr window,uint command);
  delegate bool EnumWindow(IntPtr window,IntPtr parameter);
@@ -27,6 +27,7 @@ internal static class LiveGlassBackdrop {
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
  [DllImport("user32.dll")]static extern bool GetWindowDisplayAffinity(IntPtr window,out uint affinity);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetClassName(IntPtr window,StringBuilder name,int length);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string type,string name);
  [DllImport("user32.dll")]static extern bool PrintWindow(IntPtr window,IntPtr dc,uint flags);
  [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr window,int attribute,out int value,int length);
  [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr window,int attribute,out RECT value,int length);
@@ -50,14 +51,21 @@ internal static class LiveGlassBackdrop {
    uint affinity;if(GetWindowDisplayAffinity(window,out affinity)&&affinity!=0)break;
    if(DwmGetWindowAttribute(window,9,out visible,16)!=0)visible=bounds;
    try{using(var process=Process.GetProcessById((int)pid))if(process.ProcessName=="LiquidDesktop")continue;}catch(ArgumentException){continue;}
-   result.Add(new Source{handle=window,pid=pid,bounds=rect,visible=visible.Rectangle});if(rect.Contains(area)||result.Count==12)break;
+   result.Add(new Source{handle=window,pid=pid,bounds=rect,visible=visible.Rectangle,wallpaper=desktop});if(rect.Contains(area)||result.Count==12)break;
   }return result;
  }
  static bool HasLiveWallpaper(IntPtr shell,uint own,Rectangle area){
-  bool present,blocked;return InspectWallpaper(shell,own,area,out present,out blocked);
+  bool present,blocked;string player;return InspectWallpaper(shell,own,area,out present,out blocked,out player);
  }
- static bool InspectWallpaper(IntPtr shell,uint own,Rectangle area,out bool present,out bool blocked){
-  bool found=false,excluded=false;int count=0;var names=new Dictionary<uint,string>();
+ internal static bool HasVisibleDesktopIcons(IntPtr shell){
+  bool visible=false;EnumChildWindows(shell,(child,unused)=>{
+   var name=new StringBuilder(128);GetClassName(child,name,name.Capacity);
+   if(name.ToString()=="SHELLDLL_DefView"){var icons=FindWindowEx(child,IntPtr.Zero,"SysListView32",null);if(icons!=IntPtr.Zero&&IsWindowVisible(icons)){visible=true;return false;}}
+   return true;
+  },IntPtr.Zero);return visible;
+ }
+ static bool InspectWallpaper(IntPtr shell,uint own,Rectangle area,out bool present,out bool blocked,out string player){
+  string identity="";bool found=false,excluded=HasVisibleDesktopIcons(shell);int count=0;var names=new Dictionary<uint,string>();
   EnumChildWindows(shell,(child,unused)=>{
    if(++count>256){excluded=true;return false;}
    uint pid;GetWindowThreadProcessId(child,out pid);uint affinity;
@@ -67,12 +75,12 @@ internal static class LiveGlassBackdrop {
     names[pid]=process;
    }
    if(process=="LiquidDesktop"||process=="Rainmeter")excluded=true;
-   RECT rect;if(IsWindowVisible(child)&&GetWindowRect(child,out rect)&&rect.Rectangle.IntersectsWith(area)&&(process.StartsWith("Lively.Player.",StringComparison.OrdinalIgnoreCase)||process=="mpv"&&LivelyMpv(pid)))found=true;
+   RECT rect;if(IsWindowVisible(child)&&GetWindowRect(child,out rect)&&rect.Rectangle.IntersectsWith(area)&&(process.StartsWith("Lively.Player.",StringComparison.OrdinalIgnoreCase)||process=="mpv"&&LivelyMpv(pid))){found=true;identity+="|"+pid+"/"+child;}
    return true;
   },IntPtr.Zero);
   // Lively's child HWND has a zero-sized WGC item; capture its shell root only
-  // when it contains a known player and no PrismGlass surfaces or protected child.
-  present=found;blocked=found&&excluded||count>256;return found&&!excluded;
+  // when it contains a known player and no visible icons, PrismGlass or protected child.
+  player=identity;present=found;blocked=found&&excluded||count>256;return found&&!excluded;
  }
  internal static bool MatchesMpv(string player,string lively){
   if(String.IsNullOrEmpty(player)||String.IsNullOrEmpty(lively))return false;
@@ -91,11 +99,11 @@ internal static class LiveGlassBackdrop {
    if(++count>512){blocked=true;return false;}if(!IsWindowVisible(window)||IsIconic(window))return true;
    var name=new StringBuilder(128);GetClassName(window,name,name.Capacity);if(name.ToString()!="Progman"&&name.ToString()!="WorkerW")return true;
    RECT bounds,visible;if(!GetWindowRect(window,out bounds)||!bounds.Rectangle.IntersectsWith(area))return true;
-   bool present,unsafeRoot;bool allowed=InspectWallpaper(window,own,area,out present,out unsafeRoot);
+   bool present,unsafeRoot;string player;bool allowed=InspectWallpaper(window,own,area,out present,out unsafeRoot,out player);
    if(!present){if(unsafeRoot)blocked=true;return true;}uint pid,affinity;GetWindowThreadProcessId(window,out pid);
    if(!allowed||pid==0||(GetWindowDisplayAffinity(window,out affinity)&&affinity!=0)||(long)bounds.Rectangle.Width*bounds.Rectangle.Height>16777216){blocked=true;return true;}
    if(DwmGetWindowAttribute(window,9,out visible,16)!=0)visible=bounds;
-   result=new Source{handle=window,pid=pid,bounds=bounds.Rectangle,visible=visible.Rectangle};return false;
+   result=new Source{handle=window,pid=pid,bounds=bounds.Rectangle,visible=visible.Rectangle,player=player,wallpaper=true};return false;
   },IntPtr.Zero);
   if(result==null&&blocked)throw new InvalidOperationException("动态壁纸所在桌面不允许安全取样，请保持壁纸运行后重试。");return result;
  }

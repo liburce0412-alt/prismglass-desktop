@@ -13,7 +13,7 @@
   for(const [node,base] of changes)node.style.fontSize=factor===1?base.inline:(base.size*factor)+'px';
  }
  function schedule(){if(!scheduled)scheduled=requestAnimationFrame(scaleText);}
- function apply(value){current=value||{};const grip=document.getElementById("position-grip");if(grip){if(!grip.dataset.unlockedTitle)grip.dataset.unlockedTitle=grip.title;grip.disabled=!!current.layoutLocked;grip.title=current.layoutLocked?"布局已锁定，在设置中解锁后可拖动":grip.dataset.unlockedTitle;grip.setAttribute("aria-label",grip.title);}document.documentElement.style.setProperty('--prism-text-scale',(current.textScale||100)/100);document.body.classList.toggle('prism-reduced-motion',!!current.reducedMotion);schedule();window.dispatchEvent(new CustomEvent('prism-preferences',{detail:current}));}
+ function apply(value){current=value||{};const grip=document.getElementById("position-grip");if(grip){if(!grip.dataset.unlockedTitle)grip.dataset.unlockedTitle=grip.dataset.prismHint||grip.title;grip.disabled=!!current.layoutLocked;grip.title=current.layoutLocked?"布局已锁定，在设置中解锁后可拖动":grip.dataset.unlockedTitle;grip.setAttribute("aria-label",grip.title);}document.documentElement.style.setProperty('--prism-text-scale',(current.textScale||100)/100);document.body.classList.toggle('prism-reduced-motion',!!current.reducedMotion);schedule();window.dispatchEvent(new CustomEvent('prism-preferences',{detail:current}));}
  window.chrome?.webview?.addEventListener('message',e=>{if(e.data.type==='preferences')apply(e.data.snapshot);});
  window.addEventListener('prism-settings-applied',e=>apply(e.detail));
  const observer=new MutationObserver(()=>{if(current.textScale!==100)schedule();});observer.observe(document.body,{childList:true,subtree:true});

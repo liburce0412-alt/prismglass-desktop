@@ -14,19 +14,26 @@ using Wpf = System.Windows;
 // Dock-owned transitions: never inject into applications or alter global animation settings.
 internal sealed class NativeWindowMotion : IDisposable {
  readonly Func<bool> allowed;readonly Func<DockEntry,DockWindow,Rectangle> target;
- readonly Dictionary<long,Flight> flights=new Dictionary<long,Flight>();readonly List<Launch> launches=new List<Launch>();
- readonly Timer timer=new Timer{Interval=30};readonly Stopwatch clock=Stopwatch.StartNew();bool disposed,rendering;double launchPoll;
+ readonly Dictionary<long,Flight> flights=new Dictionary<long,Flight>();
+ readonly Timer timer=new Timer{Interval=30};readonly Stopwatch clock=Stopwatch.StartNew();bool disposed,rendering;
  static readonly System.Threading.SemaphoreSlim captures=new System.Threading.SemaphoreSlim(2,2);
- sealed class Flight {public DockWindow window;public Bitmap image;public Rectangle bounds,icon;public GenieSurface surface;public double position,goal,stamp;public bool preparing,first,cancelled,minimizedByUs,restoring,hiddenForSnapshot;}
- sealed class Launch {public DockEntry entry;public HashSet<long> before;public double expires,seen;public long candidate;public Rectangle bounds;}
+ sealed class Flight {public DockWindow window;public System.Windows.Media.Imaging.BitmapSource texture;public Rectangle bounds,icon;public GenieSurface surface;public double position,velocity,goal,stamp;public bool preparing,cancelled,minimizedByUs,restoring,hiddenForSnapshot;}
+ internal static bool AdvanceMotion(ref double position,ref double velocity,double goal,double dt){
+  const double omega=22;
+  double displacement=position-goal,momentum=velocity+omega*displacement,decay=Math.Exp(-omega*dt);
+  position=goal+(displacement+momentum*dt)*decay;
+  velocity=(velocity-omega*momentum*dt)*decay;
+  if(Math.Abs(position-goal)>=.001||Math.Abs(velocity)>=.02)return false;
+  position=goal;velocity=0;return true;
+ }
  [StructLayout(LayoutKind.Sequential)]internal struct RECT {public int l,t,r,b;public Rectangle Rectangle{get{return Rectangle.FromLTRB(l,t,r,b);}}}
  [DllImport("user32.dll")]static extern bool GetWindowRect(IntPtr window,out RECT rect);
  [DllImport("user32.dll")]internal static extern bool IsIconic(IntPtr window);
  [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr window,int attribute,out int value,int size);
  [DllImport("dwmapi.dll")]static extern int DwmGetWindowAttribute(IntPtr window,int attribute,out RECT value,int size);
  [DllImport("dwmapi.dll")]static extern int DwmSetWindowAttribute(IntPtr window,int attribute,ref int value,int size);
- [DllImport("dwmapi.dll")]static extern int DwmFlush();
  const string SnapshotOwner="PrismGlass.Motion.SnapshotOwner";
+ static readonly Dictionary<IntPtr,IntPtr> pendingReveal=new Dictionary<IntPtr,IntPtr>();static System.Windows.Forms.Timer revealRetry;
  delegate bool EnumWindow(IntPtr window,IntPtr state);
  [DllImport("user32.dll")]static extern bool EnumWindows(EnumWindow callback,IntPtr state);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr GetProp(IntPtr window,string name);
@@ -47,8 +54,9 @@ internal sealed class NativeWindowMotion : IDisposable {
    RestoreOpacity(window);return true;
   },IntPtr.Zero);
  }
- static bool HideForSnapshot(IntPtr window){
+ internal static bool HideForSnapshot(IntPtr window){
   if(GetProp(window,SnapshotOwner)!=IntPtr.Zero)return false;long style=GetWindowLongPtr(window,-20).ToInt64();bool layered=(style&0x80000)!=0;uint color=0,flags=2;byte alpha=255;
+  int cloaked;if(DwmGetWindowAttribute(window,14,out cloaked,4)==0&&cloaked!=0)return false;
   if(layered&&!GetLayeredWindowAttributes(window,out color,out alpha,out flags))return false;
   string[] names={".Layered",".Color",".Alpha",".Flags"};long[] values={layered?2:1,color,alpha+1,flags};
   for(int i=0;i<names.Length;i++)if(!SetProp(window,SnapshotOwner+names[i],new IntPtr(values[i]))){foreach(var name in names)RemoveProp(window,SnapshotOwner+name);return false;}
@@ -56,51 +64,76 @@ internal sealed class NativeWindowMotion : IDisposable {
   if(!layered)SetWindowLongPtr(window,-20,new IntPtr(style|0x80000));
   if(SetLayeredWindowAttributes(window,0,0,2))return true;RestoreOpacity(window);return false;
  }
- static void RestoreOpacity(IntPtr window){
+ internal static void RestoreOpacity(IntPtr window){
   long layered=GetProp(window,SnapshotOwner+".Layered").ToInt64(),alpha=GetProp(window,SnapshotOwner+".Alpha").ToInt64(),flags=GetProp(window,SnapshotOwner+".Flags").ToInt64();
   if(layered<1||layered>2||alpha<1||alpha>256||flags<1||flags>3)return;
-  if(layered==2){if(!SetLayeredWindowAttributes(window,(uint)GetProp(window,SnapshotOwner+".Color").ToInt64(),(byte)(alpha-1),(uint)flags))return;}
+  if(layered==2){if(!SetLayeredWindowAttributes(window,(uint)GetProp(window,SnapshotOwner+".Color").ToInt64(),(byte)(alpha-1),(uint)flags)){RetryReveal(window);return;}}
   else SetWindowLongPtr(window,-20,new IntPtr(GetWindowLongPtr(window,-20).ToInt64()&~0x80000L));
   foreach(var name in new[]{".Layered",".Color",".Alpha",".Flags",""})RemoveProp(window,SnapshotOwner+name);
+  pendingReveal.Remove(window);
+ }
+ static void RetryReveal(IntPtr window){
+  pendingReveal[window]=GetProp(window,SnapshotOwner);if(revealRetry==null){revealRetry=new System.Windows.Forms.Timer{Interval=100};revealRetry.Tick+=(s,e)=>{foreach(var item in pendingReveal.ToArray()){if(GetProp(item.Key,SnapshotOwner)!=item.Value)pendingReveal.Remove(item.Key);else RestoreOpacity(item.Key);}if(pendingReveal.Count==0)revealRetry.Stop();};}revealRetry.Start();
  }
  void RenderTick(object sender,EventArgs args){Tick();}
  void Rendering(bool value){if(rendering==value)return;rendering=value;if(value)Media.CompositionTarget.Rendering+=RenderTick;else Media.CompositionTarget.Rendering-=RenderTick;}
+ sealed class TransitionState {public DockWindow window;public int previous,count;}
+ static readonly Dictionary<long,TransitionState> transitions=new Dictionary<long,TransitionState>();
+ static TransitionState Suppress(DockWindow window){
+  TransitionState state;if(transitions.TryGetValue(window.handle,out state)&&state.window.pid==window.pid){state.count++;return state;}
+  int previous;if(DwmGetWindowAttribute(new IntPtr(window.handle),3,out previous,4)!=0)previous=0;
+  state=new TransitionState{window=window,previous=previous,count=1};transitions[window.handle]=state;int disabled=1;DwmSetWindowAttribute(new IntPtr(window.handle),3,ref disabled,4);return state;
+ }
+ static void Unsuppress(TransitionState state){
+  if(--state.count!=0)return;TransitionState current;if(transitions.TryGetValue(state.window.handle,out current)&&current==state){transitions.Remove(state.window.handle);if(DockBackend.Valid(state.window))DwmSetWindowAttribute(new IntPtr(state.window.handle),3,ref state.previous,4);}
+ }
  internal static bool SetState(DockWindow window,bool minimized){
-  if(!DockBackend.Valid(window))return false;var handle=new IntPtr(window.handle);int previous;
-  // This DWM attribute is set-only on some Windows builds; a failed read must not skip suppression.
-  if(DwmGetWindowAttribute(handle,3,out previous,4)!=0)previous=0;
-  int disabled=1;DwmSetWindowAttribute(handle,3,ref disabled,4);
-  try{return DockBackend.SetMinimized(window,minimized);}finally{if(DockBackend.Valid(window))DwmSetWindowAttribute(handle,3,ref previous,4);}
+  if(!DockBackend.Valid(window))return false;var state=Suppress(window);
+  try{return DockBackend.SetMinimized(window,minimized);}finally{Unsuppress(state);}
+ }
+ internal static async Task<bool> SetStateAsync(DockWindow window,bool minimized,Func<bool> current=null){
+  if(!DockBackend.Valid(window)||current!=null&&!current())return false;
+  if(IsIconic(new IntPtr(window.handle))==minimized)return DockBackend.CanManage(window);
+  var state=Suppress(window);
+  try{return await DockBackend.SetMinimizedAsync(window,minimized,current);}finally{Unsuppress(state);}
+ }
+ async Task<bool> Minimize(Flight flight){
+  flight.minimizedByUs=true;bool result=await SetStateAsync(flight.window,true,()=>Current(flight));
+  if(!Current(flight)){if(!flights.ContainsKey(flight.window.handle)&&DockBackend.Valid(flight.window))await SetStateAsync(flight.window,false,()=>!flights.ContainsKey(flight.window.handle));return false;}return result;
+ }
+ internal static async Task Compose(){
+  var ready=new TaskCompletionSource<bool>();int frames=0;EventHandler rendered=(s,e)=>{if(++frames==2)ready.TrySetResult(true);};
+  Media.CompositionTarget.Rendering+=rendered;try{await Task.WhenAny(ready.Task,Task.Delay(80));}finally{Media.CompositionTarget.Rendering-=rendered;}
  }
  public bool Interact(DockEntry entry,DockClickAction action,DockWindow window){
   if(disposed||!allowed())return false;
-  if(action==DockClickAction.Launch){launches.Add(new Launch{entry=entry,before=new HashSet<long>(entry.windows.Select(w=>w.handle)),expires=clock.Elapsed.TotalSeconds+10});if(launches.Count>8)launches.RemoveAt(0);timer.Start();return false;}
+  // A newly opened application owns its first frame; never minimize it to replay its launch.
+  if(action==DockClickAction.Launch)return false;
   Flight running;if(window!=null&&flights.TryGetValue(window.handle,out running)&&(running.preparing||running.surface!=null)){running.goal=1-running.goal;timer.Start();return true;}
-  if(action==DockClickAction.Minimize)return Begin(window,target(entry,window),true,false);
+  if(action==DockClickAction.Minimize)return Begin(window,target(entry,window),true);
   return false;
  }
  public bool Restore(DockWindow window){
   if(disposed||!allowed()||!DockBackend.Valid(window)||!DockBackend.CanManage(window)||!IsIconic(new IntPtr(window.handle)))return false;
-  var icon=target(null,window);if(icon.IsEmpty)return false;Flight flight;
-  if(!flights.TryGetValue(window.handle,out flight)||flight.image==null||flight.window.pid!=window.pid){
-   var handle=new IntPtr(window.handle);if(!HideForSnapshot(handle))return false;
-   flight=new Flight{window=window,icon=icon,goal=0,restoring=true,hiddenForSnapshot=true,preparing=true};flights[window.handle]=flight;
-   try{RECT bounds;if(!SetState(window,false)||!GetWindowRect(new IntPtr(window.handle),out bounds)||bounds.Rectangle.Width<1||bounds.Rectangle.Height<1||(long)bounds.Rectangle.Width*bounds.Rectangle.Height>16777216)throw new InvalidOperationException("窗口预览暂不可用。");flight.bounds=bounds.Rectangle;timer.Start();Prepare(flight);return true;}
-   catch{SetState(window,false);Release(flight);flights.Remove(window.handle);return false;}
-  }
-  flight.icon=icon;
-  flight.goal=0;if(flight.surface==null){flight.surface=new GenieSurface(flight.image,flight.bounds,flight.icon);flight.position=1;flight.preparing=true;ShowRestore(flight);}timer.Start();return true;
+  var icon=target(null,window);if(icon.IsEmpty)return false;Error=null;Flight flight;
+  // Without a retained image, let Windows restore immediately instead of hiding the app for capture.
+  if(!flights.TryGetValue(window.handle,out flight)||flight.texture==null||flight.window.pid!=window.pid)return false;
+  try{
+   if(flight.surface==null)flight.surface=new GenieSurface(flight.texture,flight.bounds,icon);
+   if(!HideForSnapshot(new IntPtr(window.handle))){Release(flight);flights.Remove(window.handle);return false;}
+   flight.hiddenForSnapshot=true;flight.restoring=true;flight.icon=icon;flight.goal=0;flight.position=1;flight.preparing=true;ShowRestore(flight);timer.Start();return true;
+  }catch(Exception ex){Error="窗口动效暂不可用："+ex.Message;Release(flight);flights.Remove(window.handle);return false;}
  }
  async void ShowRestore(Flight flight){
-  try{var surface=flight.surface;surface.Render(flight.position);surface.Show();if(await Task.WhenAny(surface.Ready,Task.Delay(500))!=surface.Ready||!await surface.Ready)throw new InvalidOperationException("窗口动画未及时就绪。");if(!Current(flight)||!allowed())return;flight.stamp=clock.Elapsed.TotalSeconds;Rendering(true);}
-  catch{if(Current(flight)){SetState(flight.window,false);Release(flight);flights.Remove(flight.window.handle);}}
-  finally{flight.preparing=false;}
+  try{if(!await SetStateAsync(flight.window,false,()=>Current(flight)))throw new InvalidOperationException("窗口暂时无法还原。");if(!Current(flight))return;var surface=flight.surface;surface.Render(flight.position);surface.Show();if(await Task.WhenAny(surface.Ready,Task.Delay(500))!=surface.Ready||!await surface.Ready)throw new InvalidOperationException("窗口动画未及时就绪。");if(!Current(flight)||!allowed())return;flight.stamp=clock.Elapsed.TotalSeconds;Rendering(true);}
+  catch(Exception ex){if(Current(flight)){Error=ex.Message;Release(flight);CompleteFallback(flight);}}
+  finally{if(flight.surface!=null)flight.preparing=false;}
  }
- internal bool Begin(DockWindow window,Rectangle icon,bool minimize,bool first){
+ internal bool Begin(DockWindow window,Rectangle icon,bool minimize){
   if(disposed||!allowed()||!DockBackend.Valid(window)||!DockBackend.CanManage(window)||icon.Width<=0||icon.Height<=0||IsIconic(new IntPtr(window.handle)))return false;
-  RECT rect;if(!GetWindowRect(new IntPtr(window.handle),out rect)||rect.Rectangle.Width<1||rect.Rectangle.Height<1||(long)rect.Rectangle.Width*rect.Rectangle.Height>16777216)return false;
+  Error=null;RECT rect;if(!GetWindowRect(new IntPtr(window.handle),out rect)||rect.Rectangle.Width<1||rect.Rectangle.Height<1||(long)rect.Rectangle.Width*rect.Rectangle.Height>16777216)return false;
   Flight old;if(flights.TryGetValue(window.handle,out old)){old.cancelled=true;Release(old);}
-  var flight=new Flight{window=window,bounds=rect.Rectangle,icon=icon,goal=minimize?1:0,first=first,preparing=true};flights[window.handle]=flight;timer.Start();Prepare(flight);return true;
+  var flight=new Flight{window=window,bounds=rect.Rectangle,icon=icon,goal=minimize?1:0,preparing=true};flights[window.handle]=flight;timer.Start();Prepare(flight);return true;
  }
  internal static async Task<Bitmap> Snapshot(DockWindow window,Rectangle bounds){
   if(bounds.Width<1||bounds.Height<1||(long)bounds.Width*bounds.Height>16777216||!DockBackend.Valid(window)||!captures.Wait(0))return null;
@@ -117,53 +150,78 @@ internal sealed class NativeWindowMotion : IDisposable {
  async void Prepare(Flight flight){
   Bitmap captured=null;
   try{
-   // A restored Chromium window needs its first compositor frame before PrintWindow can supply pixels.
-   if(flight.hiddenForSnapshot){await Task.Delay(32);if(!Current(flight)||!allowed())return;DwmFlush();}
    var source=new LiveGlassBackdrop.Source{handle=new IntPtr(flight.window.handle),pid=flight.window.pid,bounds=flight.bounds,visible=flight.bounds};
-   captured=await Snapshot(flight.window,flight.bounds);if(!Current(flight)||!DockBackend.Valid(flight.window)||!allowed()||captured==null)return;
-   if(flight.goal==0&&!flight.first&&!flight.restoring)return;
-   RECT visible;if(DwmGetWindowAttribute(source.handle,9,out visible,16)==0&&flight.bounds.Contains(visible.Rectangle)&&visible.Rectangle.Width>0&&visible.Rectangle.Height>0){var crop=visible.Rectangle;crop.Offset(-flight.bounds.X,-flight.bounds.Y);var trimmed=captured.Clone(crop,PixelFormat.Format32bppArgb);captured.Dispose();captured=trimmed;flight.bounds=visible.Rectangle;}
-   flight.image=captured;captured=null;flight.position=flight.first||flight.restoring?1:0;
-   flight.surface=new GenieSurface(flight.image,flight.bounds,flight.icon);flight.surface.Render(flight.position);flight.surface.Show();
+   captured=await Snapshot(flight.window,flight.bounds);if(!Current(flight)||!DockBackend.Valid(flight.window)||!allowed())return;if(captured==null)return;
+   if(flight.goal==0&&!flight.restoring)return;
+   Rectangle crop=Rectangle.Empty;RECT visible;if(DwmGetWindowAttribute(source.handle,9,out visible,16)==0&&flight.bounds.Contains(visible.Rectangle)&&visible.Rectangle.Width>0&&visible.Rectangle.Height>0){crop=visible.Rectangle;crop.Offset(-flight.bounds.X,-flight.bounds.Y);flight.bounds=visible.Rectangle;}
+   var image=captured;captured=null;
+   var texture=await Task.Run(()=>{using(image){if(crop.IsEmpty)return GenieSurface.Texture(image);using(var trimmed=image.Clone(crop,PixelFormat.Format32bppArgb))return GenieSurface.Texture(trimmed);}});
+   if(!Current(flight)||!DockBackend.Valid(flight.window)||!allowed())return;
+   flight.texture=texture;flight.position=flight.restoring?1:0;
+   flight.surface=new GenieSurface(flight.texture,flight.bounds,flight.icon);flight.surface.Render(flight.position);flight.surface.Show();
    var surface=flight.surface;if(await Task.WhenAny(surface.Ready,Task.Delay(500))!=surface.Ready||!await surface.Ready)throw new InvalidOperationException("窗口动画未及时就绪。");
    if(!Current(flight)||!allowed()||!DockBackend.Valid(flight.window))return;
-   if(!SetState(flight.window,true)){Release(flight);return;}flight.minimizedByUs=true;Reveal(flight);flight.stamp=clock.Elapsed.TotalSeconds;
+   if(!flight.restoring){await Compose();if(!Current(flight)||!allowed())return;if(!await Minimize(flight)){Release(flight);return;}Reveal(flight);}flight.stamp=clock.Elapsed.TotalSeconds;
    Rendering(true);
-  }catch(Exception ex){Error="窗口动效暂不可用："+ex.Message;Release(flight);}
+  }catch(Exception ex){if(Current(flight)){Error="窗口动效暂不可用："+ex.Message;Release(flight);}}
   finally{
    if(captured!=null)captured.Dispose();flight.preparing=false;
-   if(Current(flight)&&flight.surface==null){if(DockBackend.Valid(flight.window)&&allowed()){if(flight.goal==1&&!SetState(flight.window,true))Error="窗口未能最小化，请使用应用的最小化按钮。";else if(flight.goal==0&&flight.minimizedByUs&&!SetState(flight.window,false))Error="窗口未能还原，请从 Windows 任务栏打开。";}Release(flight);flights.Remove(flight.window.handle);}
+   if(Current(flight)&&flight.surface==null)CompleteFallback(flight);
   }
+ }
+ async void CompleteFallback(Flight flight){
+  flight.preparing=true;
+  try{
+   while(Current(flight)&&allowed()){
+    double goal=flight.goal;if(goal==0&&!flight.minimizedByUs&&!flight.restoring)break;
+    if(goal==1)flight.minimizedByUs=true;
+    bool applied=await SetStateAsync(flight.window,goal==1,()=>Current(flight)&&flight.goal==goal);
+    if(!Current(flight))return;if(flight.goal!=goal)continue;
+    if(!applied)Error="窗口未接受此次切换，请从任务栏重试。";break;
+   }
+  }catch(Exception ex){if(Current(flight))Error=ex.Message;}
+  finally{if(Current(flight)){Release(flight);flights.Remove(flight.window.handle);}flight.preparing=false;}
  }
  void Tick(){
   if(disposed)return;
   try{
    double now=clock.Elapsed.TotalSeconds;
    if(!allowed()){Cancel();return;}
-   if(launches.Count>0&&now-launchPoll>=.08){launchPoll=now;var windows=DockBackend.ReadWindows();foreach(var launch in launches.ToArray()){
-    var window=windows.FirstOrDefault(w=>!launch.before.Contains(w.handle)&&DockBackend.Matches(new DockPin{path=launch.entry.path,arguments=launch.entry.arguments},w));
-    if(window!=null){RECT rect;if(GetWindowRect(new IntPtr(window.handle),out rect)){if(launch.candidate!=window.handle||launch.bounds!=rect.Rectangle){launch.candidate=window.handle;launch.bounds=rect.Rectangle;launch.seen=now;}else if(now-launch.seen>=.10){launches.Remove(launch);Begin(window,target(launch.entry,window),false,true);}}}if(now>=launch.expires)launches.Remove(launch);
-   }}
    foreach(var flight in flights.Values.ToArray()){
     if(!DockBackend.Valid(flight.window)){Release(flight);flights.Remove(flight.window.handle);continue;}
     if(flight.preparing||flight.surface==null)continue;
-    if(!IsIconic(new IntPtr(flight.window.handle))){Release(flight);flights.Remove(flight.window.handle);continue;}
-    double step=Math.Max(0,now-flight.stamp)/(flight.first?.23:.36);flight.stamp=now;
-    flight.position=flight.goal==1?Math.Min(1,flight.position+step):Math.Max(0,flight.position-step);flight.surface.Render(flight.position);
-    if(flight.position==flight.goal){
-     if(flight.goal==0){SetState(flight.window,false);try{DockBackend.ActivateImmediate(flight.window);}catch(InvalidOperationException){}Release(flight);flights.Remove(flight.window.handle);}
-     else{flight.surface.Dispose();flight.surface=null;}
+    if(!IsIconic(new IntPtr(flight.window.handle))&&!flight.hiddenForSnapshot){Release(flight);flights.Remove(flight.window.handle);continue;}
+    double elapsed=Math.Max(0,now-flight.stamp);flight.stamp=now;
+    bool finished=AdvanceMotion(ref flight.position,ref flight.velocity,flight.goal,elapsed);flight.surface.Render(flight.position);
+    if(finished){
+     Finish(flight);
     }
    }
    // Minimized snapshots are bounded and only retained for the reverse Dock transition.
    foreach(var flight in flights.Values.Where(f=>!f.preparing&&f.surface==null).Skip(6).ToArray()){Release(flight);flights.Remove(flight.window.handle);}
-   if(!Surfaces.Any())Rendering(false);if(ActiveCount==0&&launches.Count==0)timer.Stop();
-  }catch{Cancel();}
+   if(!Surfaces.Any())Rendering(false);if(ActiveCount==0)timer.Stop();
+  }catch(Exception ex){Error="窗口动效暂不可用："+ex.Message;Cancel();}
+ }
+ async void Finish(Flight flight){
+  flight.preparing=true;double goal=flight.goal;
+  try{
+   if(goal==0&&!flight.hiddenForSnapshot)flight.hiddenForSnapshot=HideForSnapshot(new IntPtr(flight.window.handle));
+   bool changed=await (goal==1?Minimize(flight):SetStateAsync(flight.window,false,()=>Current(flight)&&flight.goal==goal));if(!Current(flight)||flight.goal!=goal)return;if(!changed)throw new InvalidOperationException("窗口未接受此次切换。");
+   if(goal==0){Reveal(flight);await Compose();if(!Current(flight)||flight.goal!=goal)return;try{await DockBackend.ActivateAsync(flight.window);}catch(InvalidOperationException ex){Error=ex.Message;}if(!Current(flight)||flight.goal!=goal)return;Release(flight);flights.Remove(flight.window.handle);}
+   else{flight.minimizedByUs=true;Reveal(flight);flight.surface.Dispose();flight.surface=null;}
+  }catch(Exception ex){if(Current(flight)){Error=ex.Message;Release(flight);flights.Remove(flight.window.handle);}}
+  finally{if(Current(flight)&&flight.surface!=null&&flight.goal!=goal){if(!IsIconic(new IntPtr(flight.window.handle))&&!flight.hiddenForSnapshot)flight.hiddenForSnapshot=HideForSnapshot(new IntPtr(flight.window.handle));flight.stamp=clock.Elapsed.TotalSeconds;}flight.preparing=false;}
  }
  bool Current(Flight flight){Flight current;return !disposed&&!flight.cancelled&&flights.TryGetValue(flight.window.handle,out current)&&current==flight;}
- public void Cancel(){Rendering(false);launches.Clear();foreach(var flight in flights.Values.ToArray()){flight.cancelled=true;if(flight.minimizedByUs&&flight.surface!=null&&DockBackend.Valid(flight.window))SetState(flight.window,false);Release(flight);}flights.Clear();timer.Stop();}
+ async void RestoreCancelled(DockWindow window){
+  try{if(!await DockBackend.SetMinimizedAsync(window,false,()=>!flights.ContainsKey(window.handle))&&!flights.ContainsKey(window.handle))Error="窗口未能还原，请从 Windows 任务栏打开。";}catch(Exception ex){Error=ex.Message;}
+ }
+ public void Cancel(){
+  Rendering(false);var cancelled=flights.Values.ToArray();flights.Clear();timer.Stop();
+  foreach(var flight in cancelled){flight.cancelled=true;bool restore=flight.minimizedByUs&&(flight.surface!=null||flight.preparing);Release(flight);if(restore&&DockBackend.Valid(flight.window))RestoreCancelled(flight.window);}
+ }
  static void Reveal(Flight flight){if(!flight.hiddenForSnapshot)return;var handle=new IntPtr(flight.window.handle);if(DockBackend.Valid(flight.window)&&GetProp(handle,SnapshotOwner)==new IntPtr(Process.GetCurrentProcess().Id))RestoreOpacity(handle);flight.hiddenForSnapshot=false;}
- static void Release(Flight flight){Reveal(flight);if(flight.surface!=null){flight.surface.Dispose();flight.surface=null;}if(flight.image!=null){flight.image.Dispose();flight.image=null;}}
+ static void Release(Flight flight){Reveal(flight);if(flight.surface!=null){flight.surface.Dispose();flight.surface=null;}flight.texture=null;}
  public void Dispose(){if(disposed)return;disposed=true;Cancel();timer.Dispose();}
 
  internal sealed class GenieSurface:Wpf.Window,IDisposable {
@@ -185,7 +243,7 @@ internal sealed class NativeWindowMotion : IDisposable {
   public GenieSurface(Bitmap bitmap,Rectangle from,Rectangle to):this(Texture(bitmap),from,to){}
   internal GenieSurface(System.Windows.Media.Imaging.BitmapSource texture,Rectangle from,Rectangle to){
    source=from;icon=to;canvas=Rectangle.Inflate(Rectangle.Union(from,to),4,4);
-   AllowsTransparency=true;WindowStyle=Wpf.WindowStyle.None;ResizeMode=Wpf.ResizeMode.NoResize;ShowInTaskbar=false;ShowActivated=false;Topmost=true;Background=Media.Brushes.Transparent;
+   AllowsTransparency=true;WindowStyle=Wpf.WindowStyle.None;ResizeMode=Wpf.ResizeMode.NoResize;ShowInTaskbar=false;ShowActivated=false;Topmost=!StartupWindowOrder.MaskVisible();Background=Media.Brushes.Transparent;
    Width=canvas.Width;Height=canvas.Height;Left=canvas.Left;Top=canvas.Top;
    viewport=new System.Windows.Controls.Viewport3D{Width=canvas.Width,Height=canvas.Height,IsHitTestVisible=false,ClipToBounds=false};
    viewport.Camera=new Media3D.OrthographicCamera(new Media3D.Point3D(canvas.Width/2.0,-canvas.Height/2.0,100),new Media3D.Vector3D(0,0,-1),new Media3D.Vector3D(0,1,0),canvas.Width){NearPlaneDistance=1,FarPlaneDistance=200};
@@ -195,7 +253,7 @@ internal sealed class NativeWindowMotion : IDisposable {
    viewport.Children.Add(new Media3D.ModelVisual3D{Content=new Media3D.GeometryModel3D(mesh,material)});viewport.Children.Add(new Media3D.ModelVisual3D{Content=new Media3D.AmbientLight(Media.Colors.White)});
    Content=new System.Windows.Controls.Viewbox{Stretch=Media.Stretch.Fill,Child=viewport};
    // Per-pixel alpha also lets pointer input pass through overlays across processes.
-   SourceInitialized+=(s,e)=>{var window=new System.Windows.Interop.WindowInteropHelper(this).Handle;SetWindowLongPtr(window,-20,new IntPtr(GetWindowLongPtr(window,-20).ToInt64()|0x080000A0L));SetWindowPos(window,new IntPtr(-1),canvas.X,canvas.Y,canvas.Width,canvas.Height,0x10);};
+   SourceInitialized+=(s,e)=>{var window=new System.Windows.Interop.WindowInteropHelper(this).Handle;System.Windows.Interop.HwndSource.FromHwnd(window).AddHook(StartupWindowOrder.Hook);if(!Topmost)StartupWindowOrder.RestoreTopmost(window,()=>Topmost=true);SetWindowLongPtr(window,-20,new IntPtr(GetWindowLongPtr(window,-20).ToInt64()|0x080000A0L));SetWindowPos(window,StartupWindowOrder.InsertAfter(window,new IntPtr(-1)),canvas.X,canvas.Y,canvas.Width,canvas.Height,0x10);};
    ContentRendered+=(s,e)=>ready.TrySetResult(true);Closed+=(s,e)=>ready.TrySetResult(false);
   }
   void MeshRows(int rows){var uv=new Media.PointCollection((rows+1)*2);var indices=new Media.Int32Collection(rows*6);for(int row=0;row<=rows;row++){uv.Add(new Wpf.Point(0,row/(double)rows));uv.Add(new Wpf.Point(1,row/(double)rows));if(row<rows){int n=row*2;indices.Add(n);indices.Add(n+2);indices.Add(n+1);indices.Add(n+1);indices.Add(n+2);indices.Add(n+3);}}uv.Freeze();indices.Freeze();mesh.TextureCoordinates=uv;mesh.TriangleIndices=indices;}

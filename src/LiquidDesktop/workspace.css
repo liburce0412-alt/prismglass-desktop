@@ -104,3 +104,29 @@ input.setting-switch[type=checkbox]:active::after{box-shadow:0 1px 3px #06182c36
 #layout-lock:before{content:'◇';font-size:15px;line-height:1}#layout-lock[aria-pressed=true]{background:#bce4ff2d;border-color:#bfe8ff80;color:#f6fcff}#layout-lock[aria-pressed=true]:before{content:'◆'}
 .settings-scroll:has(#glass-editor){display:flex;flex-direction:column;overflow:hidden;padding:18px}.settings-scroll:has(#glass-editor)>.settings-heading{flex:none;margin-bottom:12px;min-height:34px}.settings-scroll:has(#glass-editor) #settings-fields{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}#glass-editor{display:block;flex:1;width:100%;min-height:240px;border:1px solid #e6f3ff26;border-radius:22px;background:transparent}.glass-runtime-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 18px;flex:none;padding:5px 3px;font-size:10px;color:#e0ebf7}.glass-runtime-controls>label{display:flex;align-items:center;gap:10px}.glass-runtime-controls input[type=range]{width:100px}.glass-runtime-controls output{width:32px;text-align:right;font-size:10px}.glass-runtime-controls input.setting-switch{width:32px;height:20px}.glass-runtime-controls input.setting-switch:after{width:14px;height:14px}.glass-runtime-controls input.setting-switch:checked:after{transform:translateX(12px)}
 @media(max-width:720px){.settings-scroll:has(#glass-editor){padding:12px}.glass-runtime-controls{gap:8px}.glass-runtime-controls>label{gap:7px}.glass-runtime-controls input[type=range]{width:85px}}
+
+/* Keep the wish readable while the light beneath it quietly moves. */
+.welcome-wish{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 24px;margin:0 0 8px;padding:3px 0 20px;line-height:1.6}
+.welcome-thanks{font-size:12px;color:var(--muted)}
+.welcome-peace{position:relative;isolation:isolate;display:inline-block;font-size:clamp(18px,2.25vw,24px);font-weight:600;letter-spacing:.055em;color:var(--text,#f1f7ff);text-wrap:balance;text-shadow:0 1px 7px #17375b35}
+.welcome-peace:before{content:'';position:absolute;z-index:-1;inset:40% -10px -5px;border-radius:50%;background:linear-gradient(100deg,#9cdfff32,#c5b9ff25,#b3eedc30);filter:blur(12px);pointer-events:none;animation:welcome-peace-glow 8s ease-in-out infinite}
+.welcome-peace:after{content:'';position:absolute;left:0;right:0;bottom:-7px;height:1px;background:linear-gradient(90deg,transparent,#c9f0ffbb,#dcd2ffbb,transparent);transform-origin:center;pointer-events:none;animation:welcome-peace-line 8s ease-in-out infinite}
+@keyframes welcome-peace-glow{0%,100%{opacity:.4;transform:translateX(-5px) scaleX(.94)}50%{opacity:.8;transform:translateX(5px) scaleX(1.04)}}
+@keyframes welcome-peace-line{0%,100%{opacity:.45;transform:scaleX(.88)}50%{opacity:.85;transform:scaleX(1)}}
+.reduced-motion .welcome-peace:before,.reduced-motion .welcome-peace:after{animation:none}
+@media(prefers-reduced-motion:reduce){.welcome-peace:before,.welcome-peace:after{animation:none}}
+@media(max-width:540px){.welcome-wish{flex-direction:column;gap:8px}.welcome-peace{letter-spacing:.025em}}
+
+.welcome-motion-paused .welcome-peace:before,.welcome-motion-paused .welcome-peace:after{animation-play-state:paused}
+#settings-search{margin:0 0 22px;padding:18px;border:1px solid #e9f3ff2a;border-radius:22px;background:linear-gradient(140deg,#e6f2ff10,#c8dcff04);box-shadow:inset 0 1px #ffffff20}
+#settings-search>label{display:block;margin-bottom:10px;font-size:13px;font-weight:600}.settings-search-input{display:flex;align-items:center;gap:10px}.settings-search-input input{flex:1;width:100%;font-size:14px;padding:12px 14px;background:#102d4e29}.settings-search-input input::-webkit-search-cancel-button{display:none}.settings-search-input button{flex:none}
+#settings-search-status{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.6}#settings-search-status:empty{display:none}
+#settings-search-results{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px}#settings-search-results button{display:flex;flex-direction:column;gap:3px;text-align:left;width:100%;padding:11px 13px;white-space:normal;overflow-wrap:anywhere}#settings-search-results strong{font-size:13px;font-weight:600}#settings-search-results span{font-size:12px;line-height:1.6;color:var(--muted)}
+.settings-search-input input{background:#10213bb8;color:#fff}
+.settings-search-input input::placeholder{color:#edf2ff;opacity:.9}
+.welcome-wish{flex-direction:column;align-items:flex-start;position:relative;isolation:isolate;width:fit-content;max-width:100%}
+.welcome-wish:before{content:"";position:absolute;z-index:-1;inset:-4px -12px 4px -8px;background:#182640b5;border-radius:18px;filter:blur(7px);pointer-events:none}
+.welcome-peace{display:grid;gap:.2em;font-family:KaiTi,STKaiti,"FangSong",serif;font-size:calc(clamp(26px,4.2vw,54px) * var(--text-scale,1));line-height:1.18}
+.welcome-peace>span{background:linear-gradient(108deg,#fffcf4 8%,#ffe2a6 37%,#bde5f3 60%,#edcfed 76%,#fff4d7 95%);background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 1px 5px #44375840}
+.welcome-peace>small{font:italic max(13px,.42em)/1.35 Georgia,serif;letter-spacing:.06em;color:#ffe9c6;text-shadow:0 1px 3px #15213d}
+@media(forced-colors:active){.welcome-peace>span{-webkit-text-fill-color:CanvasText}}

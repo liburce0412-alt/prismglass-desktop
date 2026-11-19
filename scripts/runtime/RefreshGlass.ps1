@@ -67,7 +67,7 @@ try{
  $w=$bounds.Width; $h=$bounds.Height
  if($image -and $state.Position -eq 1){
   $brush=[System.Drawing.TextureBrush]::new($image)
-  try{$brush.TranslateTransform($desktopBounds.Left-$bounds.Left,$desktopBounds.Top-$bounds.Top);$graphics.FillRectangle($brush,0,0,$w,$h)}finally{$brush.Dispose()}
+  try{$brush.TranslateTransform(-$bounds.Left,-$bounds.Top);$graphics.FillRectangle($brush,0,0,$w,$h)}finally{$brush.Dispose()}
  }elseif($image){
   $rect=Get-GlassWallpaperRectangle $image.Width $image.Height $bounds $desktopBounds $state.Position
   $graphics.DrawImage($image,$rect)
@@ -81,13 +81,24 @@ try{
 }
 $configured=Join-Path $PSScriptRoot 'LiquidDesktop/skin-path.txt'
 $skin=if([IO.File]::Exists($configured)){[IO.Path]::GetFullPath([IO.File]::ReadAllText($configured).Trim())}else{Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter/Skins/PrismGlass'}
+$rainmeter=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Encoding UTF8 -Raw).Trim()
+$rainmeterProcesses=@(Get-Process Rainmeter -ErrorAction SilentlyContinue);$rainmeterRunning=$false
+try{foreach($process in $rainmeterProcesses){
+ $path=$process.Path
+ if(!$path){throw '无法确认 Rainmeter 进程所属的安装位置；皮肤刷新未完成，请检查进程权限。'}
+ if($path -eq $rainmeter){$rainmeterRunning=$true}
+}}finally{foreach($process in $rainmeterProcesses){$process.Dispose()}}
+if($rainmeterRunning){
+ if(!('RainmeterCommands' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'LiquidDesktop/RainmeterCommands.cs')}
+ if(![RainmeterCommands]::Probe($rainmeter,50)){throw 'Rainmeter 控制窗口没有响应，已停止刷新皮肤；请恢复 Rainmeter 后重试。'}
+}
 foreach($file in Get-ChildItem -LiteralPath $skin -Filter Main.ini -Recurse){
  $text=[IO.File]::ReadAllText($file.FullName)
  $text=[regex]::Replace($text,'(?m)^ImagePath=.*$','ImagePath='+$target)
  [IO.File]::WriteAllText($file.FullName,$text,[Text.Encoding]::Unicode)
  $copy=Join-Path $PSScriptRoot ('PrismGlass\'+$file.Directory.Name+'\Main.ini')
  if(Test-Path -LiteralPath $copy){[IO.File]::WriteAllText($copy,$text,[Text.Encoding]::Unicode)}
- if(Get-Process Rainmeter -ErrorAction SilentlyContinue){& ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LiquidDesktop/rainmeter-path.txt') -Encoding UTF8 -Raw).Trim()) '!Refresh' ('PrismGlass\'+$file.Directory.Name)}
+ if($rainmeterRunning){[RainmeterCommands]::Send($rainmeter,('!Refresh "PrismGlass\'+$file.Directory.Name+'"'),250)}
 }
 'Glass wallpaper sampling updated: '+$source
 

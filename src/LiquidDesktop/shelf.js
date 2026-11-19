@@ -2,7 +2,7 @@
 (()=>{
  const $=id=>document.getElementById(id),post=value=>window.chrome?.webview?.postMessage(typeof value==='string'?value:JSON.stringify(value));
  let layout=null,receiveGlass=null,opened=false,amount=0,velocity=0,target=0,raf=0,last=0,filterTimer=0,path='',busy=false,mode='quota',reduceMotion=false,selectionElement=null,selectionCard=null,selectionScale=0,lastShape=-1;const reduced=matchMedia('(prefers-reduced-motion: reduce)');
- const folder='<svg viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3Z"/></svg>',file='<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z M14 3v5h4"/></svg>';
+ const folder='<svg data-prism-icon="folders" viewBox="0 0 24 24"><path d="M3 8V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"/><path data-prism-part="flap" d="M3 10h18"/></svg>',file='<svg data-prism-icon="file-text" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z M14 3v5h4"/></svg>';
  const titles={quota:'Codex 额度',notes:'随手记',tasks:'待办',countdown:'倒计时',links:'收藏链接',calculator:'计算器',manage:'组件管理',files:'文件浏览'};let visibleCards=['quota','notes','tasks','countdown','links','calculator'];
  const summaries={notes:'灵感随记',tasks:'',countdown:'',links:'',calculator:'四则运算'};
  for(const button of document.querySelectorAll('#triggers [data-mode]')){const summary=document.createElement('small');summary.className='rail-summary';summary.textContent=summaries[button.dataset.mode]||'';button.append(summary);const icon=button.querySelector('svg');icon.classList.add('utility-icon');}
@@ -54,7 +54,7 @@
   $('links-list').replaceChildren();for(const link of state.links||[]){const row=document.createElement('div');row.className='link-row';const open=document.createElement('button');open.className='link-open';const label=document.createElement('span'),url=document.createElement('small');label.textContent=link.name;url.textContent=link.url;open.append(label,url);open.title=link.url;open.onclick=()=>action('link-open',link.id);const remove=document.createElement('button');remove.className='link-remove';remove.textContent='×';remove.setAttribute('aria-label','移除 '+link.name);remove.onclick=()=>action('link-remove',link.id);row.append(open,remove);$('links-list').append(row);}$('links-empty').hidden=!!state.links?.length;$('link-restore').hidden=!state.removedLink;$('link-restore').textContent=state.removedLink?'恢复：'+state.removedLink.name:'恢复最近移除的链接';
  }
  window.chrome?.webview?.addEventListener('message',event=>{const m=event.data;
-  if(m.type==='layout'){const previous=layout;layout=m;selectionElement=null;document.body.dataset.theme=m.theme;document.documentElement.style.setProperty('--scale',m.scale);glass(true);if(!previous||previous.wallpaper!==m.wallpaper)receiveGlass?.({type:'wallpaper',version:m.wallpaper});wake();}
+  if(m.type==='layout'){const previous=layout;layout=m;selectionElement=null;document.body.dataset.theme=m.theme;document.documentElement.style.setProperty('--scale',m.scale);glass(true);if(!previous||previous.wallpaper!==m.wallpaper)receiveGlass?.({type:'wallpaper',version:m.wallpaper,file:m.wallpaperFile});wake();}
   else if(m.type==='expanded')setExpanded(m.value,m.mode,m.pinned);
   else if(m.type==='cursor-settings')window.PrismCursorSettings?.update(m.settings,m.scale,m.busy);
   else if(m.type==='quota')quota(m.snapshot,m.busy);

@@ -15,7 +15,7 @@ using Microsoft.Web.WebView2.WinForms;
 internal static partial class TestLiveGlassBackdrop {
  sealed class MultiSurface {
   internal string name;internal GlassCaptureHost host;internal WebView2 browser;internal OpticalBackdrop backdrop;
-  internal long startVersion,endVersion;internal int frameStart,frameEnd;internal string pixelStart,pixelEnd;
+  internal long startVersion,endVersion;internal int frameStart,frameEnd;internal string pixelStart,pixelEnd;internal object rendererTiming;
  }
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
  static readonly JavaScriptSerializer metricsJson=new JavaScriptSerializer();
@@ -23,12 +23,18 @@ internal static partial class TestLiveGlassBackdrop {
  static Task<string> MultiEval(MultiSurface surface,string script){return surface.browser.CoreWebView2.ExecuteScriptAsync(script);}
  static async Task MultiReady(MultiSurface surface,string expression){for(int n=0;n<80;n++){if(await MultiEval(surface,expression)=="true")return;await Task.Delay(75);}throw new Exception("Multi-host timeout: "+surface.name+"; "+surface.backdrop.Error+"; "+await MultiEval(surface,"window.stats?JSON.stringify(stats()):'no renderer'"));}
  static object CaptureCounts(){return SharedWindowCapture.Diagnostics;}
+ static object ProcessCosts(CoreWebView2Environment environment){
+  var values=new List<object>();var ids=new HashSet<int>();ids.Add(Process.GetCurrentProcess().Id);ids.Add(sourceProcess.Id);
+  foreach(var info in environment.GetProcessInfos())ids.Add(info.ProcessId);
+  foreach(int id in ids)try{using(var process=Process.GetProcessById(id)){values.Add(new{pid=id,name=process.ProcessName,cpuMs=process.TotalProcessorTime.TotalMilliseconds,privateBytes=process.PrivateMemorySize64,workingSetBytes=process.WorkingSet64});}}catch(ArgumentException){}catch(InvalidOperationException){}
+  return values;
+ }
  static long Counter(object snapshot,string name){var values=metricsJson.Deserialize<Dictionary<string,object>>(metricsJson.Serialize(snapshot));object value;if(!values.TryGetValue(name,out value))throw new Exception("Missing shared capture metric: "+name);return Convert.ToInt64(value);}
  static async Task MultiHost(IntPtr source){
   var surfaces=new List<MultiSurface>();var area=Screen.PrimaryScreen.Bounds;
   var timers=new List<double>();var native=new List<double>();var browser=new List<double>();int posted=0,received=0;
   var clock=new Stopwatch();var heartbeat=new System.Windows.Forms.Timer{Interval=16};double previous=0;
-  object before=null,started=null,after=null,stopped=null,idle=null;string errors="";double elapsed=0;
+  object before=null,started=null,after=null,stopped=null,idle=null,processBefore=null,processAfter=null;string errors="";double elapsed=0;
   try{
    LiveGlassBackdrop.Configure(root,false,false);SendMessage(source,0x8004,IntPtr.Zero,IntPtr.Zero);await Task.Delay(100);
    RECT sourceBounds;GetWindowRect(source,out sourceBounds);Check(sourceBounds.Rectangle==area,"dynamic fixture covers the actual monitor at native resolution");
@@ -54,15 +60,15 @@ internal static partial class TestLiveGlassBackdrop {
    foreach(var surface in surfaces)await MultiReady(surface,"stats().liveBackground==='optical'&&!stats().errors.length");
    await Task.Delay(300);started=CaptureCounts();Check(Counter(started,"activeSources")==1&&Counter(started,"leases")==5,"five live glass hosts share exactly one native capture source");
    foreach(var surface in surfaces){surface.startVersion=surface.backdrop.Version;surface.frameStart=Int32.Parse(await MultiEval(surface,"stats().frames"));surface.pixelStart=await MultiEval(surface,"sample()");}
-   heartbeat.Tick+=(s,e)=>{double now=clock.Elapsed.TotalMilliseconds;if(previous>0)timers.Add(now-previous);previous=now;};clock.Start();heartbeat.Start();
+   processBefore=ProcessCosts(environment);heartbeat.Tick+=(s,e)=>{double now=clock.Elapsed.TotalMilliseconds;if(previous>0)timers.Add(now-previous);previous=now;};clock.Start();heartbeat.Start();
    var handles=surfaces.Select(s=>s.host.Handle).ToArray();
    var messages=Task.Run(async()=>{int index=0;while(clock.ElapsedMilliseconds<6000){if(PostMessage(handles[index++%handles.Length],0x8050,new IntPtr(Stopwatch.GetTimestamp()),IntPtr.Zero))Interlocked.Increment(ref posted);await Task.Delay(100);}});
    int button=0;
    while(clock.ElapsedMilliseconds<6000){var surface=surfaces[button++%surfaces.Count];var watch=Stopwatch.StartNew();string result=await MultiEval(surface,"document.getElementById('probe').click();probes>0");browser.Add(watch.Elapsed.TotalMilliseconds);if(result!="true")throw new Exception("Browser input acknowledgement failed: "+surface.name);await Task.Delay(350);}
-   await messages;heartbeat.Stop();elapsed=clock.Elapsed.TotalMilliseconds;clock.Stop();await Task.Delay(80);after=CaptureCounts();
-   foreach(var surface in surfaces){surface.endVersion=surface.backdrop.Version;surface.frameEnd=Int32.Parse(await MultiEval(surface,"stats().frames"));surface.pixelEnd=await MultiEval(surface,"sample()");if(surface.backdrop.Error.Length>0)errors+=surface.name+": "+surface.backdrop.Error+"; ";if(await MultiEval(surface,"stats().errors.length===0")!="true")errors+=surface.name+": renderer error; ";}
+   await messages;heartbeat.Stop();elapsed=clock.Elapsed.TotalMilliseconds;clock.Stop();processAfter=ProcessCosts(environment);await Task.Delay(80);after=CaptureCounts();
+   foreach(var surface in surfaces){surface.endVersion=surface.backdrop.Version;surface.frameEnd=Int32.Parse(await MultiEval(surface,"stats().frames"));surface.pixelEnd=await MultiEval(surface,"sample()");surface.rendererTiming=metricsJson.DeserializeObject(await MultiEval(surface,"stats()"));if(surface.backdrop.Error.Length>0)errors+=surface.name+": "+surface.backdrop.Error+"; ";if(await MultiEval(surface,"stats().errors.length===0")!="true")errors+=surface.name+": renderer error; ";}
    LiveGlassBackdrop.Configure(root,false,false);foreach(var surface in surfaces)await MultiEval(surface,"enable(false)");await Task.Delay(500);stopped=CaptureCounts();await Task.Delay(400);idle=CaptureCounts();
-   File.WriteAllText(Path.Combine(output,"multi-host-metrics.json"),metricsJson.Serialize(new{sourceWidth=area.Width,sourceHeight=area.Height,hostCount=surfaces.Count,durationMs=elapsed,timer=new{count=timers.Count,p95Ms=Percentile(timers,.95),maxMs=Percentile(timers,1)},nativeInput=new{posted,received,p95Ms=Percentile(native,.95),maxMs=Percentile(native,1)},browserInput=new{count=browser.Count,p95Ms=Percentile(browser,.95),maxMs=Percentile(browser,1)},capture=new{before,started,after,stopped,idle},hosts=surfaces.Select(s=>new{s.name,width=s.host.ClientSize.Width,height=s.host.ClientSize.Height,versions=s.endVersion-s.startVersion,frames=s.frameEnd-s.frameStart,pixelsChanged=s.pixelStart!=s.pixelEnd}).ToArray(),errors,note="Synthetic source only. Native input probe uses PostMessage, browser button uses DOM click; no user frames recorded."}));
+   File.WriteAllText(Path.Combine(output,"multi-host-metrics.json"),metricsJson.Serialize(new{sourceWidth=area.Width,sourceHeight=area.Height,hostCount=surfaces.Count,durationMs=elapsed,processes=new{before=processBefore,after=processAfter},timer=new{count=timers.Count,p95Ms=Percentile(timers,.95),maxMs=Percentile(timers,1)},nativeInput=new{posted,received,p95Ms=Percentile(native,.95),maxMs=Percentile(native,1)},browserInput=new{count=browser.Count,p95Ms=Percentile(browser,.95),maxMs=Percentile(browser,1)},capture=new{before,started,after,stopped,idle},hosts=surfaces.Select(s=>new{s.name,width=s.host.ClientSize.Width,height=s.host.ClientSize.Height,versions=s.endVersion-s.startVersion,frames=s.frameEnd-s.frameStart,pixelsChanged=s.pixelStart!=s.pixelEnd,bridge=s.backdrop.Diagnostics,renderer=s.rendererTiming}).ToArray(),errors,note="Synthetic source only. Capture readback includes GPU fence/copy; scaleCopy and bridge bufferCopy are CPU work. Renderer upload/compose/submit are CPU submission timings, not GPU completion or presentation. Native input probe uses PostMessage, browser button uses DOM click; no user frames recorded."}));
    Check(errors.Length==0&&surfaces.All(s=>s.endVersion>s.startVersion+3&&s.frameEnd>s.frameStart+3&&s.pixelStart!=s.pixelEnd),"every host keeps receiving and rendering changing native pixels during the concurrent run");
    Check(timers.Count>=80&&Percentile(timers,.95)<120&&Percentile(timers,1)<500,"native UI heartbeat stays responsive during five-host glass load");
    Check(posted>=40&&received==posted&&Percentile(native,1)<500&&browser.Count>=10&&Percentile(browser,1)<800,"native message and browser button acknowledgements remain responsive");

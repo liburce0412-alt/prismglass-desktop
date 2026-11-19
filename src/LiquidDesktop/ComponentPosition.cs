@@ -10,9 +10,11 @@ using System.Windows.Forms;
 internal sealed class ComponentPosition:IDisposable {
  readonly string file,kind;readonly Func<Rectangle> read;readonly Action<Rectangle> place;readonly Action<string> error;
  readonly Timer timer=new Timer{Interval=8};readonly JavaScriptSerializer json=new JavaScriptSerializer();
- Rectangle area,normal,footprint;Point anchor,start,origin;string monitor="";double? x,y;bool placing,disposed;
+ Rectangle area,normal,footprint;Point anchor,start,origin;string monitor="";double? x,y;bool placing,disposed;int displayVersion=-1;static int currentDisplayVersion;
  public bool Dragging {get;private set;}
+ internal bool DisplayChanged {get{return displayVersion!=currentDisplayVersion;}}
  internal static bool LayoutLocked;
+ internal static void DisplaysChanged(){currentDisplayVersion++;}
  [DllImport("user32.dll")]static extern short GetAsyncKeyState(int key);
  public ComponentPosition(string root,string name,Func<Rectangle> bounds,Action<Rectangle> move,Action<string> failed){file=Path.Combine(root,"component-positions.json");kind=name;read=bounds;place=move;error=failed;timer.Tick+=(s,e)=>Step(Cursor.Position,GetAsyncKeyState(1)<0,GetAsyncKeyState(27)<0);}
  string Key {get{return monitor+"/"+kind;}}
@@ -21,7 +23,7 @@ internal sealed class ComponentPosition:IDisposable {
  public void Arrange(Rectangle defaults,Rectangle screen,Point localAnchor,Rectangle visible){
   if(disposed||screen.Width<1||screen.Height<1||defaults.Width<1||defaults.Height<1)return;
   normal=defaults;anchor=localAnchor;footprint=visible;
-  if(area!=screen||monitor.Length==0){if(Dragging)Finish(true);area=screen;var display=Screen.FromRectangle(screen);var known=MonitorCatalog.Read().Find(m=>m.Screen.DeviceName==display.DeviceName);monitor=known==null?display.DeviceName:known.Id;try{Load();}catch(Exception ex){error(ex.Message);}}
+  if(area!=screen||displayVersion!=currentDisplayVersion){if(Dragging)Finish(true);var display=Screen.FromRectangle(screen);var known=MonitorCatalog.Read().Find(m=>m.Screen.DeviceName==display.DeviceName);area=screen;monitor=known==null?display.DeviceName:known.Id;displayVersion=currentDisplayVersion;try{Load();}catch(Exception ex){error(ex.Message);}}
   Apply(Dragging?read().Location:new Point(x.HasValue?area.Left+(int)Math.Round(x.Value*area.Width)-anchor.X:normal.X,y.HasValue?area.Top+(int)Math.Round(y.Value*area.Height)-anchor.Y:normal.Y));
  }
  internal static Point Clamp(Point location,Rectangle visible,Rectangle screen){

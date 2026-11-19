@@ -38,6 +38,6 @@ if($PrepareOnly){Write-Output "Prepared $Destination; no shell settings, shortcu
 $ws=New-Object -ComObject WScript.Shell
 foreach($item in @(@('开启 PrismGlass','Beauty'),@('退出 PrismGlass','Game'))){
  $lnk=$ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) ($item[0]+'.lnk')))
- $lnk.TargetPath=$pwsh;$lnk.Arguments='-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$Destination+'\DesktopMode.ps1" -Mode '+$item[1]+' -ShowErrors';$lnk.WindowStyle=7;$lnk.IconLocation=Join-Path $Destination 'LiquidDesktop/LiquidDesktop.exe';$lnk.Save()
+ $lnk.TargetPath=Join-Path $Destination 'LiquidDesktop/PrismGlass.exe';$lnk.Arguments=if($item[1] -eq 'Game'){'--exit'}else{''};$lnk.WindowStyle=1;$lnk.IconLocation=$lnk.TargetPath;$lnk.Save()
 }
 Write-Output 'Installed. Start and exit PrismGlass manually with the desktop shortcuts. No login startup item or scheduled task was created.'

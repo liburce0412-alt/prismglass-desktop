@@ -136,6 +136,30 @@ class TestCompanionServer {
    server.Revoke(Device(server).id);Check(Call(server,"/api/pointer","POST",packet,cookie,csrf).Status==401&&Call(server,"/api/power/cancel","POST",new{jobId="fixture-job"},cookie,csrf).Status==401,"revocation immediately denies independent control routes");
   }
  }
+ static void ContinuousBudgetChecks(string fixture){
+  foreach(string action in new[]{"volume.set","brightness.set"})Check(CompanionServer.ContinuousAction("/api/action",true,new Dictionary<string,object>{{"action",action}}),"continuous budget accepts exact "+action);
+  foreach(string action in new[]{"volume.up","brightness.target","Brightness.set","volume.set ","power.lock",""})Check(!CompanionServer.ContinuousAction("/api/action",true,new Dictionary<string,object>{{"action",action}}),"continuous budget excludes other action "+action);
+  Check(!CompanionServer.ContinuousAction("/api/settings",true,new Dictionary<string,object>{{"action","volume.set"}})&&!CompanionServer.ContinuousAction("/api/action",false,new Dictionary<string,object>{{"action","volume.set"}}),"continuous budget cannot apply to a different route or GET");
+  int calls=0;using(var server=new CompanionServer(Path.Combine(fixture,"continuous-budgets"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>false)){
+   string cookie=Pair(server,new CompanionGrant{control=true}),csrf=Device(server).csrf;bool accepted=true;
+   for(int i=0;i<12;i++)accepted&=Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action=i%2==0?"volume.set":"brightness.set",value=i},cookie,csrf).Status==200;
+   Check(accepted&&calls==12&&Retry(Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="volume.set",value=50},cookie,csrf),"rate_limited",1,1),"volume and brightness share a bounded twelve packets per second device budget");
+   Check(Call(server,"/api/state","GET",null,cookie,null).Status==200,"continuous drag cannot exhaust state budget");ExpireRates(server,"continuousRates");
+   var command=new{requestId=Guid.NewGuid().ToString("N"),action="volume.set",value=55};int before=calls;Check(Call(server,"/api/action","POST",command,cookie,"wrong").Status==403&&calls==before,"continuous lane retains CSRF protection");
+   Check(Call(server,"/api/action","POST",command,cookie,csrf).Status==200&&Call(server,"/api/action","POST",command,cookie,csrf).Status==200&&calls==before+1,"continuous lane retains command deduplication");
+   SetRate(server,"continuousRates","device:"+Device(server).id,480,19);Check(Retry(Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="brightness.set",value=50},cookie,csrf),"rate_limited",1,19),"continuous device minute budget is bounded at 480");ExpireRates(server,"continuousRates");
+   SetRate(server,"continuousRates","ip:192.168.1.21",900,23);Check(Retry(Call(server,"/api/action","POST",command,cookie,csrf),"rate_limited",1,23),"continuous aggregate IP budget is bounded at 900");ExpireRates(server,"continuousRates");
+   SetRate(server,"continuousRates","ip-second:192.168.1.21",24,1);Check(Retry(Call(server,"/api/action","POST",command,cookie,csrf),"rate_limited",1,1),"continuous aggregate IP burst is bounded at 24");ExpireRates(server,"continuousRates");
+   var boundedDevice=Device(server);int ordinaryCount=boundedDevice.commands.Count;
+   for(int i=0;i<4097;i++){if(i%10==0)ExpireRates(server,"continuousRates");if(Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="volume.set",sequence=i+1,value=i%101},cookie,csrf).Status!=200)throw new Exception("continuous sequence "+i);}
+   Check(boundedDevice.levels.Count==1&&boundedDevice.commands.Count==ordinaryCount,"4097 level updates retain one control record");
+   var stale=Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="volume.set",sequence=2,value=2},cookie,csrf);Check(stale.Status==409&&System.Text.Encoding.UTF8.GetString(stale.Body).Contains("\"lastSequence\":4097"),"stale level rejected with authoritative sequence after clock reset");
+   var lastLevel=boundedDevice.levels["volume.set"];boundedDevice.cachedBytes=4194304;before=calls;
+   var budget=Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="volume.set",sequence=4098,value=50},cookie,csrf);
+   Check(budget.Status==409&&System.Text.Encoding.UTF8.GetString(budget.Body).Contains("session_budget")&&calls==before&&Object.ReferenceEquals(lastLevel,boundedDevice.levels["volume.set"])&&boundedDevice.cachedBytes==4194304,"sequenced level replacement respects the shared cache limit and retains the previous result");
+   Device(server).grants.control=false;before=calls;Check(Call(server,"/api/action","POST",new{requestId=Guid.NewGuid().ToString("N"),action="brightness.set",value=45},cookie,csrf).Status==403&&calls==before,"continuous lane rejects revoked control permission before handler");
+  }
+ }
  static void PointerBudgetChecks(string fixture){
   int calls=0;using(var server=new CompanionServer(Path.Combine(fixture,"pointer-budgets"),(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>false)){
    string cookie=Pair(server,new CompanionGrant{pointer=true,power=true});string csrf=Device(server).csrf;bool accepted=true;for(int i=0;i<90;i++)accepted&=Call(server,i%3==0?"/api/pointer/begin":i%3==1?"/api/pointer":"/api/pointer/end","POST",new{seq=i},cookie,csrf).Status==200;Check(accepted&&calls==90&&Retry(Call(server,"/api/pointer","POST",new{},cookie,csrf),"rate_limited",1,1),"all pointer routes share a bounded ninety packets per second device budget");
@@ -182,7 +206,18 @@ class TestCompanionServer {
    }finally{listener.SetValue(server,null);}
   }
  }
- static void Main(){
+ static void WidgetArtChecks(string fixture){
+  string web=Path.Combine(fixture,"companion-web");Directory.CreateDirectory(web);
+  using(var server=new CompanionServer(fixture,(path,body,grant)=>CompanionReply.Json(200,new{ok=true}),()=>false)){
+   foreach(string name in new[]{"hourglass-shell","bonsai"}){File.WriteAllBytes(Path.Combine(web,"widget-"+name+".png"),new byte[]{137,80,78,71});Check(Call(server,"/widget-"+name+".png","GET",null,null,null).Status==404,name+" retired image route stays unavailable even when an old file remains on disk");}
+   File.WriteAllBytes(Path.Combine(web,"companion-scene.jpg"),new byte[524289]);Check(Call(server,"/companion-scene.jpg","GET",null,null,null).Status==503,"other static assets retain the original 512 KiB bound");
+   Check(Call(server,"/widget-other.png","GET",null,null,null).Status==404&&Call(server,"/widget-bonsai.png/extra","GET",null,null,null).Status==404,"widget image allowlist rejects additional files and suffix paths");
+   Check(Call(server,"/../widget-bonsai.png","GET",null,null,null).Status==404,"widget image route does not resolve traversal paths");
+   Check(Call(server,"/widget-bonsai.png","POST",new{},null,null).Status==405,"widget image routes remain read-only");
+  }
+ }
+ static void Main(string[] args){
+  if(Array.IndexOf(args,"--widget-art-only")>=0){string assetFixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"widget-art-assets-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(assetFixture);try{WidgetArtChecks(assetFixture);Console.WriteLine("Completed "+checks+" retired widget asset route checks.");}finally{Directory.Delete(assetFixture,true);}return;}
   string fixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"companion-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(fixture);Directory.CreateDirectory(Path.Combine(fixture,"companion-web"));File.WriteAllText(Path.Combine(fixture,"companion-web","index.html"),"<!doctype html><title>Companion</title>");bool locked=false;int calls=0;bool throws=false,large=false;var entered=new ManualResetEventSlim(false);var release=new ManualResetEventSlim(true);
   Func<string,Dictionary<string,object>,CompanionGrant,CompanionReply> handle=(path,body,grant)=>{Interlocked.Increment(ref calls);entered.Set();release.Wait();if(throws)throw new IOException("C:\\private-path\\secret");return large?CompanionReply.Json(409,new{error="conflict",text=new string('x',32768)}):CompanionReply.Json(200,new{ok=true,calls=calls});};
   try{
@@ -206,7 +241,7 @@ class TestCompanionServer {
     server.Stop();Check(Call(server,"/api/session","GET",null,cookie,null).Status==401,"stop invalidates in-flight session grants");
    }
    HostnameChecks(fixture);PairingLifetimeChecks(fixture);RememberDeviceChecks(fixture);
-    BudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);ScreenRouteChecks(fixture);ActivityChecks(fixture);
+    BudgetChecks(fixture);ContinuousBudgetChecks(fixture);ConcurrencyChecks(fixture);AssetSecurityChecks(fixture);GrantChecks(fixture);ControlRouteChecks(fixture);PointerBudgetChecks(fixture);ControlConcurrencyChecks(fixture);SceneAssetChecks(fixture);AppearanceChecks(fixture);ScreenRouteChecks(fixture);ActivityChecks(fixture);
    Console.WriteLine("Passed "+checks+" companion transport checks.");
   }catch(Exception ex){Console.WriteLine("FAIL "+ex);Environment.ExitCode=1;}finally{release.Set();entered.Dispose();release.Dispose();Directory.Delete(fixture,true);}
  }
@@ -259,11 +294,11 @@ class TestCompanionServer {
  }
  static void AppearanceChecks(string fixture){
   string root=Path.Combine(fixture,"appearance"),web=Path.Combine(root,"companion-web");Directory.CreateDirectory(web);
-  foreach(string name in new[]{"lyrics-style.js","dock-lyrics.css"})File.WriteAllText(Path.Combine(root,name),"shared "+name);
+  foreach(string name in new[]{"prism-hint.js","prism-hint.css","continuous-level.js","functional-icons.js","lyrics-style.js","dock-lyrics.css"})File.WriteAllText(Path.Combine(root,name),"shared "+name);
   foreach(string name in new[]{"companion-scan.js","jsqr.js","companion-lyrics.js","companion-settings.js","companion-widgets.js","companion-appearance.css","manifest.webmanifest","companion-icon.png"})File.WriteAllText(Path.Combine(web,name),"companion "+name);
   int calls=0;using(var server=new CompanionServer(root,(path,body,grant)=>{calls++;return CompanionReply.Json(200,new{ok=true});},()=>false)){
    foreach(string name in new[]{"companion-scan.js","jsqr.js"}){var scan=Call(server,"/"+name,"GET",null,null,null);Check(scan.Status==200&&scan.ContentType=="application/javascript; charset=utf-8","local camera decoder has an exact public script route: "+name);}
-   foreach(string name in new[]{"lyrics-style.js","dock-lyrics.css","companion-lyrics.js","companion-settings.js","companion-widgets.js","companion-appearance.css"})Check(Call(server,"/"+name,"GET",null,null,null).Status==200,"only installed appearance resource served: "+name);
+   foreach(string name in new[]{"prism-hint.js","prism-hint.css","continuous-level.js","functional-icons.js","lyrics-style.js","dock-lyrics.css","companion-lyrics.js","companion-settings.js","companion-widgets.js","companion-appearance.css"})Check(Call(server,"/"+name,"GET",null,null,null).Status==200,"only installed appearance resource served: "+name);
    Check(Call(server,"/manifest.webmanifest","GET",null,null,null).ContentType=="application/manifest+json; charset=utf-8"&&Call(server,"/companion-icon.png","GET",null,null,null).ContentType=="image/png","public home screen manifest and icon have exact MIME types");Check(Call(server,"/other.webmanifest","GET",null,null,null).Status==404&&Call(server,"/other.png","GET",null,null,null).Status==404&&Call(server,"/manifest.webmanifest","POST",new{},null,null).Status==405,"home screen resources do not widen filenames or writes");
    Check(Call(server,"/lyrics-settings.json","GET",null,null,null).Status==404&&Call(server,"/../lyrics-style.js","GET",null,null,null).Status>=400,"shared renderer route never exposes settings or parent paths");
    string cookie=Pair(server,new CompanionGrant{music=true});string csrf=Device(server).csrf;Check(Call(server,"/api/lyrics-style","POST",new{requestId=Guid.NewGuid().ToString("N")},cookie,csrf).Status==403&&calls==0,"read-only music cannot edit lyrics style");

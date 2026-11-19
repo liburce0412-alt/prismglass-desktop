@@ -1,0 +1,34 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const timers=new Map(),window={};let next=0,now=1000;
+vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../src/LiquidDesktop/continuous-level.js'),'utf8'),{window,Promise,Date:{now:()=>now},setTimeout:(fn,delay)=>{timers.set(++next,{fn,delay});return next;},clearTimeout:id=>timers.delete(id)});
+const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
+const tick=async()=>{const ready=[...timers.values()];timers.clear();ready.forEach(item=>{now+=item.delay;item.fn();});await flush();};
+(async()=>{
+ let resolve;const sent=[],sendTimes=[],queue=window.PrismContinuousLevel(value=>{sent.push(value);sendTimes.push(now);return new Promise(done=>resolve=done);},220);
+ for(let i=0;i<100;i++)queue.set(i);await tick();assert.deepEqual(sent,[99]);
+ queue.set(101);queue.set(105);await tick();assert.deepEqual(sent,[99]);assert(queue.busy());resolve();await flush();await tick();assert.deepEqual(sent,[99,105]);assert.equal(sendTimes[1]-sendTimes[0],220,'The final value uses the same bounded interval instead of bypassing it');
+ queue.cancel();queue.set(110);resolve();await flush();await tick();assert.deepEqual(sent,[99,105,110],'new gesture after cancellation is not stranded behind old in-flight request');
+ resolve();await flush();queue.set(120);queue.cancel();await tick();assert.deepEqual(sent,[99,105,110]);assert(!queue.busy());
+ console.log('PASS shared level queue: burst coalescing, one in-flight request, final value, cancellation and resumed gesture');
+ const side=fs.readFileSync(require('node:path').join(__dirname,'../src/LiquidDesktop/sidedock.js'),'utf8'),nodes={},events={},posts=[];let message;
+ const node=()=>({set value(value){this._value=String(value);},get value(){return this._value||'';},setAttribute(){},removeAttribute(){},replaceChildren(...children){this.children=children;}}),document={hidden:false,createElement:node,addEventListener:(name,fn)=>events[name]=fn};
+ const context=vm.createContext({PrismContinuousLevel:window.PrismContinuousLevel,Date:{now:()=>now},document,$:id=>nodes[id]||(nodes[id]=node()),text:(id,value)=>(nodes[id]||(nodes[id]=node())).textContent=value,post:value=>posts.push(value),window:{chrome:{webview:{addEventListener:(name,fn)=>message=fn}}}});
+ // Exercise the actual range bindings, readback reconciliation and host-error handler without hardware IO.
+ vm.runInContext(side.slice(side.indexOf('let battery={}'),side.indexOf('const springs='))+side.slice(side.indexOf("window.chrome?.webview?.addEventListener('message'"),side.indexOf("window.addEventListener('error'")),context);
+ const state={volume:{value:40},audioOutput:{available:true,name:'Fixture output',muted:false},brightness:{available:true,busy:false,value:40,targetId:'panel',displays:[{id:'panel',name:'Panel'},{id:'external',name:'External'}]}};
+ const read=()=>{context.snapshot=state;vm.runInContext('latestWidgets=snapshot;systemLevels(snapshot)',context);};read();
+ nodes['tools-brightness'].value=80;nodes['tools-brightness'].onchange();await tick();read();assert.equal(nodes['tools-brightness'].value,'80','Desktop brightness rejects older readback after release');assert.match(nodes['tools-brightness-status'].textContent,/正在同步/);
+ state.brightness.busy=true;read();assert.equal(nodes['tools-brightness'].value,'80','Normal background IO does not release the user intent');state.brightness.busy=false;
+ nodes['tools-brightness'].value=90;nodes['tools-brightness'].onchange();await tick();message({data:{type:'action-error',action:'brightness-set:80:panel',message:'older failure'}});assert.equal(nodes['tools-brightness'].value,'90','An old desktop failure cannot clear a newer value');
+ message({data:{type:'action-error',action:'brightness-set:90:panel',message:'current failure'}});assert.equal(nodes['tools-brightness'].value,'40','A matching failure releases the failed value');assert.doesNotMatch(nodes['tools-brightness-status'].textContent,/正在同步/);
+ nodes['tools-brightness'].value=80;nodes['tools-brightness'].onchange();await tick();state.brightness.value=80;read();assert.match(nodes['tools-brightness-status'].textContent,/已读回.*80%/);state.brightness.value=35;read();assert.equal(nodes['tools-brightness'].value,'35','Confirmed desktop levels resume following computer-side changes');
+ nodes['tools-brightness'].value=90;nodes['tools-brightness'].oninput();const beforeCancel=posts.length;nodes['tools-brightness'].onpointercancel();await tick();assert.equal(posts.length,beforeCancel);assert.equal(nodes['tools-brightness'].value,'35','Cancelling a pointer gesture discards its unsent value');
+ nodes['tools-brightness'].value=60;nodes['tools-brightness'].oninput();nodes['tools-brightness-target'].value='external';nodes['tools-brightness-target'].onchange();await tick();read();assert.equal(nodes['tools-brightness-target'].value,'external');assert(nodes['tools-brightness'].disabled,'Old target polls cannot re-enable a newly selected display');
+ message({data:{type:'action-error',action:'brightness-target:external',message:'target unavailable'}});assert.equal(nodes['tools-brightness-target'].value,'panel');assert.equal(nodes['tools-brightness'].disabled,false);
+ nodes['tools-brightness'].value=70;nodes['tools-brightness'].onchange();await tick();state.brightness.targetId='external';state.brightness.value=25;read();assert.equal(nodes['tools-brightness'].value,'25','An external target change discards the old target intent');
+ nodes['tools-brightness'].value=80;nodes['tools-brightness'].onchange();await tick();state.brightness.available=false;state.brightness.reason='Display unavailable';read();assert(nodes['tools-brightness'].disabled);assert.equal(nodes['tools-brightness-status'].textContent,'Display unavailable');
+ nodes['tools-volume'].value=75;nodes['tools-volume'].onchange();await tick();now+=2000;read();assert.equal(nodes['music-volume-range'].value,'75');assert.equal(nodes['tools-volume'].value,'75','Both desktop volume entries hold the same latest intent');now+=5000;read();assert.equal(nodes['tools-volume'].value,'40','Desktop uses the same bounded readback deadline as companion');
+ nodes['tools-volume'].value=85;nodes['tools-volume'].oninput();const beforeHide=posts.length;document.hidden=true;events.visibilitychange();await tick();document.hidden=false;read();assert.equal(posts.length,beforeHide);assert.equal(nodes['tools-volume'].value,'40','Hidden hosts discard unsent gestures and resume authoritative readback');
+ console.log('PASS desktop level readback: old polls, latest-value failures, busy IO, confirmation, cancellation, target changes, unavailable hardware and hidden hosts');
+})().catch(error=>{console.error(error);process.exitCode=1;});

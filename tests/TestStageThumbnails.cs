@@ -1,0 +1,55 @@
+using System;using System.Collections.Generic;using System.Diagnostics;using System.Drawing;using System.IO;using System.Linq;using System.Reflection;using System.Runtime.InteropServices;using System.Threading.Tasks;using System.Windows.Forms;using Texture=System.Windows.Media.Imaging.BitmapSource;
+internal sealed class StageThumbnailsSource:Form {
+ [DllImport("user32.dll")]static extern bool SetWindowDisplayAffinity(IntPtr window,uint affinity);
+ int painted;
+ internal StageThumbnailsSource(string name){Text="Owned Stage "+name;StartPosition=FormStartPosition.Manual;Bounds=new Rectangle(340,150,600,400);BackColor=name=="green"?Color.FromArgb(25,195,95):name=="blue"?Color.FromArgb(35,85,220):Color.FromArgb(225,155,30);}
+ protected override bool ShowWithoutActivation{get{return true;}}
+ protected override CreateParams CreateParams{get{var p=base.CreateParams;p.ExStyle|=0x08000080;return p;}}
+ protected override void OnPaint(PaintEventArgs e){base.OnPaint(e);e.Graphics.DrawString(Text,SystemFonts.CaptionFont,Brushes.White,35,35);painted++;}
+ protected override void WndProc(ref Message m){if(m.Msg==0x8003){m.Result=new IntPtr(SetWindowDisplayAffinity(Handle,(uint)m.WParam.ToInt32())?1:0);return;}if(m.Msg==0x8010){m.Result=new IntPtr(painted);return;}base.WndProc(ref m);}
+}
+internal static class TestStageThumbnails {
+ [DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+ [DllImport("user32.dll")]static extern bool ShowWindowAsync(IntPtr source,int command);
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")]static extern IntPtr GetProp(IntPtr source,string name);
+ [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr source,uint message,IntPtr w,IntPtr l);
+ static string root,output;static Form owner;static int checks,exit;static readonly List<Process> processes=new List<Process>();static readonly BindingFlags Fields=BindingFlags.Instance|BindingFlags.NonPublic;
+ static void Check(bool value,string message){File.AppendAllText(Path.Combine(output,"checks.txt"),(value?"PASS ":"FAIL ")+message+Environment.NewLine);if(!value)throw new Exception(message);checks++;}
+ static async Task Wait(Func<bool> ready,int milliseconds=4500){var clock=Stopwatch.StartNew();while(!ready()&&clock.ElapsedMilliseconds<milliseconds)await Task.Delay(20);if(!ready())throw new TimeoutException("Owned thumbnail integration did not settle.");}
+ static async Task<DockWindow> Source(string name){var process=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--source "+name){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden});processes.Add(process);await Wait(()=>{process.Refresh();return process.MainWindowHandle!=IntPtr.Zero;});var window=new DockWindow{handle=process.MainWindowHandle.ToInt64(),pid=(uint)process.Id,path=Application.ExecutablePath,title=name};await Wait(()=>SendMessage(new IntPtr(window.handle),0x8010,IntPtr.Zero,IntPtr.Zero).ToInt32()>0);ShowWindowAsync(new IntPtr(window.handle),6);await Wait(()=>NativeWindowMotion.IsIconic(new IntPtr(window.handle)));return window;}
+ static Color Pixel(Bitmap image){return image==null?Color.Empty:image.GetPixel(image.Width/2,image.Height/2);}
+ static bool Colored(Color pixel,string name){return name=="green"?pixel.G>140&&pixel.G>pixel.R+50:name=="blue"?pixel.B>150&&pixel.B>pixel.G+50:pixel.R>170&&pixel.G>100&&pixel.B<90;}
+ static Texture Picture(StageManager stage,StageManager.Member member){return (Texture)typeof(StageManager).GetMethod("Picture",Fields).Invoke(stage,new object[]{member});}
+ static bool Colored(Texture image,string name){if(image==null)return false;var pixel=new byte[4];image.CopyPixels(new System.Windows.Int32Rect(image.PixelWidth/2,image.PixelHeight/2,1,1),pixel,4,0);return Colored(Color.FromArgb(255,pixel[2],pixel[1],pixel[0]),name);}
+ static int Flights(StageManager stage){return ((System.Collections.ICollection)typeof(StageManager).GetField("flights",Fields).GetValue(stage)).Count;}
+ static bool Unhidden(DockWindow window){return GetProp(new IntPtr(window.handle),"PrismGlass.Motion.SnapshotOwner")==IntPtr.Zero;}
+ static async Task Run(){
+  var foreground=GetForegroundWindow();var green=await Source("green");var blue=await Source("blue");var windows=new List<DockWindow>{green,blue};
+  Check(windows.All(w=>!DockBackend.ReadWindows().Any(live=>live.handle==w.handle)),"owned tool windows are excluded from the installed Stage/Dock enumeration");
+  using(var helper=new StageThumbnailCapture()){
+   using(var image=await helper.Snapshot(green,()=>true)){Check(Colored(Pixel(image),"green"),"screen-external production helper reads minimized green source pixels");image.Save(Path.Combine(output,"retained-green.png"));}
+   using(var image=await helper.Snapshot(blue,()=>true)){Check(Colored(Pixel(image),"blue"),"reusing the same host for blue never returns the prior green frame");image.Save(Path.Combine(output,"retained-blue.png"));}
+   using(var image=await helper.Snapshot(new DockWindow{handle=green.handle,pid=blue.pid},()=>true))Check(image==null,"PID and HWND mismatch cannot borrow another window's picture");
+   Check(SendMessage(new IntPtr(green.handle),0x8003,new IntPtr(0x11),IntPtr.Zero)!=IntPtr.Zero,"owned green source opts out of capture");using(var image=await helper.Snapshot(green,()=>true))Check(image==null,"protected source is rejected by the production helper");SendMessage(new IntPtr(green.handle),0x8003,IntPtr.Zero,IntPtr.Zero);
+   bool wanted=true;var pending=helper.Snapshot(blue,()=>wanted);wanted=false;using(var image=await pending)Check(image==null&&!helper.Busy,"canceled capture publishes no picture and releases the host lease");
+  }
+  Check(windows.All(w=>NativeWindowMotion.IsIconic(new IntPtr(w.handle)))&&GetForegroundWindow()==foreground,"retained captures preserve source minimization and foreground ownership");
+  var screen=Screen.FromHandle(new IntPtr(green.handle));var monitors=new Dictionary<string,Rectangle>{{screen.DeviceName,new Rectangle(screen.WorkingArea.Left+40,screen.WorkingArea.Top+40,1000,730)}};
+  using(var stage=new StageManager(root,()=>{},()=>windows))using(var poll=new Timer{Interval=100}){
+   stage.Configure(true,false,true,monitors);poll.Tick+=(s,e)=>stage.Configure(true,false,true,monitors);poll.Start();await Wait(()=>stage.Groups.Count==2&&!stage.Busy);var a=stage.Groups.First(g=>g.members[0].window==green);var b=stage.Groups.First(g=>g.members[0].window==blue);
+   Check(Colored(Picture(stage,a.members[0]),"green")&&Colored(Picture(stage,b.members[0]),"blue"),"Stage startup fills actual textures for windows already minimized before enrollment");Check(windows.All(w=>NativeWindowMotion.IsIconic(new IntPtr(w.handle))),"initial thumbnail fill never restores a source window");
+   var amber=await Source("amber");windows.Add(amber);await Wait(()=>stage.Groups.Any(g=>g.members[0].window==amber&&Picture(stage,g.members[0])!=null));var c=stage.Groups.First(g=>g.members[0].window==amber);Check(Colored(Picture(stage,c.members[0]),"amber")&&NativeWindowMotion.IsIconic(new IntPtr(amber.handle)),"a newly discovered background group gets a real picture without activation");
+   SendMessage(new IntPtr(green.handle),0x8003,new IntPtr(0x11),IntPtr.Zero);await Wait(()=>Picture(stage,a.members[0])==null&&a.members[0].thumbnailProtected);Check(a.members[0].thumbnailStatus=="此窗口不提供预览","new capture protection removes the retained image and exposes a readable status");
+   var strip=stage.Strips.First();using(var image=new Bitmap(strip.OccupiedBounds.Width,strip.OccupiedBounds.Height))using(var graphics=Graphics.FromImage(image)){graphics.CopyFromScreen(strip.OccupiedBounds.Location,Point.Empty,image.Size);image.Save(Path.Combine(output,"stage-protected.png"));}
+   SendMessage(new IntPtr(green.handle),0x8003,IntPtr.Zero,IntPtr.Zero);await Wait(()=>Picture(stage,a.members[0])!=null);Check(Colored(Picture(stage,a.members[0]),"green")&&NativeWindowMotion.IsIconic(new IntPtr(green.handle)),"lifting protection retries the missing thumbnail without restoring its source");
+   using(var image=new Bitmap(strip.OccupiedBounds.Width,strip.OccupiedBounds.Height))using(var graphics=Graphics.FromImage(image)){graphics.CopyFromScreen(strip.OccupiedBounds.Location,Point.Empty,image.Size);image.Save(Path.Combine(output,"stage-minimized.png"));}
+   await Wait(()=>!stage.Busy);var before=Picture(stage,a.members[0]);bool animated=false;EventHandler rendered=(s,e)=>{animated|=stage.Animating||Flights(stage)>0;};System.Windows.Media.CompositionTarget.Rendering+=rendered;
+   try{Check(stage.Activating(blue,false),"Dock direct activation is owned by Stage when groups differ");await Wait(()=>!stage.Busy);Check(!animated&&Flights(stage)==0&&Object.ReferenceEquals(before,Picture(stage,a.members[0])),"Dock animation disabled skips snapshots and all curve surfaces");Check(!NativeWindowMotion.IsIconic(new IntPtr(blue.handle))&&NativeWindowMotion.IsIconic(new IntPtr(green.handle))&&windows.All(Unhidden),"direct activation keeps group visibility and leaves no hidden native window");}finally{System.Windows.Media.CompositionTarget.Rendering-=rendered;}
+   stage.Switch(a,false);await Wait(()=>stage.Animating);Check(stage.Activating(blue,false),"Dock direct activation can take over an already running Stage flight");await Wait(()=>!stage.Busy);Check(Flights(stage)==0&&!stage.Animating&&windows.All(Unhidden)&&!NativeWindowMotion.IsIconic(new IntPtr(blue.handle))&&NativeWindowMotion.IsIconic(new IntPtr(green.handle)),"direct takeover cancels curves, restores the requested group and clears opacity owners");
+   poll.Stop();stage.Configure(false,false,false,monitors);await Wait(()=>!stage.Busy);Check(windows.All(w=>NativeWindowMotion.IsIconic(new IntPtr(w.handle)))&&windows.All(Unhidden),"fixture teardown restores every original minimized state");
+  }
+  File.AppendAllText(Path.Combine(output,"checks.txt"),"Completed "+checks+" retained thumbnail and direct Stage activation checks."+Environment.NewLine);
+ }
+ [STAThread]static int Main(string[] args){SetProcessDpiAwarenessContext(new IntPtr(-4));Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);Application.EnableVisualStyles();if(args[0]=="--source"){Application.Run(new StageThumbnailsSource(args[1]));return 0;}root=args[0];output=args[1];File.WriteAllText(Path.Combine(output,"checks.txt"),"");owner=new StageThumbnailsSource("controller"){Opacity=0,Bounds=new Rectangle(SystemInformation.VirtualScreen.Right+200,40,100,100)};owner.Shown+=async(s,e)=>{try{await Run();}catch(Exception error){File.AppendAllText(Path.Combine(output,"checks.txt"),error+Environment.NewLine);exit=1;}finally{foreach(var process in processes){try{if(!process.HasExited){process.CloseMainWindow();if(!process.WaitForExit(500)){try{process.Kill();}catch(System.ComponentModel.Win32Exception){if(!process.HasExited)throw;}}}}finally{process.Dispose();}}owner.Close();}};Application.Run(owner);owner.Dispose();return exit;}
+}

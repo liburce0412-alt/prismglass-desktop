@@ -34,7 +34,46 @@ const widget={name:'Weather',x:120,y:100,w:300,h:100,r:24,fixedShape:true};
 const layout=cards=>({type:'layout',width:1000,height:700,theme:'Sky',paused:false,cards});
 const geometry=(h,cards)=>h.send({type:'geometry',cards});
 
+check('body and edge light use the latest pointer while shape keeps its spring',()=>{
+ const h=renderer();h.send(layout([{...widget,fixedShape:false}]));h.frame();
+ h.send({type:'pointer',x:390,y:150,down:false});h.frame(8.333);
+ assert.deepEqual(h.uniform('pointer'),[.8,0]);assert.ok(h.uniform('lean')[0]<.1,'shape should retain its existing lag');
+ h.send({type:'pointer',x:150,y:150,down:false});h.frame(8.333);
+ assert.deepEqual(h.uniform('pointer'),[-.8,0]);assert.ok(h.uniform('lean')[0]>-.1,'light must not inherit spring lag');
+ h.send({type:'pointer',x:-999,y:-999,down:false});h.frame();
+ assert.deepEqual(h.uniform('pointer'),[-.8,0],'leaving fades at the last input rather than jumping to the center');
+ const before=h.draws();h.send({type:'pointer',x:270,y:150,down:false});h.frame();
+ assert.equal(h.draws()-before,1,'cached scene uses one glass draw; transparent clear needs no fullscreen shader');
+ assert.equal(h.stats().presentationMeasured,false);assert.ok(h.stats().cpuTimings.submit.samples>0);
+});
+
+check('desktop deformation keeps a stable native envelope and latest GPU pointer',()=>{
+ const h=renderer(),card={...widget,fixedShape:false};h.send({...layout([card]),nativeDesktopBounds:true});h.frame();const clip=h.latest('widget-shapes');
+ for(let i=0;i<120;i++){h.send({type:'pointer',x:140+i*2,y:150,down:i>60});h.frame(8.333);}
+ assert.equal(h.count('widget-shapes'),1,'pointer motion must not rebuild HWND regions every frame');assert.deepEqual(h.latest('widget-shapes'),clip);
+ assert.ok(h.stats().maxDeformation>1);assert.ok(h.uniform('pointer')[0]>.7);assert.equal(clip[0].length,4);
+ geometry(h,[{...card,x:200}]);h.frame();assert.equal(h.count('widget-shapes'),2,'moving the actual card still updates its native envelope');
+ h.send({type:'display-recovery'});h.frame();assert.equal(h.count('widget-shapes'),3,'display recovery must reapply the native envelope');
+});
+
+check('wide desktop Dock keeps both native windows stable while GPU deformation follows input',()=>{
+ const h=renderer(),card={...dock,w:880,fixedShape:false};h.send({...layout([card,widget]),nativeDesktopBounds:true});h.frame();const clip=h.latest('dock-shape');
+ for(let i=0;i<120;i++){h.send({type:'pointer',x:100+(i%60)*13,y:445,down:i>60});h.frame(4.167);}
+ assert.equal(h.count('dock-shape'),1);assert.equal(h.count('widget-shapes'),1);assert.equal(clip.length,4);assert.deepEqual(h.latest('dock-shape'),clip);assert.ok(h.stats().maxDeformation>1);
+ geometry(h,[{...card,w:400,clipOffsetX:240,motionFluid:.5,flowY:1},widget]);h.frame();assert.equal(h.count('dock-shape'),2,'lyric contraction still updates the native crop');
+ const contracted=h.latest('dock-shape');assert.ok(contracted[0][0]>clip[0][0]);assert.ok(contracted[1][0]<clip[1][0]);
+ h.send({type:'display-recovery'});h.frame();assert.equal(h.count('dock-shape'),3,'DWM recovery reapplies the Dock crop');
+});
+
 const wallpaperRace=renderer(false,[],true);
+check('monitor wallpaper identity includes its file, rejects paths, and survives GPU recovery',()=>{
+ const view=renderer(false,[],true),left='wallpaper-monitor--320--40-320-200.png',right='wallpaper-monitor-0-0-160-120-00112233445566778899AABB.png';
+ view.send({type:'wallpaper',version:'same',file:left});view.send({type:'wallpaper',version:'same',file:right});
+ assert.equal(view.wallpaperImages.length,3);assert.equal(view.wallpaperImages[2].url,right+'?v=same');
+ view.wallpaperImages[2].onload();view.wallpaperImages[1].onload();assert.equal(view.messages.filter(x=>x==='wallpaper-loaded:same').length,1);
+ view.lose();view.event('webglcontextlost');view.event('webglcontextrestored');assert.ok(view.wallpaperImages.at(-1).url.startsWith(right+'?'));
+ view.send({type:'wallpaper',version:'unsafe',file:'../private.png'});assert.equal(view.wallpaperImages.at(-1).url,'wallpaper.png?v=unsafe');
+});
 check('repeated wallpaper layouts share one pending request and late old images never win',()=>{
  wallpaperRace.send({type:'wallpaper',version:'new'});wallpaperRace.send({type:'wallpaper',version:'new'});assert.equal(wallpaperRace.wallpaperImages.length,2);
  wallpaperRace.wallpaperImages[1].onload();wallpaperRace.wallpaperImages[0].onload();assert.deepEqual(wallpaperRace.messages.filter(x=>x.startsWith('wallpaper-loaded:')),['wallpaper-loaded:new']);
@@ -135,7 +174,7 @@ const original=h.latest('dock-shape'),beforeDraws=h.draws();
 for(let i=0;i<60;i++)geometry(h,[dock]);
 check('sixty static redraws keep one Dock clip message',()=>assert.equal(h.count('dock-shape'),1));
 check('sixty static redraws keep one empty widget clip message',()=>assert.equal(h.count('widget-shapes'),1));
-check('outline deduplication never skips actual WebGL drawing',()=>assert.equal(h.draws()-beforeDraws,120));
+check('outline deduplication never skips actual WebGL drawing',()=>assert.equal(h.draws()-beforeDraws,60));
 check('published coordinates retain their original subpixel precision',()=>assert.ok(original.some(point=>point.some(value=>Math.abs(value*4-Math.round(value*4))>1e-5))));
 geometry(h,[{...dock,clipOffsetX:.001,clipOffsetY:.001}]);
 check('sub-quarter-pixel jitter does not republish an unchanged comparison key',()=>assert.equal(h.count('dock-shape'),1));
@@ -170,8 +209,10 @@ astro.send({...layout([dock]),theme:'Astro',paused:true});astro.frames(300);
 check('pause still paints the final state and settles its frame loop',()=>{assert.equal(astro.stats().paused,true);assert.equal(astro.pending(),0);});
 const pausedClips=astro.count('dock-shape'),pausedDraws=astro.draws();geometry(astro,[dock]);
 check('paused repeated drawing remains clipped without extra IPC',()=>{assert.ok(astro.draws()>pausedDraws);assert.equal(astro.count('dock-shape'),pausedClips);});
+astro.send({type:'display-recovery'});astro.frames(4);
+check('display recovery repaints and restores native outlines even at unchanged size while paused',()=>{assert.equal(astro.stats().paused,true);assert.ok(astro.draws()>pausedDraws+1);assert.equal(astro.count('dock-shape'),pausedClips+1);assert.equal(astro.pending(),0);});
 astro.send({...layout([dock]),theme:'Astro',paused:false});astro.frames(30);
-check('resuming Astro restores active drawing and required layout clips',()=>{assert.equal(astro.stats().paused,false);assert.ok(astro.pending()>0);assert.equal(astro.count('dock-shape'),pausedClips+1);});
+check('resuming Astro restores active drawing and required layout clips',()=>{assert.equal(astro.stats().paused,false);assert.ok(astro.pending()>0);assert.equal(astro.count('dock-shape'),pausedClips+2);});
 const pendingLoss=renderer();pendingLoss.send(layout([dock]));pendingLoss.frame();const pendingLossDraws=pendingLoss.draws();pendingLoss.lose();
 check('pending context-loss event does not allow layout or geometry to draw lost resources',()=>{pendingLoss.send({...layout([dock]),width:1200});geometry(pendingLoss,[dock]);pendingLoss.frame();assert.equal(pendingLoss.draws(),pendingLossDraws);assert.ok(!pendingLoss.messages.some(m=>m.startsWith('error:')));});
 const recovery=renderer();recovery.send(layout([dock]));recovery.frame();const beforeLoss=recovery.draws();
@@ -190,6 +231,7 @@ const opticalLayout={type:'optical-layout',active:true,width:1000,height:700,sou
 const pixels=new ArrayBuffer(64);optical.shared({type:'optical-frame',id:'fixture',serial:1,width:4,height:4},pixels);optical.frame();
 check('shared native pixels enter the optical shader and acknowledge upload',()=>{assert.equal(optical.stats().liveBackground,'optical');assert.ok(optical.messages.includes('optical-ack:1'));});
 const allocated=optical.allocations();optical.host({type:'optical-frame',id:'fixture',serial:2,width:4,height:4});optical.frame();
+check('a material-only preference keeps the active optical source',()=>{optical.preferences({glassStyle:'G'});optical.frame();assert.equal(optical.stats().liveBackground,'optical');assert.equal(optical.stats().glassStyle,'G');});
 check('subsequent optical frames reuse the scene allocation and mapped buffer',()=>{assert.equal(optical.allocations(),allocated);assert.equal(optical.stats().opticalFrames,2);assert.ok(optical.messages.includes('optical-ack:2'));});
 check('a raised Dock layer gets one reusable scene while sharing the capture buffer',()=>{
  optical.host({...opticalLayout,sources:[{...opticalLayout.sources[0],target:'Dock'},opticalLayout.sources[0]]});optical.frame();

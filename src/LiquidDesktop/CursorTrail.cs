@@ -40,7 +40,7 @@ internal sealed class CursorTrail : Form {
  [DllImport("gdi32.dll")]static extern IntPtr CreateDIBSection(IntPtr dc,ref BITMAPINFO info,uint usage,out IntPtr bits,IntPtr section,uint offset);
  protected override bool ShowWithoutActivation {get{return true;}}
  protected override CreateParams CreateParams {get{var p=base.CreateParams;p.ExStyle|=0x080800A0;p.ExStyle&=~0x40000;return p;}}
- protected override void WndProc(ref Message m){if(m.Msg==0x84){m.Result=new IntPtr(-1);return;}if(m.Msg==0x21){m.Result=new IntPtr(3);return;}base.WndProc(ref m);}
+ protected override void WndProc(ref Message m){StartupWindowOrder.Constrain(m.HWnd,m.Msg,m.LParam);if(m.Msg==0x84){m.Result=new IntPtr(-1);return;}if(m.Msg==0x21){m.Result=new IntPtr(3);return;}base.WndProc(ref m);}
  public CursorTrail(){Text="PrismGlass Cursor Trail";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;AutoScaleMode=AutoScaleMode.None;Size=new Size(1,1);}
  public void Update(Point pointer,bool enabled){
   var now=DateTime.UtcNow;float dt=last==DateTime.MinValue?1f/60:(float)Math.Min(.05,(now-last).TotalSeconds);last=now;
@@ -101,7 +101,7 @@ internal sealed class CursorTrail : Form {
   }
   graphics.Flush();var position=new POINT(bounds.X,bounds.Y);var size=new SIZE(surfaceWidth,surfaceHeight);var origin=new POINT(0,0);var blend=new BLEND{alpha=255,format=1};
   if(UpdateLayeredWindow(Handle,IntPtr.Zero,ref position,ref size,memoryDc,ref origin,0,ref blend,2)){
-   if(!Visible)Show();SetWindowPos(Handle,new IntPtr(-1),0,0,0,0,0x13);
+   if(!Visible)Show();SetWindowPos(Handle,StartupWindowOrder.InsertAfter(Handle,new IntPtr(-1)),0,0,0,0,0x13);
   }
  }
  void EnsureSurface(int width,int height){

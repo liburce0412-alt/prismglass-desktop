@@ -11,7 +11,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 internal static class TestWorkspaceWindow {
  const BindingFlags Instance=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
- static Assembly assembly;static Form runner,window;static WebView2 view;static object library;static string root,log;static int checks,wallpaperWrites;static bool recovery,wallpaper;
+ static Assembly assembly;static Form runner,window;static WebView2 view;static object library;static string root,log;static int checks,wallpaperWrites;static bool recovery,wallpaper,preferencesOnly;
  [DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(IntPtr context);
  [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")]static extern IntPtr GetWindowLongPtr(IntPtr window,int index);
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
@@ -65,12 +65,16 @@ internal static class TestWorkspaceWindow {
   await view.CoreWebView2.ExecuteScriptAsync("window.wallpaperDocument=document;window.wallpaperLayouts=[];chrome.webview.addEventListener('message',e=>{if(e.data.type==='layout')wallpaperLayouts.push(String(e.data.wallpaper));});window.wallpaperPixel=()=>{const g=document.querySelector('#glass').getContext('webgl'),p=new Uint8Array(4);if(!g||g.isContextLost())return [0,0,0,0];g.readPixels(Math.floor(g.drawingBufferWidth/2),Math.floor(g.drawingBufferHeight/2),1,1,g.RGBA,g.UNSIGNED_BYTE,p);return Array.from(p);};window.wallpaperColor=(channel)=>{const p=wallpaperPixel();return p[3]>128&&p[channel]>p[(channel+1)%3]+35&&p[channel]>p[(channel+2)%3]+35;};");
   await UntilScript("wallpaperColor(2)","production glass initially samples the fixture blue wallpaper");
   long red=WriteWallpaper(Color.FromArgb(208,36,48));
-  await UntilScript("wallpaperLayouts.indexOf('"+red+"')>=0","an unchanged open settings window receives the replacement wallpaper layout version");
+  await UntilScript("wallpaperLayouts.indexOf('wallpaper.png:"+red+"')>=0","an unchanged open settings window receives the replacement wallpaper layout version");
   await UntilScript("wallpaperColor(0)","production WebGL texture changes to the red wallpaper without movement or settings changes");
   WriteWallpaper(Color.FromArgb(216,176,24));await Task.Delay(40);long green=WriteWallpaper(Color.FromArgb(28,190,62));
-  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='"+green+"'&&wallpaperColor(1)","two rapid replacements settle on the final green wallpaper version and texture");
+  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='wallpaper.png:"+green+"'&&wallpaperColor(1)","two rapid replacements settle on the final green wallpaper version and texture");
   await Task.Delay(1100);
-  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='"+green+"'&&wallpaperColor(1)&&document===wallpaperDocument","the final texture persists without reloading the document");
+  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1]==='wallpaper.png:"+green+"'&&wallpaperColor(1)&&document===wallpaperDocument","the final texture persists without reloading the document");
+  var bounds=Screen.FromControl(window).Bounds;string monitorName=(string)assembly.GetType("MonitorWallpaper").GetMethod("Name",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{bounds}),monitorPath=Path.Combine(root,monitorName);
+  using(var image=new Bitmap(96,64)){using(var graphics=Graphics.FromImage(image))graphics.Clear(Color.FromArgb(208,36,48));image.Save(monitorPath,System.Drawing.Imaging.ImageFormat.Png);}
+  await UntilScript("wallpaperLayouts[wallpaperLayouts.length-1].startsWith('"+monitorName+":')&&wallpaperColor(0)","native settings host selects the monitor's red resource over the shared green wallpaper");
+  File.Delete(monitorPath);await UntilScript("wallpaperColor(1)","removing the test monitor sample restores the existing fallback without a blank frame");
   Check(window.Bounds==before&&(File.Exists(settingsFile)?File.ReadAllText(settingsFile):null)==settingsBefore,"wallpaper refresh leaves native bounds and settings bytes unchanged");
   File.AppendAllText(log,"Wallpaper evidence: "+await view.CoreWebView2.ExecuteScriptAsync("JSON.stringify({versions:wallpaperLayouts,pixel:wallpaperPixel()})")+Environment.NewLine);
   using(var image=File.Create(Path.Combine(Path.GetDirectoryName(log),"wallpaper-refreshed.png")))await view.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
@@ -93,6 +97,25 @@ internal static class TestWorkspaceWindow {
   using(var image=File.Create(Path.Combine(Path.GetDirectoryName(log),"gpu-recovered.png")))await view.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,image);
   File.AppendAllText(log,"Completed "+checks+" isolated native graphics recovery checks; no installed browser process was targeted."+Environment.NewLine);
  }
+ static async Task PreferenceChecks(){
+  await view.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-page=dock]').click()");
+  await UntilScript("!!document.querySelector('[data-setting=windowAnimations]')&&document.querySelector('[data-setting=windowAnimations]').checked","Dock settings expose the enabled window animation switch");
+  await view.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-setting=windowAnimations]').click()");
+  await UntilScript("!PrismWorkspace.state.sent&&!PrismWorkspace.state.blocked&&!Object.keys(PrismWorkspace.state.pending).length&&!document.querySelector('[data-setting=windowAnimations]').checked","turning animations off receives the real native save acknowledgement");
+  var saved=Create("DesktopPreferences",root);var state=saved.GetType().GetProperty("Current").GetValue(saved,null);
+  Check(!(bool)Field(state,"windowAnimations")&&!(bool)Field(state,"stageManager"),"disabled animation reloads from disk without enabling Stage");
+  using(var capture=File.Create(Path.Combine(Path.GetDirectoryName(log),"dock-animation-option.png")))await view.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,capture);
+  await view.CoreWebView2.ExecuteScriptAsync("document.querySelector('[data-setting=windowAnimations]').click()");
+  await UntilScript("!PrismWorkspace.state.sent&&!PrismWorkspace.state.blocked&&!Object.keys(PrismWorkspace.state.pending).length&&document.querySelector('[data-setting=windowAnimations]').checked","window animation can be enabled again without a restart");
+  window.Hide();var workspaceView=view;
+  using(var side=(Form)Create("SideDock",root,true))try{
+   side.GetType().GetMethod("ApplyPreferences").Invoke(side,new object[]{new{glassStyle="J",glassOpacity=100,glassOverrides=new{J=new{refraction=1.37}},liveGlassBackground=false}});
+   view=(WebView2)Field(side,"view");side.Show();await Until(()=>(bool)Field(side,"ready"),"real SideDock initializes with pending preferences");
+   await UntilScript("(()=>{const gl=document.querySelector('#popup-glass').getContext('webgl'),p=gl.getParameter(gl.CURRENT_PROGRAM);if(!p)return false;const shape=gl.getUniformLocation(p,'styleShape'),extra=gl.getUniformLocation(p,'styleExtra');return shape&&extra&&Math.abs(gl.getUniform(p,shape)[1]-1.37)<.001&&gl.getUniform(p,extra)[1]===1;})()","initial SideDock shader uses J Glasswork and the saved refraction 1.37");
+   using(var capture=File.Create(Path.Combine(Path.GetDirectoryName(log),"sidedock-initial-material.png")))await view.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,capture);
+  }finally{view=workspaceView;}
+  File.AppendAllText(log,"Completed "+checks+" native preference checks."+Environment.NewLine);
+ }
  static async Task Run(){
   Directory.CreateDirectory(root);
   string source=Path.GetDirectoryName(assembly.Location);
@@ -109,6 +132,7 @@ internal static class TestWorkspaceWindow {
   await Until(()=>!window.IsDisposed&&(bool)Field(window,"ready"),"real WorkspaceWindow completes WebView2 initialization",30000);
   if(recovery){await RecoveryChecks();return;}
   if(wallpaper){await WallpaperChecks();return;}
+  if(preferencesOnly){await PreferenceChecks();return;}
   Open("components");await UntilScript("document.querySelector('[data-page=components]').getAttribute('aria-current')==='page'&&document.querySelectorAll('[data-widget]').length===9","management deep link opens desktop components in the real settings window");
   Check(window.TopMost&&(GetWindowLongPtr(window.Handle,-20).ToInt64()&8)!=0,"settings window has the actual topmost HWND style");
   Check(view.CoreWebView2.Settings.IsNonClientRegionSupportEnabled&&await view.CoreWebView2.ExecuteScriptAsync("getComputedStyle(document.querySelector('.workspace-header')).getPropertyValue('app-region')==='drag'&&getComputedStyle(document.querySelector('#close-workspace')).getPropertyValue('app-region')==='no-drag'&&getComputedStyle(document.querySelector('.workspace-header nav')).getPropertyValue('app-region')==='no-drag'")=="true","native title dragging is enabled while navigation and close remain clickable");
@@ -156,7 +180,7 @@ internal static class TestWorkspaceWindow {
   File.AppendAllText(log,"Completed "+checks+" native workspace checks."+Environment.NewLine);
  }
  [STAThread]static void Main(string[] args){
-  bool geometry=args.Length==4&&args[3]=="--geometry";recovery=args.Length==4&&args[3]=="--recovery";wallpaper=args.Length==4&&args[3]=="--wallpaper";if(args.Length!=3&&!geometry&&!recovery&&!wallpaper)throw new ArgumentException("Pass the candidate assembly, a new fixture directory, and the result log.");
+  bool geometry=args.Length==4&&args[3]=="--geometry";recovery=args.Length==4&&args[3]=="--recovery";wallpaper=args.Length==4&&args[3]=="--wallpaper";preferencesOnly=args.Length==4&&args[3]=="--preferences";if(args.Length!=3&&!geometry&&!recovery&&!wallpaper&&!preferencesOnly)throw new ArgumentException("Pass the candidate assembly, a new fixture directory, and the result log.");
   root=Path.GetFullPath(args[1]);log=Path.GetFullPath(args[2]);if(Directory.Exists(root))throw new ArgumentException("Use a new disposable fixture directory.");File.WriteAllText(log,"");
   SetProcessDpiAwarenessContext(new IntPtr(-4));Application.EnableVisualStyles();assembly=Assembly.LoadFrom(Path.GetFullPath(args[0]));var foreground=GetForegroundWindow();
   if(geometry){try{GeometryChecks();}catch(Exception error){File.AppendAllText(log,error.GetType().Name+": "+error.Message+Environment.NewLine+error.StackTrace);Environment.ExitCode=1;}return;}

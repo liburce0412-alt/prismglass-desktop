@@ -5,10 +5,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../src/LiquidDesktop/companion-web/companion-settings.js'), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
-const desktopFields = ['theme','manualPaused','glassOpacity','textScale','reducedMotion','dockIconSize','dockAutoHide','showLabels','gridColumns','pauseOnBattery','pauseOnPowerSaver','pauseOnRemote','hiddenCards','hiddenLeftCards'];
+const desktopFields = ['theme','manualPaused','glassOpacity','textScale','reducedMotion','dockIconSize','dockAutoHide','showLabels','gridColumns','pauseOnBattery','pauseOnPowerSaver','pauseOnRemote','windowAnimations','stageManager','stageHideCovered','stageGroupLayout','stageSingleSize','stageMaxWidth','stageMaxHeight','hiddenCards','hiddenLeftCards'];
 const lyricsFields = ['font','layout','align','effect','texture','widthMode','color','secondary','accent','backgroundTheme','backgroundOpacity','backgroundMotion','fontSize','weight','spacing','intensity','speed','glow','width','secondaryOpacity'];
 const initial = {
-  settings: { available: true, revision: '638999999999999991', theme: 'Sky', glassOpacity: 90, textScale: 105, dockIconSize: 48, gridColumns: 6, showLabels: true, dockAutoHide: true, manualPaused: false, reducedMotion: false, pauseOnBattery: true, pauseOnPowerSaver: true, pauseOnRemote: true, hiddenCards: ['quota'], hiddenLeftCards: ['network', 'Life'] },
+  settings: { available: true, revision: '638999999999999991', theme: 'Sky', glassOpacity: 90, textScale: 105, dockIconSize: 48, gridColumns: 6, showLabels: true, dockAutoHide: true, manualPaused: false, reducedMotion: false, pauseOnBattery: true, pauseOnPowerSaver: true, pauseOnRemote: true, windowAnimations: true, stageManager: false, stageHideCovered: true, stageGroupLayout: 'auto', stageSingleSize: 'fit', stageMaxWidth: 85, stageMaxHeight: 85, hiddenCards: ['quota'], hiddenLeftCards: ['network', 'Life'] },
   lyricsSettings: { available: true, editable: true, revision: 'lyrics-revision-1', appearance: { font: 'sans', layout: 'duo', align: 'center', effect: 'float', texture: 'gradient', widthMode: 'adaptive', color: '#ffffff', secondary: '#dceaf9', accent: '#9edfff', backgroundTheme: 'transparent', backgroundOpacity: 35, backgroundMotion: false, fontSize: 26, weight: 650, spacing: 2, intensity: 65, speed: 100, glow: 30, width: 900, secondaryOpacity: 80 } }
 };
 function fixture() {

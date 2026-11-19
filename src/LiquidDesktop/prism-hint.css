@@ -1,0 +1,10 @@
+.prism-hint-portal{position:fixed;inset:0;z-index:10000;pointer-events:none}
+.prism-hint-portal[hidden]{display:none!important}
+.prism-hint{position:absolute;z-index:1;width:max-content;box-sizing:border-box;padding:8px 16px;border:1px solid var(--edge,rgba(228,242,255,.3));border-radius:18px;color:var(--text,#f5f8ff);font:13px/1.4 "Microsoft YaHei UI","Segoe UI",sans-serif;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;text-shadow:0 1px 3px rgba(12,27,47,.5);background:var(--material-tint,var(--glass,rgba(21,55,105,.08)));box-shadow:inset 0 1px 1px rgba(234,247,255,.24),0 8px 24px var(--shadow,rgba(1,14,43,.24));-webkit-backdrop-filter:blur(var(--material-blur,18px)) saturate(var(--material-saturation,1.2)) contrast(var(--material-contrast,1)) brightness(var(--material-brightness,1));backdrop-filter:blur(var(--material-blur,18px)) saturate(var(--material-saturation,1.2)) contrast(var(--material-contrast,1)) brightness(var(--material-brightness,1))}
+.prism-hint-surface{position:absolute;z-index:0;border-radius:18px;pointer-events:none}
+body[data-optics=ready] .prism-hint[data-prism-optics=ready]{background:transparent!important;border-color:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+body:not([data-optics=ready]) .prism-hint-surface{display:none}
+.prism-hint-native{width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);clip-path:inset(50%)}
+.prism-hint-native .prism-hint{width:1px;max-width:1px!important;height:1px;padding:0;border:0;overflow:hidden}
+body[data-reduced=true] .prism-hint{-webkit-backdrop-filter:none;backdrop-filter:none}
+@media(prefers-reduced-motion:reduce){.prism-hint{-webkit-backdrop-filter:none;backdrop-filter:none}}

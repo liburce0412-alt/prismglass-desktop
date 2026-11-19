@@ -22,14 +22,14 @@ internal static class LoginStartup {
  internal static void SetIn(string root,string folder,bool enabled){
   string file=Path.Combine(folder,Name);if(File.Exists(file)&&!Owned(root,file))throw new IOException("已有其他安装的启动项，未覆盖或删除。");
   if(!enabled){if(File.Exists(file))File.Delete(file);return;}
-  if(!File.Exists(Shell)||!File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)),"DesktopMode.ps1"))||!File.Exists(Path.Combine(root,"LiquidDesktop.exe")))throw new FileNotFoundException("启动文件不完整，请修复或重新安装 PrismGlass。");
+  if(!File.Exists(Path.Combine(root,"PrismGlass.exe"))||!File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)),"DesktopMode.ps1"))||!File.Exists(Path.Combine(root,"LiquidDesktop.exe")))throw new FileNotFoundException("启动文件不完整，请修复或重新安装 PrismGlass。");
   Directory.CreateDirectory(folder);string temp=Path.Combine(folder,".PrismGlass-"+Guid.NewGuid().ToString("N")+".tmp");object raw=null;
-  try{raw=new ShellLink();var link=(IShellLinkW)raw;link.SetPath(Shell);link.SetArguments(Arguments(root));link.SetWorkingDirectory(Path.GetDirectoryName(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)));link.SetDescription("PrismGlass 登录启动");link.SetIconLocation(Path.Combine(root,"LiquidDesktop.exe"),0);link.SetShowCmd(7);((IPersistFile)raw).Save(temp,true);if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);if(!Owned(root,file))throw new IOException("启动项写入后校验失败，请重试。");}
+  try{raw=new ShellLink();var link=(IShellLinkW)raw;link.SetPath(Path.GetFullPath(Path.Combine(root,"PrismGlass.exe")));link.SetArguments("--login");link.SetWorkingDirectory(Path.GetDirectoryName(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar)));link.SetDescription("PrismGlass 登录启动");link.SetIconLocation(Path.Combine(root,"LiquidDesktop.exe"),0);link.SetShowCmd(1);((IPersistFile)raw).Save(temp,true);if(File.Exists(file))File.Replace(temp,file,null);else File.Move(temp,file);if(!Owned(root,file))throw new IOException("启动项写入后校验失败，请重试。");}
   finally{if(raw!=null)Marshal.FinalReleaseComObject(raw);if(File.Exists(temp))File.Delete(temp);}
  }
  static bool Owned(string root,string file){
   if(new FileInfo(file).Length>65536)throw new IOException("启动快捷方式无效，未修改原文件。");object raw=null;
-  try{raw=new ShellLink();((IPersistFile)raw).Load(file,0);var link=(IShellLinkW)raw;var target=new StringBuilder(32768);var args=new StringBuilder(32768);link.GetPath(target,target.Capacity,IntPtr.Zero,4);link.GetArguments(args,args.Capacity);return String.Equals(target.ToString(),Shell,StringComparison.OrdinalIgnoreCase)&&String.Equals(args.ToString(),Arguments(root),StringComparison.OrdinalIgnoreCase);}
+  try{raw=new ShellLink();((IPersistFile)raw).Load(file,0);var link=(IShellLinkW)raw;var target=new StringBuilder(32768);var args=new StringBuilder(32768);link.GetPath(target,target.Capacity,IntPtr.Zero,4);link.GetArguments(args,args.Capacity);return (String.Equals(target.ToString(),Path.GetFullPath(Path.Combine(root,"PrismGlass.exe")),StringComparison.OrdinalIgnoreCase)&&args.ToString()=="--login")||(String.Equals(target.ToString(),Shell,StringComparison.OrdinalIgnoreCase)&&String.Equals(args.ToString(),Arguments(root),StringComparison.OrdinalIgnoreCase));}
   finally{if(raw!=null)Marshal.FinalReleaseComObject(raw);}
  }
  [ComImport,Guid("00021401-0000-0000-C000-000000000046")]class ShellLink{}

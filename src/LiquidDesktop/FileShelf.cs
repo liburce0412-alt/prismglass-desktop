@@ -106,17 +106,19 @@ internal sealed class FileShelf : Form {
  }}
  static void Round(GraphicsPath p,float x,float y,float w,float h,float r){GlassWindow.Round(p,x,y,w,h,r);}
  public void Sync(string nextTheme,Rectangle bounds,IntPtr anchor,bool motionPaused){
-  if(closed)return;if(screen!=bounds){screen=bounds;Place();layout="";}SyncZoom();theme=nextTheme=="Astro"?"Astro":"Sky";paused=motionPaused;Publish();if(ready&&Visible&&!paused)RefreshQuota(false);
+  if(closed)return;if(screen!=bounds||position.DisplayChanged){screen=bounds;Place();layout="";}SyncZoom();theme=nextTheme=="Astro"?"Astro":"Sky";paused=motionPaused;Publish();if(ready&&Visible&&!paused)RefreshQuota(false);
   RefreshContent();
   if(!preview)LiquidDesktop.PlaceComponent(this,anchor);
  }
- void Publish(){if(!ready)return;string stamp=File.GetLastWriteTimeUtc(Path.Combine(root,"wallpaper.png")).Ticks.ToString();string key=Bounds+theme+paused+stamp;if(key==layout)return;layout=key;var scene=Screen.FromRectangle(screen).Bounds;Send(new{type="layout",theme=theme,paused=paused,scale=scale,width=Width,height=Height,originX=Left-scene.Left,originY=Top-scene.Top,sceneWidth=scene.Width,sceneHeight=scene.Height,wallpaper=stamp});}
+ void Publish(){if(!ready)return;var scene=Screen.FromRectangle(screen).Bounds;var sample=MonitorWallpaper.For(root,scene);string stamp=sample.Version;string key=Bounds+theme+paused+stamp;if(key==layout)return;layout=key;Send(new{type="layout",theme=theme,paused=paused,scale=scale,width=Width,height=Height,originX=Left-scene.Left,originY=Top-scene.Top,sceneWidth=scene.Width,sceneHeight=scene.Height,wallpaper=stamp,wallpaperFile=sample.File});}
  void Send(object value){if(!closed&&ready&&view.CoreWebView2!=null)view.CoreWebView2.PostWebMessageAsJson(json.Serialize(value));}
  public void ApplyPreferences(object snapshot){Send(new{type="preferences",snapshot=snapshot});ReadVisibility();Shape(expanded?1:0);Send(new{type="local-state",state=state});}
  void ReadState(){stateReadFailed=false;try{stateSource=DesktopSettingsFiles.Read(StatePath);state=stateSource==null?new ShelfState():json.Deserialize<ShelfState>(json.Serialize(DesktopPreferences.ReadShelfState(stateSource)));if(state==null)throw new IOException("桌面内容格式无效，原文件已保留。");if(state.tasks==null)state.tasks=new List<ShelfTask>();if(state.links==null)state.links=new List<ShelfLink>();if(state.hiddenCards==null)state.hiddenCards=new List<string>();state.hiddenCards.RemoveAll(name=>Array.IndexOf(CardNames,name)<0);if(state.cardOrder==null)state.cardOrder=CardNames;}catch{stateReadFailed=true;state=new ShelfState();}ReadLeftVisibility();}
  void ReadVisibility(){try{var disk=json.Deserialize<ShelfState>(json.Serialize(DesktopPreferences.ReadShelfState(DesktopSettingsFiles.Read(StatePath))));state.hiddenCards=disk==null||disk.hiddenCards==null?new List<string>():disk.hiddenCards;state.cardOrder=disk==null||disk.cardOrder==null?CardNames:disk.cardOrder;}catch{}ReadLeftVisibility();}
  public bool LegacyManagerOpen {get{return expanded&&mode=="manage";}}
+ public bool PanelOpen {get{return expanded&&Visible&&!closed;}}
  public void OpenLegacyManager(){mode="manage";if(!Visible)Show();SetExpanded(true);}
+ public void OpenContent(string next){if(next!="tasks"&&next!="countdown")return;mode=next;if(!Visible)Show();SetExpanded(true);}
  public void DismissTransient(){if(expanded&&!pinned)SetExpanded(false);}
  void SetExpanded(bool value,bool activate=true){generation++;pendingFilter=false;expanded=value;pinned=value&&activate;Send(new{type="expanded",value=value,mode=mode,pinned=pinned});if(value){if(activate){Activate();view.Focus();}LoadMode();}else{query="";}}
  bool cursorSettingsBusy;
@@ -181,7 +183,7 @@ internal sealed class FileShelf : Form {
  }
  void Receive(string text){try{
   if(position.Receive(text))return;
-  if(text!=null&&text.StartsWith("optical-",StringComparison.Ordinal))return;
+  if(text!=null&&(text.StartsWith("optical-",StringComparison.Ordinal)||text.StartsWith("hint:",StringComparison.Ordinal)))return;
   if(text=="ready"){ready=true;Publish();Send(new{type="local-state",state=state});Send(new{type="quota",snapshot=quotaSnapshot,busy=false});RefreshQuota(false);return;}if(text=="painted"){if(!painted){painted=true;if(Ready!=null)Ready();}return;}if(text!=null&&text.StartsWith("error:",StringComparison.Ordinal)){try{File.WriteAllText(Path.Combine(root,"shelf-error.txt"),text.Substring(6));}catch{}Close();return;}if(text==null||text.Length>70000)return;
   var msg=json.Deserialize<Dictionary<string,object>>(text);object raw;string action=msg.TryGetValue("action",out raw)?raw as string:null;string value=msg.TryGetValue("value",out raw)?raw as string:"";
   if(action=="note-dirty"&&!preview){noteDirty=true;return;}

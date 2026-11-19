@@ -246,6 +246,7 @@ internal sealed class DockLyrics : IDisposable {
  }
  void StopHelper(){helperRetry=DateTime.MinValue;if(helper==null)return;try{if(!helper.HasExited)helper.Kill();}catch{}helper.Dispose();helper=null;}
  void CancelLookup(){if(cancellation!=null){cancellation.Cancel();cancellation.Dispose();cancellation=null;}if(lookup!=null)lookup.ContinueWith(t=>{var ignored=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);lookup=null;}
+ internal void StopSampling(){DesktopMediaActive=false;CancelLookup();StopHelper();if(netease!=null)netease.Enable(false);media=null;track="";lines.Clear();attempts=0;retry=sample=DateTime.MinValue;}
  void Status(string value){if(value==state)return;state=value;try{File.WriteAllText(Path.Combine(root,"lyrics-status.txt"),value);}catch(IOException){}}
  public void Tick(DateTime now,bool dockVisible,bool pointerNear,bool motionPaused){
   if(disposed)return;

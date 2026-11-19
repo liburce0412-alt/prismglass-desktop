@@ -1,0 +1,15 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync('src/LiquidDesktop/island.js','utf8');
+const code = source.slice(source.indexOf('let transient='),source.indexOf("$('island-event-icon').addEventListener"));
+const context = vm.createContext({Date, Number, setTimeout:()=>1, clearTimeout(){}, reduced:{matches:true}, targets(){}, clock(){}, wake(){}});
+vm.runInContext(code,context);
+const run = expression => vm.runInContext(expression,context);
+const emit = (kind,name) => run('showEvent('+JSON.stringify({kind,name,expiresAt:Date.now()+6000})+')');
+emit('attention','A');emit('launch-failed','B');emit('launch-failed','B');emit('track','music');
+assert.equal(run('transient.name'),'A');assert.equal(run('queued.length'),1);
+for(let i=0;i<12;i++)emit('attention',String(i));
+assert.equal(run('queued.length'),7);run('advanceEvent()');assert.equal(run('transient.name'),'B');
+run('queued[0].expiresAt=0;advanceEvent()');assert.equal(run('transient.name'),'1');
+console.log('PASS attention, failure, coalescing, queue bound, expiry and priority');

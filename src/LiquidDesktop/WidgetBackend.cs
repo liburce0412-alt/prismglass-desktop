@@ -2,15 +2,48 @@ using System;
 using System.IO;
 using System.Diagnostics;
 using System.Collections.Generic;
-using System.Management;
 using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
-internal sealed class WidgetBackend {
+internal sealed class WidgetBackend : IDisposable {
  readonly string root,rainmeterIni;readonly Action<string> sendBang;readonly Func<bool> rainmeterRunning;readonly object sourcesGate=new object();readonly Dictionary<string,string> sourceReasons=new Dictionary<string,string>();readonly JavaScriptSerializer json=new JavaScriptSerializer();DateTime ensuredAt=DateTime.MinValue,diskAt=DateTime.MinValue;object disk;
  readonly WeatherData weather;
- public WidgetBackend(string path):this(path,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"Rainmeter","Rainmeter.ini"),SendBang,RainmeterRunning){weather=WeatherData.ForRoot(root,()=>Path.Combine(SkinRoot(),"PrismGlass","Weather","Main.ini"));}
+ readonly DisplayBrightness brightness;
+ readonly AudioOutputState audioOutput;
+ DateTime workAt=DateTime.MinValue,workWritten=DateTime.MinValue;string workText="",pendingWorkAction="";DateTime pendingWorkUntil;
+ static object WorkValue(Dictionary<string,object> map,string key){object value;return map!=null&&map.TryGetValue(key,out value)?value:null;}
+ static string WorkText(object value){string text=Convert.ToString(value,System.Globalization.CultureInfo.InvariantCulture).Replace('\r',' ').Replace('\n',' ');return text.Length>120?text.Substring(0,120):text;}
+ // Called once per second by the primary host, using SharedDesktopData's cached snapshot.
+ internal void SyncWorkWidgets(object snapshot){
+  var now=DateTime.UtcNow;if((now-workAt).TotalMilliseconds<900)return;workAt=now;
+  string request=Path.Combine(root,"widget-action.request");
+  try{if(File.Exists(request)){string action=new FileInfo(request).Length<=64?File.ReadAllText(request).Trim():"";File.Delete(request);if(action=="focus-toggle"||action=="focus-reset"||action=="focus-25"||action=="focus-5"){
+    if(Snapshot("Focus")!=null)Action(action);else if(EnsureWorkFocus()){pendingWorkAction=action;pendingWorkUntil=now.AddSeconds(5);}
+  }}if(pendingWorkAction.Length>0){if(Snapshot("Focus")!=null){string action=pendingWorkAction;pendingWorkAction="";Action(action);}else if(now>=pendingWorkUntil)pendingWorkAction="";}}catch{pendingWorkAction="";}
+  try{
+   var widgets=json.Deserialize<Dictionary<string,object>>(json.Serialize(snapshot));var focus=WorkValue(widgets,"focus") as Dictionary<string,object>;var current=WorkValue(widgets,"weather") as Dictionary<string,object>;
+   var lines=new List<string>{"version=1"};Action<string,object> add=(key,value)=>lines.Add(key+"="+WorkText(value));
+   try{var content=new CompanionContent(root);var tasks=json.Deserialize<Dictionary<string,object>>(json.Serialize(content.ReadTasks()));var entries=WorkValue(tasks,"items") as System.Collections.IEnumerable;int total=0,pending=0;string first="";
+    if(entries!=null)foreach(var item in entries){var task=item as Dictionary<string,object>;total++;if(!Object.Equals(WorkValue(task,"done"),true)){pending++;if(first.Length==0)first=WorkText(WorkValue(task,"text"));}}
+    add("tasksAvailable",1);add("taskPending",pending);add("taskTotal",total);add("taskFirst",first);add("countdownTitle",WorkValue(tasks,"countdownTitle"));add("countdownDate",WorkValue(tasks,"countdownDate"));
+   }catch{add("tasksAvailable",0);}
+   add("focusAvailable",Object.Equals(WorkValue(focus,"available"),true)?1:0);foreach(var key in new[]{"total","remaining","deadline","completed"})add("focus"+Char.ToUpperInvariant(key[0])+key.Substring(1),WorkValue(focus,key));
+   bool weatherReady=Object.Equals(WorkValue(current,"ready"),true)&&!Object.Equals(WorkValue(current,"stale"),true);add("weatherTemp",weatherReady?WorkValue(current,"temp"):null);add("weatherCode",weatherReady?WorkValue(current,"code"):null);add("weatherLocation",weatherReady?WorkValue(current,"location"):null);
+   // The standalone Rainmeter card consumes this same sample; it must not keep
+   // a second public HTTP collector with different proxy, cache or failure rules.
+   add("weatherReady",Object.Equals(WorkValue(current,"ready"),true)?1:0);add("weatherStale",Object.Equals(WorkValue(current,"stale"),true)?1:0);
+   foreach(var key in new[]{"temp","code","high","low","sunrise","sunset","utcOffsetSeconds","updatedAt","reason","source"})add("weatherShared"+Char.ToUpperInvariant(key[0])+key.Substring(1),WorkValue(current,key));
+   lines.Add("weatherSharedLocation="+Convert.ToString(WorkValue(current,"location"),System.Globalization.CultureInfo.InvariantCulture).Replace('\r',' ').Replace('\n',' '));
+   string text=String.Join("\n",lines);if(text!=workText||(now-workWritten).TotalSeconds>=5){File.WriteAllText(Path.Combine(root,"widget-work-context.txt"),"stamp="+(Milliseconds(now)/1000)+"\n"+text,new System.Text.UTF8Encoding(false));workText=text;workWritten=now;}
+  }catch{}
+ }
+ bool EnsureWorkFocus(){
+  if(!rainmeterRunning())return false;string skin=Path.Combine(SkinRoot(),"PrismGlass","Focus","Main.ini"),destination=IniValue(skin,"Variables","LiquidRoot");
+  if(!File.Exists(skin)||!Path.IsPathRooted(destination)||!String.Equals(Path.GetFullPath(destination).TrimEnd('\\','/'),Path.GetFullPath(root).TrimEnd('\\','/'),StringComparison.OrdinalIgnoreCase)||!IniValue(skin,"Rainmeter","OnRefreshAction").StartsWith("[!Hide]",StringComparison.OrdinalIgnoreCase))return false;
+  if(IniValue(rainmeterIni,"PrismGlass\\Focus","Active")!="1")sendBang("!ActivateConfig \"PrismGlass\\Focus\" \"Main.ini\"");else sendBang("!UpdateMeasure \"Timer\" \"PrismGlass\\Focus\"");return true;
+ }
+ public WidgetBackend(string path):this(path,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"Rainmeter","Rainmeter.ini"),SendBang,RainmeterRunning){weather=WeatherData.ForRoot(root,()=>Path.Combine(SkinRoot(),"PrismGlass","Weather","Main.ini"));brightness=new DisplayBrightness();audioOutput=new AudioOutputState();}
  internal WidgetBackend(string path,string settings,Action<string> send,Func<bool> running,WeatherData weather=null){root=path;rainmeterIni=settings;sendBang=send;rainmeterRunning=running;this.weather=weather;}
- static bool RainmeterRunning(){var processes=Process.GetProcessesByName("Rainmeter");try{return processes.Length>0;}finally{foreach(var process in processes)process.Dispose();}}
+ static bool RainmeterRunning(){return RainmeterCommands.Find(RuntimePaths.Rainmeter)!=IntPtr.Zero;}
  internal static string IniValue(string path,string section,string key){if(!File.Exists(path)||new FileInfo(path).Length>524288)return "";string current="";foreach(var raw in File.ReadAllLines(path)){string line=raw.Trim();if(line.StartsWith("[",StringComparison.Ordinal)&&line.EndsWith("]",StringComparison.Ordinal)){current=line.Substring(1,line.Length-2);continue;}int equals=line.IndexOf('=');if(equals>0&&current.Equals(section,StringComparison.OrdinalIgnoreCase)&&line.Substring(0,equals).Trim().Equals(key,StringComparison.OrdinalIgnoreCase))return line.Substring(equals+1).Trim();}return "";}
  string SkinRoot(){var configured=Path.Combine(root,"skin-path.txt");if(File.Exists(configured))return Path.GetDirectoryName(Path.GetFullPath(File.ReadAllText(configured).Trim()));string path=IniValue(rainmeterIni,"Rainmeter","SkinPath");return String.IsNullOrEmpty(path)?Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"Rainmeter","Skins"):Environment.ExpandEnvironmentVariables(path);}
  Dictionary<string,object> Snapshot(string name){try{var file=Path.Combine(root,"widget-"+name+".json");double age=(DateTime.UtcNow-File.GetLastWriteTimeUtc(file)).TotalSeconds;if(age< -1||age>=8||new FileInfo(file).Length>32768)return null;return json.Deserialize<Dictionary<string,object>>(File.ReadAllText(file));}catch{return null;}}
@@ -53,14 +86,17 @@ internal sealed class WidgetBackend {
   if(session!=null){if(title!=session.title||artist!=session.artist)cover="";title=session.title;artist=session.artist;playing=session.status=="playing";string image=LyricBackgroundPalette.CoverPath(root,session);if(image.Length>0)cover="https://prism-media.local/"+Uri.EscapeDataString(Path.GetFileName(image))+"?v="+File.GetLastWriteTimeUtc(image).Ticks;}
   string lyricStatus=lyrics.enabled?"等待播放器提供歌曲信息":"Dock 歌词已关闭";
   try{lyricStatus=File.ReadAllText(Path.Combine(root,"lyrics-status.txt"));}catch{}
-  var currentWeather=WeatherSnapshot();return new{type="widgets",weather=currentWeather,system=Snapshot("System"),volume=Snapshot("Music"),sourceStatus=SourceStatuses(currentWeather),disk=ReadDisk(),music=new{title=title,artist=artist,cover=cover,playing=playing},lyrics=new{enabled=lyrics.enabled,online=lyrics.online,offsetMs=lyrics.offsetMs,status=lyricStatus,holdGaps=lyrics.holdGaps,appearance=lyrics.appearance,palette=LyricBackgroundPalette.Read(root,session)},focus=new{available=focusReady,reason=focusReady?"":Snapshot("Focus")==null?"专注采集尚未运行。":"专注计时状态尚未初始化。",total=total,remaining=remaining,deadline=deadline,completed=completed,lastCompleted=lastCompleted}};
+  var currentWeather=WeatherSnapshot();return new{type="widgets",weather=currentWeather,system=Snapshot("System"),volume=Snapshot("Music"),brightness=BrightnessState(),audioOutput=audioOutput==null?new AudioOutputState.State{reason="声音输出状态未启用。"}:audioOutput.Snapshot(),sourceStatus=SourceStatuses(currentWeather),disk=ReadDisk(),music=new{title=title,artist=artist,cover=cover,playing=playing},lyrics=new{enabled=lyrics.enabled,online=lyrics.online,offsetMs=lyrics.offsetMs,status=lyricStatus,holdGaps=lyrics.holdGaps,appearance=lyrics.appearance,palette=LyricBackgroundPalette.Read(root,session)},focus=new{available=focusReady,reason=focusReady?"":Snapshot("Focus")==null?"专注采集尚未运行。":"专注计时状态尚未初始化。",total=total,remaining=remaining,deadline=deadline,completed=completed,lastCompleted=lastCompleted}};
  }
  [DllImport("user32.dll")]static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
- static void Brightness(int delta){using(var query=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightness")){foreach(ManagementObject item in query.Get()){int level=Math.Max(0,Math.Min(100,Convert.ToInt32(item["CurrentBrightness"])+delta));using(var methods=new ManagementObjectSearcher("root\\WMI","SELECT * FROM WmiMonitorBrightnessMethods")){foreach(ManagementObject method in methods.Get())method.InvokeMethod("WmiSetBrightness",new object[]{(uint)1,(byte)level});}return;}}throw new InvalidOperationException("此显示器不支持系统亮度控制，请使用显示器按键。");}
+ public object BrightnessState(){return brightness==null?(object)new DisplayBrightness.State{reason="亮度服务未启用。"}:brightness.Snapshot();}
+ public void Dispose(){if(brightness!=null)brightness.Dispose();if(audioOutput!=null)audioOutput.Dispose();}
  static void Launch(string file,string args){Process.Start(new ProcessStartInfo(file,args){UseShellExecute=true,WindowStyle=ProcessWindowStyle.Normal});}
- static void SendBang(string args){using(var process=Process.Start(new ProcessStartInfo(RuntimePaths.Rainmeter,args){UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden})){} }
+ static void SendBang(string args){RainmeterCommands.Send(RuntimePaths.Rainmeter,args,50);}
  void Bang(string args){sendBang(args);}
- public void Action(string id){
+ public void Action(string id,Func<bool> allowed=null){
+  if(id.StartsWith("brightness-target:",StringComparison.Ordinal)){if(brightness==null)throw new InvalidOperationException("亮度服务未启用。");brightness.Select(Uri.UnescapeDataString(id.Substring(18)));return;}
+  if(id.StartsWith("brightness-set:",StringComparison.Ordinal)){int split=id.IndexOf(':',15),value;if(split<0||!Int32.TryParse(id.Substring(15,split-15),out value)||value<0||value>100)throw new ArgumentException("亮度需要为 0 到 100 的整数。");if(brightness==null)throw new InvalidOperationException("亮度服务未启用。");brightness.Set(Uri.UnescapeDataString(id.Substring(split+1)),value,allowed);return;}
   if(id.StartsWith("volume-set:",StringComparison.Ordinal)){int value;string raw=id.Substring(11);if(raw.Length==0||raw.Length>3||!System.Linq.Enumerable.All(raw,c=>c>='0'&&c<='9')||!Int32.TryParse(raw,out value)||value<0||value>100)throw new ArgumentException("音量需要为 0 到 100 的整数。");Bang("!CommandMeasure Volume \"SetVolume "+value.ToString(System.Globalization.CultureInfo.InvariantCulture)+"\" \"PrismGlass\\Music\"");return;}
   if(id.StartsWith("lyrics-style:",StringComparison.Ordinal)&&id.Length<4096){
    var settings=LyricsSettings.Load(root);settings.appearance=(json.Deserialize<LyricsAppearance>(id.Substring(13))??new LyricsAppearance()).Normalize();settings.Save(root);return;
@@ -80,8 +116,7 @@ internal sealed class WidgetBackend {
    case "theme-sky":File.WriteAllText(Path.Combine(root,"theme.txt"),"Sky");break;
    case "theme-astro":File.WriteAllText(Path.Combine(root,"theme.txt"),"Astro");break;
    case "mute":keybd_event(0xAD,0,0,UIntPtr.Zero);keybd_event(0xAD,0,2,UIntPtr.Zero);break;
-   case "brightness-up":Brightness(10);break;
-   case "brightness-down":Brightness(-10);break;
+   case "brightness-up":case "brightness-down":if(brightness==null)throw new InvalidOperationException("亮度服务未启用。");var current=brightness.Snapshot();brightness.Set(current.targetId,Math.Max(0,Math.Min(100,current.value+(id=="brightness-up"?1:-1))),allowed);break;
    case "display":Launch("ms-settings:display","");break;
    case "focus-break":Bang("!CommandMeasure Timer \"Preset(5);Toggle()\" \"PrismGlass\\Focus\"");break;
    case "focus-again":Bang("!CommandMeasure Timer \"Preset(25);Toggle()\" \"PrismGlass\\Focus\"");break;
